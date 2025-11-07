@@ -26,15 +26,16 @@ func New(tracker *db.Tracker, addr string) *Server {
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
-	http.HandleFunc("/api/worker/next-job", s.GetNextJob)
-	http.HandleFunc("/api/worker/job-complete", s.JobComplete)
-	http.HandleFunc("/api/worker/job-failed", s.JobFailed)
-	http.HandleFunc("/api/worker/heartbeat", s.WorkerHeartbeat)
-	http.HandleFunc("/api/status", s.GetStatus)
-	http.HandleFunc("/api/stats", s.GetStats)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/worker/next-job", s.GetNextJob)
+	mux.HandleFunc("/api/worker/job-complete", s.JobComplete)
+	mux.HandleFunc("/api/worker/job-failed", s.JobFailed)
+	mux.HandleFunc("/api/worker/heartbeat", s.WorkerHeartbeat)
+	mux.HandleFunc("/api/status", s.GetStatus)
+	mux.HandleFunc("/api/stats", s.GetStats)
 
 	slog.Info("HTTP server starting", "addr", s.addr)
-	return http.ListenAndServe(s.addr, nil)
+	return http.ListenAndServe(s.addr, mux)
 }
 
 // GetNextJob handles requests for the next pending job
@@ -94,6 +95,16 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate required fields
+	if req.JobID == "" {
+		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
+		return
+	}
+	if req.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
+		return
+	}
+
 	// Fetch the existing job first
 	job, err := s.db.GetJobByID(req.JobID)
 	if err != nil {
@@ -134,6 +145,16 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate JobID and WorkerID are not empty
+	if req.JobID == "" {
+		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
+		return
+	}
+	if req.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
 
@@ -185,6 +206,11 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 // GetStatus returns job statistics
 func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	stats, err := s.db.GetJobStats()
 	if err != nil {
 		slog.Error("Failed to get job stats", "error", err)
@@ -202,6 +228,11 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 // GetStats returns detailed system statistics
 func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	stats, err := s.db.GetJobStats()
 	if err != nil {
 		slog.Error("Failed to get job stats", "error", err)

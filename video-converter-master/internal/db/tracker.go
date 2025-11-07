@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 
 	"github.com/darkace1998/video-converter-common/models"
 	_ "github.com/mattn/go-sqlite3"
@@ -192,6 +193,7 @@ func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
 		var status string
 		var count int
 		if err := rows.Scan(&status, &count); err != nil {
+			slog.Warn("Failed to scan job stats row", "error", err)
 			continue
 		}
 		stats[status] = count
