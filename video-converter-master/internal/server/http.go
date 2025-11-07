@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,8 +13,9 @@ import (
 
 // Server handles HTTP API requests
 type Server struct {
-	db   *db.Tracker
-	addr string
+	db     *db.Tracker
+	addr   string
+	server *http.Server
 }
 
 // New creates a new HTTP server instance
@@ -34,8 +36,22 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/status", s.GetStatus)
 	mux.HandleFunc("/api/stats", s.GetStats)
 
+	s.server = &http.Server{
+		Addr:    s.addr,
+		Handler: mux,
+	}
+
 	slog.Info("HTTP server starting", "addr", s.addr)
-	return http.ListenAndServe(s.addr, mux)
+	return s.server.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the HTTP server
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.server == nil {
+		return nil
+	}
+	slog.Info("Shutting down HTTP server")
+	return s.server.Shutdown(ctx)
 }
 
 // GetNextJob handles requests for the next pending job
@@ -191,6 +207,11 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var hb models.WorkerHeartbeat
 	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if hb.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
 

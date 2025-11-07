@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"log"
 	"log/slog"
 	"os"
 
@@ -16,7 +17,8 @@ func main() {
 
 	cfg, err := config.LoadMasterConfig(*configPath)
 	if err != nil {
-		slog.Error("Failed to load config", "error", err)
+		// Use standard log before slog is initialized
+		log.Printf("Failed to load config: %v", err)
 		os.Exit(1)
 	}
 

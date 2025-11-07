@@ -55,9 +55,6 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 
 // Start starts the coordinator and all its components
 func (c *Coordinator) Start() error {
-	// Ensure database is closed on exit
-	defer c.db.Close()
-
 	// Scan for all video files
 	slog.Info("Scanning for video files", "path", c.config.Scanner.RootPath)
 	jobs, err := c.scanner.ScanDirectory()
@@ -68,10 +65,15 @@ func (c *Coordinator) Start() error {
 	slog.Info("Found video files", "count", len(jobs))
 
 	// Insert jobs into database
+	failedInsertions := 0
 	for _, job := range jobs {
 		if err := c.db.CreateJob(job); err != nil {
 			slog.Error("Failed to create job", "job_id", job.ID, "error", err)
+			failedInsertions++
 		}
+	}
+	if failedInsertions > 0 {
+		slog.Warn("Some jobs failed to be inserted", "failed_count", failedInsertions, "total_jobs", len(jobs))
 	}
 
 	// Start monitoring worker health
@@ -83,14 +85,40 @@ func (c *Coordinator) Start() error {
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	serverErrChan := make(chan error, 1)
+
+	// Start HTTP server in a goroutine
 	go func() {
-		<-sigChan
-		slog.Info("Received shutdown signal, stopping monitoring goroutines")
-		c.cancel()
+		serverErrChan <- c.server.Start()
 	}()
 
-	// Start HTTP server (blocking)
-	return c.server.Start()
+	go func() {
+		<-sigChan
+		slog.Info("Received shutdown signal, stopping monitoring goroutines and HTTP server")
+		c.cancel()
+		
+		// Attempt graceful shutdown of HTTP server
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := c.server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("HTTP server shutdown error", "err", err)
+		}
+	}()
+
+	// Wait for HTTP server to exit
+	err = <-serverErrChan
+	
+	// Wait for monitoring goroutines to stop before closing database
+	slog.Info("Waiting for monitoring goroutines to stop")
+	time.Sleep(2 * time.Second) // Give goroutines time to exit cleanly
+	
+	// Close database connection
+	if dbErr := c.db.Close(); dbErr != nil {
+		slog.Error("Failed to close database", "error", dbErr)
+	}
+	
+	return err
 }
 
 // monitorWorkerHealth periodically checks worker health
