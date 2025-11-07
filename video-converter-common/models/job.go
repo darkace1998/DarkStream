@@ -1,0 +1,50 @@
+package models
+
+import "time"
+
+type Job struct {
+	ID             string     `json:"id"`
+	SourcePath     string     `json:"source_path"`
+	OutputPath     string     `json:"output_path"`
+	Status         string     `json:"status"` // pending, processing, completed, failed
+	WorkerID       string     `json:"worker_id"`
+	StartedAt      *time.Time `json:"started_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	ErrorMessage   string     `json:"error_message"`
+	RetryCount     int        `json:"retry_count"`
+	MaxRetries     int        `json:"max_retries"`
+	CreatedAt      time.Time  `json:"created_at"`
+	SourceDuration float64    `json:"source_duration"` // seconds
+	OutputSize     int64      `json:"output_size"`     // bytes
+}
+
+type ConversionConfig struct {
+	TargetResolution string // 1920x1080
+	Codec            string // h264
+	Bitrate          string // 5M
+	Preset           string // fast, medium, slow
+	UseVulkan        bool
+	AudioCodec       string // aac
+	AudioBitrate     string // 128k
+}
+
+type WorkerHeartbeat struct {
+	WorkerID        string    `json:"worker_id"`
+	Hostname        string    `json:"hostname"`
+	VulkanAvailable bool      `json:"vulkan_available"`
+	ActiveJobs      int       `json:"active_jobs"`
+	Status          string    `json:"status"` // healthy, busy, idle
+	Timestamp       time.Time `json:"timestamp"`
+	GPU             string    `json:"gpu"` // GPU model/name
+	CPUUsage        float64   `json:"cpu_usage"`
+	MemoryUsage     float64   `json:"memory_usage"`
+}
+
+type VulkanDevice struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"` // discrete, integrated, virtual, cpu
+	DeviceID      uint32 `json:"device_id"`
+	VendorID      uint32 `json:"vendor_id"`
+	DriverVersion string `json:"driver_version"`
+	Available     bool   `json:"available"`
+}
