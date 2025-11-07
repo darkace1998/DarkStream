@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ type Coordinator struct {
 	server  *server.Server
 	ctx     context.Context
 	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // New creates a new coordinator instance
@@ -77,9 +79,11 @@ func (c *Coordinator) Start() error {
 	}
 
 	// Start monitoring worker health
+	c.wg.Add(1)
 	go c.monitorWorkerHealth()
 
 	// Start monitoring failed jobs
+	c.wg.Add(1)
 	go c.monitorFailedJobs()
 
 	// Setup signal handling for graceful shutdown
@@ -111,7 +115,7 @@ func (c *Coordinator) Start() error {
 	
 	// Wait for monitoring goroutines to stop before closing database
 	slog.Info("Waiting for monitoring goroutines to stop")
-	time.Sleep(2 * time.Second) // Give goroutines time to exit cleanly
+	c.wg.Wait()
 	
 	// Close database connection
 	if dbErr := c.db.Close(); dbErr != nil {
@@ -123,6 +127,7 @@ func (c *Coordinator) Start() error {
 
 // monitorWorkerHealth periodically checks worker health
 func (c *Coordinator) monitorWorkerHealth() {
+	defer c.wg.Done()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -142,6 +147,7 @@ func (c *Coordinator) monitorWorkerHealth() {
 
 // monitorFailedJobs periodically checks for failed jobs that can be retried
 func (c *Coordinator) monitorFailedJobs() {
+	defer c.wg.Done()
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 

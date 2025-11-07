@@ -88,7 +88,6 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(job); err != nil {
 		slog.Error("Failed to encode job as JSON", "error", err)
-		// Headers already sent, can't return proper error response
 		return
 	}
 }
@@ -225,7 +224,7 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// GetStatus returns job statistics
+// GetStatus returns simple job statistics (for quick polling)
 func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -242,12 +241,11 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		slog.Error("Failed to encode job stats response", "error", err)
-		// Headers already sent, can't return proper error response
 		return
 	}
 }
 
-// GetStats returns detailed system statistics
+// GetStats returns detailed system statistics with timestamp
 func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -269,7 +267,6 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode stats response", "error", err)
-		// Headers already sent, can't return proper error response
 		return
 	}
 }
