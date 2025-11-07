@@ -64,7 +64,11 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 		"output_size": outputSize,
 	}
 
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	resp, err := mc.client.Post(
 		fmt.Sprintf("%s/api/worker/job-complete", mc.baseURL),
 		"application/json",
@@ -91,7 +95,11 @@ func (mc *MasterClient) ReportJobFailed(jobID string, errorMsg string) error {
 		"error_message": errorMsg,
 	}
 
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	resp, err := mc.client.Post(
 		fmt.Sprintf("%s/api/worker/job-failed", mc.baseURL),
 		"application/json",
@@ -112,7 +120,12 @@ func (mc *MasterClient) ReportJobFailed(jobID string, errorMsg string) error {
 
 // SendHeartbeat sends a heartbeat to the master
 func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) error {
-	body, _ := json.Marshal(hb)
+	body, err := json.Marshal(hb)
+	if err != nil {
+		slog.Error("Failed to marshal heartbeat", "error", err)
+		return nil // Non-critical failure
+	}
+
 	resp, err := mc.client.Post(
 		fmt.Sprintf("%s/api/worker/heartbeat", mc.baseURL),
 		"application/json",

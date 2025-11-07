@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -52,13 +53,20 @@ func (fc *FFmpegConverter) ConvertVideo(
 	// Build FFmpeg command
 	args := fc.buildFFmpegCommand(job, cfg)
 
-	cmd := exec.Command(fc.ffmpegPath, args...)
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	slog.Debug("Executing FFmpeg command", "args", args)
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("ffmpeg conversion timed out after %v: %w", fc.timeout, err)
+		}
 		return fmt.Errorf("ffmpeg conversion failed: %w", err)
 	}
 

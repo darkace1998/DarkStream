@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -20,7 +21,8 @@ type Worker struct {
 	vulkanDetector  *converter.VulkanDetector
 	validator       *converter.Validator
 	concurrency     int
-	activeJobs      int
+	activeJobs      int32
+	vulkanCaps      *converter.VulkanCapabilities
 }
 
 // New creates a new Worker instance
@@ -61,6 +63,7 @@ func (w *Worker) Start() error {
 		slog.Warn("Vulkan not available, falling back to CPU", "error", err)
 	} else {
 		slog.Info("Vulkan available", "device", caps.Device.Name)
+		w.vulkanCaps = caps
 	}
 
 	// Start heartbeat goroutine
@@ -87,22 +90,41 @@ func (w *Worker) processJobs(workerIndex int) {
 			continue
 		}
 
-		w.activeJobs++
+		atomic.AddInt32(&w.activeJobs, 1)
 
 		if err := w.executeJob(job); err != nil {
 			slog.Error("Job execution failed",
 				"job_id", job.ID,
 				"error", err,
 			)
-			w.masterClient.ReportJobFailed(job.ID, err.Error())
+			if reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error()); reportErr != nil {
+				slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
+			}
 		} else {
 			slog.Info("Job completed successfully", "job_id", job.ID)
 			// Get output file size
-			outputSize, _ := w.validator.GetFileSize(job.OutputPath)
-			w.masterClient.ReportJobComplete(job.ID, outputSize)
+			outputSize, err := w.validator.GetFileSize(job.OutputPath)
+			if err != nil {
+				slog.Error("Failed to get output file size",
+					"job_id", job.ID,
+					"output_path", job.OutputPath,
+					"error", err,
+				)
+				if reportErr := w.masterClient.ReportJobFailed(job.ID, fmt.Sprintf("Failed to get output file size: %v", err)); reportErr != nil {
+					slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
+				}
+			} else {
+				if err := w.masterClient.ReportJobComplete(job.ID, outputSize); err != nil {
+					slog.Error("Failed to report job completion",
+						"job_id", job.ID,
+						"output_size", outputSize,
+						"error", err,
+					)
+				}
+			}
 		}
 
-		w.activeJobs--
+		atomic.AddInt32(&w.activeJobs, -1)
 	}
 }
 
@@ -130,7 +152,10 @@ func (w *Worker) executeJob(job *models.Job) error {
 	}
 
 	// Get output file size
-	info, _ := os.Stat(job.OutputPath)
+	info, err := os.Stat(job.OutputPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat output file: %w", err)
+	}
 	slog.Info("Job metrics",
 		"job_id", job.ID,
 		"output_size_mb", float64(info.Size())/1024/1024,
@@ -145,14 +170,21 @@ func (w *Worker) sendHeartbeats() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		vulkanAvailable := false
+		gpuName := "CPU"
+		if w.vulkanCaps != nil && w.vulkanCaps.Supported {
+			vulkanAvailable = true
+			gpuName = w.vulkanCaps.Device.Name
+		}
+
 		hb := &models.WorkerHeartbeat{
 			WorkerID:        w.config.Worker.ID,
 			Hostname:        getHostname(),
-			VulkanAvailable: true, // Simplified - should check actual Vulkan status
-			ActiveJobs:      w.activeJobs,
+			VulkanAvailable: vulkanAvailable,
+			ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
 			Status:          constants.WorkerStatusHealthy,
 			Timestamp:       time.Now(),
-			GPU:             "Generic Vulkan Device",
+			GPU:             gpuName,
 			CPUUsage:        0.0, // TODO: Get actual CPU usage
 			MemoryUsage:     0.0, // TODO: Get actual memory usage
 		}
@@ -163,6 +195,10 @@ func (w *Worker) sendHeartbeats() {
 
 // getHostname returns the system hostname
 func getHostname() string {
-	host, _ := os.Hostname()
+	host, err := os.Hostname()
+	if err != nil {
+		slog.Warn("Failed to get hostname", "error", err)
+		return "unknown"
+	}
 	return host
 }

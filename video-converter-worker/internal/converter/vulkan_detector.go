@@ -103,6 +103,12 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 				return dev
 			}
 		}
+		// If no available devices found, return first device anyway
+		if len(devices) > 0 {
+			return devices[0]
+		}
+		// Return empty device if no devices at all (shouldn't happen due to check in DetectVulkanCapabilities)
+		return models.VulkanDevice{}
 	}
 
 	// Find preferred device by name
@@ -113,5 +119,8 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 	}
 
 	// Fallback to first device
-	return devices[0]
+	if len(devices) > 0 {
+		return devices[0]
+	}
+	return models.VulkanDevice{}
 }
