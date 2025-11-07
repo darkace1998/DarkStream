@@ -37,8 +37,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/stats", s.GetStats)
 
 	s.server = &http.Server{
-		Addr:    s.addr,
-		Handler: mux,
+		Addr:         s.addr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	slog.Info("HTTP server starting", "addr", s.addr)

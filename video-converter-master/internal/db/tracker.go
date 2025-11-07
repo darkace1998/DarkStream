@@ -22,11 +22,13 @@ func New(dbPath string) (*Tracker, error) {
 	}
 
 	if err := db.Ping(); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	tracker := &Tracker{db: db}
 	if err := tracker.initSchema(); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
@@ -197,6 +199,10 @@ func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
 			continue
 		}
 		stats[status] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return stats, nil

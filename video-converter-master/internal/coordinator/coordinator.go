@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -89,6 +90,7 @@ func (c *Coordinator) Start() error {
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
 	serverErrChan := make(chan error, 1)
 
@@ -120,6 +122,11 @@ func (c *Coordinator) Start() error {
 	// Close database connection
 	if dbErr := c.db.Close(); dbErr != nil {
 		slog.Error("Failed to close database", "error", dbErr)
+	}
+	
+	// Check if server was gracefully shut down
+	if err == http.ErrServerClosed {
+		return nil
 	}
 	
 	return err
