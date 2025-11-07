@@ -2,6 +2,23 @@ package models
 
 import "time"
 
+// LoggingSettings defines logging configuration used by both Master and Worker
+type LoggingSettings struct {
+	Level      string `yaml:"level"`  // debug, info, warn, error
+	Format     string `yaml:"format"` // json, text
+	OutputPath string `yaml:"output_path"`
+}
+
+// ConversionSettings defines video conversion parameters used by both Master and Worker
+type ConversionSettings struct {
+	TargetResolution string `yaml:"target_resolution"`
+	Codec            string `yaml:"codec"`
+	Bitrate          string `yaml:"bitrate"`
+	Preset           string `yaml:"preset"`
+	AudioCodec       string `yaml:"audio_codec"`
+	AudioBitrate     string `yaml:"audio_bitrate"`
+}
+
 type MasterConfig struct {
 	Server struct {
 		Port int    `yaml:"port"`
@@ -19,20 +36,8 @@ type MasterConfig struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
 
-	Conversion struct {
-		TargetResolution string `yaml:"target_resolution"`
-		Codec            string `yaml:"codec"`
-		Bitrate          string `yaml:"bitrate"`
-		Preset           string `yaml:"preset"`
-		AudioCodec       string `yaml:"audio_codec"`
-		AudioBitrate     string `yaml:"audio_bitrate"`
-	} `yaml:"conversion"`
-
-	Logging struct {
-		Level      string `yaml:"level"`  // debug, info, warn, error
-		Format     string `yaml:"format"` // json, text
-		OutputPath string `yaml:"output_path"`
-	} `yaml:"logging"`
+	Conversion ConversionSettings `yaml:"conversion"`
+	Logging    LoggingSettings    `yaml:"logging"`
 }
 
 type WorkerConfig struct {
@@ -62,18 +67,6 @@ type WorkerConfig struct {
 		EnableValidation bool   `yaml:"enable_validation"`
 	} `yaml:"vulkan"`
 
-	Logging struct {
-		Level      string `yaml:"level"`
-		Format     string `yaml:"format"`
-		OutputPath string `yaml:"output_path"`
-	} `yaml:"logging"`
-
-	Conversion struct {
-		TargetResolution string `yaml:"target_resolution"`
-		Codec            string `yaml:"codec"`
-		Bitrate          string `yaml:"bitrate"`
-		Preset           string `yaml:"preset"`
-		AudioCodec       string `yaml:"audio_codec"`
-		AudioBitrate     string `yaml:"audio_bitrate"`
-	} `yaml:"conversion"`
+	Logging    LoggingSettings    `yaml:"logging"`
+	Conversion ConversionSettings `yaml:"conversion"`
 }
