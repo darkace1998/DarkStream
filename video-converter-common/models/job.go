@@ -6,7 +6,7 @@ type Job struct {
 	ID             string     `json:"id"`
 	SourcePath     string     `json:"source_path"`
 	OutputPath     string     `json:"output_path"`
-	Status         string     `json:"status"` // pending, processing, completed, failed
+	Status         string     `json:"status"` // see constants.JobStatus* constants
 	WorkerID       string     `json:"worker_id"`
 	StartedAt      *time.Time `json:"started_at"`
 	CompletedAt    *time.Time `json:"completed_at"`
@@ -33,7 +33,7 @@ type WorkerHeartbeat struct {
 	Hostname        string    `json:"hostname"`
 	VulkanAvailable bool      `json:"vulkan_available"`
 	ActiveJobs      int       `json:"active_jobs"`
-	Status          string    `json:"status"` // healthy, busy, idle
+	Status          string    `json:"status"` // see constants.WorkerStatus* constants
 	Timestamp       time.Time `json:"timestamp"`
 	GPU             string    `json:"gpu"` // GPU model/name
 	CPUUsage        float64   `json:"cpu_usage"`
@@ -42,7 +42,7 @@ type WorkerHeartbeat struct {
 
 type VulkanDevice struct {
 	Name          string `json:"name"`
-	Type          string `json:"type"` // discrete, integrated, virtual, cpu
+	Type          string `json:"type"` // see constants.VulkanDeviceType* constants
 	DeviceID      uint32 `json:"device_id"`
 	VendorID      uint32 `json:"vendor_id"`
 	DriverVersion string `json:"driver_version"`
