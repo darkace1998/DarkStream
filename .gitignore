@@ -1,6 +1,7 @@
 # Binaries
 master
 worker
+!video-converter-worker/
 cli
 *.exe
 *.dll
