@@ -44,14 +44,21 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate worker_id parameter
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
 	job, err := s.db.GetNextPendingJob()
 	if err != nil {
-		http.Error(w, "No jobs available", http.StatusNoContent)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
 	job.Status = "processing"
-	job.WorkerID = r.URL.Query().Get("worker_id")
+	job.WorkerID = workerID
 	now := time.Now()
 	job.StartedAt = &now
 
@@ -64,7 +71,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(job); err != nil {
 		slog.Error("Failed to encode job as JSON", "error", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		// Headers already sent, can't return proper error response
 		return
 	}
 }
@@ -180,7 +187,7 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		slog.Error("Failed to encode job stats response", "error", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		// Headers already sent, can't return proper error response
 		return
 	}
 }
@@ -202,7 +209,7 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode stats response", "error", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		// Headers already sent, can't return proper error response
 		return
 	}
 }
