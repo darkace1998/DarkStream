@@ -1,0 +1,32 @@
+server:
+  port: 8080
+  host: 0.0.0.0
+
+scanner:
+  root_path: /mnt/storage/videos
+  video_extensions:
+    - .mp4
+    - .mkv
+    - .mov
+    - .avi
+    - .flv
+    - .webm
+    - .m4v
+  output_base: /mnt/storage/converted
+  recursive_depth: -1  # -1 for unlimited
+
+database:
+  path: ./jobs.db
+
+conversion:
+  target_resolution: 1920x1080
+  codec: h264
+  bitrate: 5M
+  preset: fast
+  audio_codec: aac
+  audio_bitrate: 128k
+
+logging:
+  level: info
+  format: json
+  output_path: ./master.log
