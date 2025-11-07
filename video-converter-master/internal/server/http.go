@@ -62,7 +62,11 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		slog.Error("Failed to encode job as JSON", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 }
 
 // JobComplete handles job completion notifications
@@ -174,7 +178,11 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		slog.Error("Failed to encode job stats response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // GetStats returns detailed system statistics
@@ -192,5 +200,9 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode stats response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
