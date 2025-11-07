@@ -2,6 +2,7 @@ package models
 
 import "time"
 
+// Job represents a video conversion job with its lifecycle state and metadata.
 type Job struct {
 	ID             string     `json:"id"`
 	SourcePath     string     `json:"source_path"`
@@ -18,6 +19,7 @@ type Job struct {
 	OutputSize     int64      `json:"output_size"`     // bytes
 }
 
+// ConversionConfig defines the parameters for video conversion operations.
 type ConversionConfig struct {
 	TargetResolution string `json:"target_resolution"` // 1920x1080
 	Codec            string `json:"codec"`             // h264
@@ -28,6 +30,7 @@ type ConversionConfig struct {
 	AudioBitrate     string `json:"audio_bitrate"` // 128k
 }
 
+// WorkerHeartbeat contains status information sent periodically from workers to the master.
 type WorkerHeartbeat struct {
 	WorkerID        string    `json:"worker_id"`
 	Hostname        string    `json:"hostname"`
@@ -40,6 +43,7 @@ type WorkerHeartbeat struct {
 	MemoryUsage     float64   `json:"memory_usage"`
 }
 
+// VulkanDevice represents information about a Vulkan-capable GPU device.
 type VulkanDevice struct {
 	Name          string `json:"name"`
 	Type          string `json:"type"` // see constants.VulkanDeviceType* constants

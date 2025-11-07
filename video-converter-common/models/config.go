@@ -19,6 +19,7 @@ type ConversionSettings struct {
 	AudioBitrate     string `yaml:"audio_bitrate"`
 }
 
+// MasterConfig holds the configuration for the master coordinator service.
 type MasterConfig struct {
 	Server struct {
 		Port int    `yaml:"port"`
@@ -40,6 +41,7 @@ type MasterConfig struct {
 	Logging    LoggingSettings    `yaml:"logging"`
 }
 
+// WorkerConfig holds the configuration for worker processes.
 type WorkerConfig struct {
 	Worker struct {
 		ID                string        `yaml:"id"`

@@ -7,6 +7,9 @@ import (
 	"github.com/darkace1998/video-converter-common/constants"
 )
 
+// InitLogger initializes the global logger with the specified level and format.
+// level should be one of the constants.LogLevel* constants.
+// format should be one of the constants.LogFormat* constants.
 func InitLogger(level, format string) {
 	opts := &slog.HandlerOptions{
 		Level: parseLogLevel(level),

@@ -1,5 +1,6 @@
 package models
 
+// VulkanCapabilities describes the Vulkan capabilities of a GPU device.
 type VulkanCapabilities struct {
 	Supported           bool           `json:"supported"`
 	Device              VulkanDevice   `json:"device"`
@@ -12,6 +13,7 @@ type VulkanCapabilities struct {
 	PreferredFormat     string         `json:"preferred_format"`
 }
 
+// VulkanDeviceList contains a list of available Vulkan devices and the default device.
 type VulkanDeviceList struct {
 	Devices       []VulkanDevice `json:"devices"`
 	DefaultDevice string         `json:"default_device"`

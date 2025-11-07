@@ -27,7 +27,7 @@ func DirExists(path string) bool {
 // EnsureDir creates a directory if it doesn't exist
 func EnsureDir(path string) error {
 	if !DirExists(path) {
-		return os.MkdirAll(path, 0755)
+		return os.MkdirAll(path, 0o750)
 	}
 	return nil
 }
