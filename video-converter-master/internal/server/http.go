@@ -94,17 +94,21 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a job update
-	now := time.Now()
-	job := &models.Job{
-		ID:          req.JobID,
-		Status:      "completed",
-		WorkerID:    req.WorkerID,
-		OutputSize:  req.OutputSize,
-		CompletedAt: &now,
+	// Fetch the existing job first
+	job, err := s.db.GetJobByID(req.JobID)
+	if err != nil {
+		slog.Error("Failed to fetch job", "job_id", req.JobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
 	}
 
-	// This is a simplified update - in production, we'd fetch the job first
+	// Update only the necessary fields
+	now := time.Now()
+	job.Status = "completed"
+	job.WorkerID = req.WorkerID
+	job.OutputSize = req.OutputSize
+	job.CompletedAt = &now
+
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -133,14 +137,18 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// In a real implementation, we'd fetch the job, increment retry count,
-	// and either retry or mark as failed permanently
-	job := &models.Job{
-		ID:           req.JobID,
-		Status:       "failed",
-		WorkerID:     req.WorkerID,
-		ErrorMessage: req.ErrorMessage,
+	// Fetch the existing job first
+	job, err := s.db.GetJobByID(req.JobID)
+	if err != nil {
+		slog.Error("Failed to fetch job", "job_id", req.JobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
 	}
+
+	// Update the job status and error message
+	job.Status = "failed"
+	job.WorkerID = req.WorkerID
+	job.ErrorMessage = req.ErrorMessage
 
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)

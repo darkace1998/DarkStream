@@ -152,3 +152,53 @@ func TestDatabaseCreation(t *testing.T) {
 		t.Error("Database file was not created")
 	}
 }
+
+func TestGetJobByID(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	// Create a test job
+	job := &models.Job{
+		ID:         "test-job-get-by-id",
+		SourcePath: "/source/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	// Insert job
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Retrieve job by ID
+	retrievedJob, err := tracker.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to get job by ID: %v", err)
+	}
+
+	// Verify job fields
+	if retrievedJob.ID != job.ID {
+		t.Errorf("Expected ID %s, got %s", job.ID, retrievedJob.ID)
+	}
+	if retrievedJob.SourcePath != job.SourcePath {
+		t.Errorf("Expected SourcePath %s, got %s", job.SourcePath, retrievedJob.SourcePath)
+	}
+	if retrievedJob.Status != job.Status {
+		t.Errorf("Expected Status %s, got %s", job.Status, retrievedJob.Status)
+	}
+
+	// Test non-existent job
+	_, err = tracker.GetJobByID("non-existent-job")
+	if err == nil {
+		t.Error("Expected error for non-existent job, got nil")
+	}
+}

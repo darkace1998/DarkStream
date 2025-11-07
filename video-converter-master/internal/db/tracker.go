@@ -82,6 +82,36 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 	return err
 }
 
+// GetJobByID retrieves a job by its ID
+func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
+	var job models.Job
+	var startedAt, completedAt sql.NullTime
+
+	err := t.db.QueryRow(`
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs WHERE id = ?
+	`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+		&startedAt, &completedAt, &job.ErrorMessage,
+		&job.SourceDuration, &job.OutputSize)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if startedAt.Valid {
+		job.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		job.CompletedAt = &completedAt.Time
+	}
+
+	return &job, nil
+}
+
 // GetNextPendingJob retrieves the next pending job from the queue
 func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 	var job models.Job

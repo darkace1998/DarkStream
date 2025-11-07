@@ -54,7 +54,11 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 		}
 
 		// Generate output path
-		relPath, _ := filepath.Rel(s.RootPath, path)
+		relPath, relErr := filepath.Rel(s.RootPath, path)
+		if relErr != nil {
+			slog.Warn("Failed to compute relative path", "root", s.RootPath, "path", path, "error", relErr)
+			return nil // Skip this file and continue
+		}
 		outputPath := filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
 
 		job := &models.Job{
