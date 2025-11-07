@@ -1,0 +1,196 @@
+package server
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-master/internal/db"
+)
+
+// Server handles HTTP API requests
+type Server struct {
+	db   *db.Tracker
+	addr string
+}
+
+// New creates a new HTTP server instance
+func New(tracker *db.Tracker, addr string) *Server {
+	return &Server{
+		db:   tracker,
+		addr: addr,
+	}
+}
+
+// Start starts the HTTP server
+func (s *Server) Start() error {
+	http.HandleFunc("/api/worker/next-job", s.GetNextJob)
+	http.HandleFunc("/api/worker/job-complete", s.JobComplete)
+	http.HandleFunc("/api/worker/job-failed", s.JobFailed)
+	http.HandleFunc("/api/worker/heartbeat", s.WorkerHeartbeat)
+	http.HandleFunc("/api/status", s.GetStatus)
+	http.HandleFunc("/api/stats", s.GetStats)
+
+	slog.Info("HTTP server starting", "addr", s.addr)
+	return http.ListenAndServe(s.addr, nil)
+}
+
+// GetNextJob handles requests for the next pending job
+func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	job, err := s.db.GetNextPendingJob()
+	if err != nil {
+		http.Error(w, "No jobs available", http.StatusNoContent)
+		return
+	}
+
+	job.Status = "processing"
+	job.WorkerID = r.URL.Query().Get("worker_id")
+	now := time.Now()
+	job.StartedAt = &now
+
+	if err := s.db.UpdateJob(job); err != nil {
+		slog.Error("Failed to update job", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
+}
+
+// JobComplete handles job completion notifications
+func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		JobID      string `json:"job_id"`
+		WorkerID   string `json:"worker_id"`
+		OutputSize int64  `json:"output_size"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Create a job update
+	now := time.Now()
+	job := &models.Job{
+		ID:          req.JobID,
+		Status:      "completed",
+		WorkerID:    req.WorkerID,
+		OutputSize:  req.OutputSize,
+		CompletedAt: &now,
+	}
+
+	// This is a simplified update - in production, we'd fetch the job first
+	if err := s.db.UpdateJob(job); err != nil {
+		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Job completed", "job_id", req.JobID, "worker_id", req.WorkerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// JobFailed handles job failure notifications
+func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		JobID        string `json:"job_id"`
+		WorkerID     string `json:"worker_id"`
+		ErrorMessage string `json:"error_message"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// In a real implementation, we'd fetch the job, increment retry count,
+	// and either retry or mark as failed permanently
+	job := &models.Job{
+		ID:           req.JobID,
+		Status:       "failed",
+		WorkerID:     req.WorkerID,
+		ErrorMessage: req.ErrorMessage,
+	}
+
+	if err := s.db.UpdateJob(job); err != nil {
+		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Warn("Job failed", "job_id", req.JobID, "worker_id", req.WorkerID, "error", req.ErrorMessage)
+	w.WriteHeader(http.StatusOK)
+}
+
+// WorkerHeartbeat handles worker heartbeat updates
+func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var hb models.WorkerHeartbeat
+	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.UpdateWorkerHeartbeat(&hb); err != nil {
+		slog.Error("Failed to update worker heartbeat", "worker_id", hb.WorkerID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Debug("Worker heartbeat received", "worker_id", hb.WorkerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetStatus returns job statistics
+func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetJobStats()
+	if err != nil {
+		slog.Error("Failed to get job stats", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// GetStats returns detailed system statistics
+func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetJobStats()
+	if err != nil {
+		slog.Error("Failed to get job stats", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"timestamp": time.Now(),
+		"jobs":      stats,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
