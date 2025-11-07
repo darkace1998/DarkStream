@@ -1,15 +1,15 @@
 package models
 
 type VulkanCapabilities struct {
-	Supported           bool
-	Device              VulkanDevice
-	ApiVersion          string
-	SupportedExtensions []string
-	CanEncode           bool
-	CanDecode           bool
-	MaxWidth            uint32
-	MaxHeight           uint32
-	PreferredFormat     string
+	Supported           bool           `json:"supported"`
+	Device              VulkanDevice   `json:"device"`
+	ApiVersion          string         `json:"api_version"`
+	SupportedExtensions []string       `json:"supported_extensions"`
+	CanEncode           bool           `json:"can_encode"`
+	CanDecode           bool           `json:"can_decode"`
+	MaxWidth            uint32         `json:"max_width"`
+	MaxHeight           uint32         `json:"max_height"`
+	PreferredFormat     string         `json:"preferred_format"`
 }
 
 type VulkanDeviceList struct {

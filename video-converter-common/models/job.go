@@ -19,13 +19,13 @@ type Job struct {
 }
 
 type ConversionConfig struct {
-	TargetResolution string // 1920x1080
-	Codec            string // h264
-	Bitrate          string // 5M
-	Preset           string // fast, medium, slow
-	UseVulkan        bool
-	AudioCodec       string // aac
-	AudioBitrate     string // 128k
+	TargetResolution string `json:"target_resolution"` // 1920x1080
+	Codec            string `json:"codec"`             // h264
+	Bitrate          string `json:"bitrate"`           // 5M
+	Preset           string `json:"preset"`            // fast, medium, slow
+	UseVulkan        bool   `json:"use_vulkan"`
+	AudioCodec       string `json:"audio_codec"`   // aac
+	AudioBitrate     string `json:"audio_bitrate"` // 128k
 }
 
 type WorkerHeartbeat struct {
