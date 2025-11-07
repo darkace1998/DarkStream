@@ -1,0 +1,34 @@
+worker:
+  id: worker-1
+  concurrency: 3
+  master_url: http://localhost:8080
+  heartbeat_interval: 30s
+  job_check_interval: 5s
+  job_timeout: 2h
+
+storage:
+  mount_path: /mnt/storage
+  download_timeout: 30m
+  cache_path: /tmp/converter-cache
+
+ffmpeg:
+  path: /usr/bin/ffmpeg
+  use_vulkan: true
+  timeout: 2h
+
+vulkan:
+  preferred_device: auto
+  enable_validation: false
+
+conversion:
+  target_resolution: 1920x1080
+  codec: h264
+  bitrate: 5M
+  preset: fast
+  audio_codec: aac
+  audio_bitrate: 128k
+
+logging:
+  level: info
+  format: json
+  output_path: ./worker.log
