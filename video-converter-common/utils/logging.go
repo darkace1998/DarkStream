@@ -3,6 +3,8 @@ package utils
 import (
 	"log/slog"
 	"os"
+
+	"github.com/darkace1998/video-converter-common/constants"
 )
 
 func InitLogger(level, format string) {
@@ -11,7 +13,7 @@ func InitLogger(level, format string) {
 	}
 
 	var handler slog.Handler
-	if format == "json" {
+	if format == constants.LogFormatJSON {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
 		handler = slog.NewTextHandler(os.Stdout, opts)
@@ -22,13 +24,13 @@ func InitLogger(level, format string) {
 
 func parseLogLevel(level string) slog.Level {
 	switch level {
-	case "debug":
+	case constants.LogLevelDebug:
 		return slog.LevelDebug
-	case "info":
+	case constants.LogLevelInfo:
 		return slog.LevelInfo
-	case "warn":
+	case constants.LogLevelWarn:
 		return slog.LevelWarn
-	case "error":
+	case constants.LogLevelError:
 		return slog.LevelError
 	default:
 		return slog.LevelInfo
