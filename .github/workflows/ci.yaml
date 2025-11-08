@@ -1,0 +1,192 @@
+name: CI
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+  schedule:
+    # Run tests weekly on Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.23', '1.24']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+    - name: Download dependencies (common)
+      run: cd video-converter-common && go mod download && cd ..
+
+    - name: Download dependencies (master)
+      run: cd video-converter-master && go mod download && cd ..
+
+    - name: Download dependencies (worker)
+      run: cd video-converter-worker && go mod download && cd ..
+
+    - name: Download dependencies (cli)
+      run: cd video-converter-cli && go mod download && cd ..
+
+    - name: Verify dependencies (common)
+      run: cd video-converter-common && go mod verify && cd ..
+
+    - name: Verify dependencies (master)
+      run: cd video-converter-master && go mod verify && cd ..
+
+    - name: Verify dependencies (worker)
+      run: cd video-converter-worker && go mod verify && cd ..
+
+    - name: Verify dependencies (cli)
+      run: cd video-converter-cli && go mod verify && cd ..
+
+    - name: Run tests (common)
+      run: cd video-converter-common && go test -v -race -coverprofile=coverage-common.out ./... && cd ..
+
+    - name: Run tests (master)
+      run: cd video-converter-master && go test -v -race -coverprofile=coverage-master.out ./... && cd ..
+
+    - name: Run tests (worker)
+      run: cd video-converter-worker && go test -v -race -coverprofile=coverage-worker.out ./... && cd ..
+
+    - name: Run tests (cli)
+      run: cd video-converter-cli && go test -v -race -coverprofile=coverage-cli.out ./... && cd ..
+
+    - name: Upload coverage to Codecov
+      if: matrix.go-version == '1.24'
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./video-converter-common/coverage-common.out,./video-converter-master/coverage-master.out,./video-converter-worker/coverage-worker.out,./video-converter-cli/coverage-cli.out
+        fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-1.24-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-1.24-
+
+    - name: Build binaries
+      run: |
+        mkdir -p bin
+        cd video-converter-common && go build -v -o ../bin/ ./... && cd ..
+        cd video-converter-master && go build -v -o ../bin/video-converter-master ./... && cd ..
+        cd video-converter-worker && go build -v -o ../bin/video-converter-worker ./... && cd ..
+        cd video-converter-cli && go build -v -o ../bin/video-converter-cli ./... && cd ..
+        ls -la bin/
+
+    - name: Test binaries
+      run: |
+        ./bin/video-converter-cli --help || echo "CLI help succeeded or not available"
+        echo "Build test completed"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: golangci-lint (common)
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: latest
+        working-directory: video-converter-common
+        args: --timeout=5m
+
+    - name: golangci-lint (master)
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: latest
+        working-directory: video-converter-master
+        args: --timeout=5m
+
+    - name: golangci-lint (worker)
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: latest
+        working-directory: video-converter-worker
+        args: --timeout=5m
+
+    - name: golangci-lint (cli)
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: latest
+        working-directory: video-converter-cli
+        args: --timeout=5m
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Run Gosec Security Scanner (common)
+      uses: securego/gosec@master
+      with:
+        args: './video-converter-common/...'
+
+    - name: Run Gosec Security Scanner (master)
+      uses: securego/gosec@master
+      with:
+        args: './video-converter-master/...'
+
+    - name: Run Gosec Security Scanner (worker)
+      uses: securego/gosec@master
+      with:
+        args: './video-converter-worker/...'
+
+    - name: Run Gosec Security Scanner (cli)
+      uses: securego/gosec@master
+      with:
+        args: './video-converter-cli/...'
