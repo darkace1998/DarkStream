@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +47,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	}
 
 	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID, vulkanCaps != nil && vulkanCaps.Supported)
+	masterClient.SetTransferTimeouts(cfg.Storage.DownloadTimeout, cfg.Storage.UploadTimeout)
 	validator := converter.NewValidator()
 
 	return &Worker{
@@ -116,26 +118,7 @@ func (w *Worker) processJobs(workerIndex int) {
 			}
 		} else {
 			slog.Info("Job completed successfully", "job_id", job.ID)
-			// Get output file size
-			outputSize, err := w.validator.GetFileSize(job.OutputPath)
-			if err != nil {
-				slog.Error("Failed to get output file size",
-					"job_id", job.ID,
-					"output_path", job.OutputPath,
-					"error", err,
-				)
-				if reportErr := w.masterClient.ReportJobFailed(job.ID, fmt.Sprintf("Failed to get output file size: %v", err)); reportErr != nil {
-					slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
-				}
-			} else {
-				if err := w.masterClient.ReportJobComplete(job.ID, outputSize); err != nil {
-					slog.Error("Failed to report job completion",
-						"job_id", job.ID,
-						"output_size", outputSize,
-						"error", err,
-					)
-				}
-			}
+			// Note: Job completion is already reported by the upload endpoint
 		}
 	}
 }
@@ -144,12 +127,47 @@ func (w *Worker) processJobs(workerIndex int) {
 //
 // Error Handling:
 // Returns an error in the following cases:
+//   - Download failure: If downloading the source video fails, returns a wrapped error with context "download failed".
 //   - Conversion failure: If the video conversion fails, returns a wrapped error with context "conversion failed".
 //   - Validation failure: If the output file fails validation, returns a wrapped error with context "validation failed".
+//   - Upload failure: If uploading the converted video fails, returns a wrapped error with context "upload failed".
 //
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
 func (w *Worker) executeJob(job *models.Job) error {
+	// Create job cache directory
+	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
+	if err := os.MkdirAll(jobCacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create job cache directory: %w", err)
+	}
+	defer w.cleanupJobCache(jobCacheDir)
+
+	// Download source video from master
+	// Preserve original file extension
+	sourceExt := filepath.Ext(job.SourcePath)
+	if sourceExt == "" {
+		sourceExt = ".mp4" // Default to .mp4 if no extension
+	}
+	sourceLocalPath := filepath.Join(jobCacheDir, "source"+sourceExt)
+	slog.Info("Downloading source video", "job_id", job.ID, "local_path", sourceLocalPath)
+	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Update job to use local source path
+	originalSourcePath := job.SourcePath
+	job.SourcePath = sourceLocalPath
+
+	// Update output path to local cache
+	// Preserve original output file extension
+	outputExt := filepath.Ext(job.OutputPath)
+	if outputExt == "" {
+		outputExt = ".mp4" // Default to .mp4 if no extension
+	}
+	outputLocalPath := filepath.Join(jobCacheDir, "output"+outputExt)
+	originalOutputPath := job.OutputPath
+	job.OutputPath = outputLocalPath
+
 	// Create conversion config
 	cfg := &models.ConversionConfig{
 		TargetResolution: w.config.Conversion.TargetResolution,
@@ -170,6 +188,16 @@ func (w *Worker) executeJob(job *models.Job) error {
 	if err := w.ffmpegConverter.ValidateOutput(job.OutputPath); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
+
+	// Upload converted video to master
+	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
+	if err := w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath); err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+
+	// Restore original paths for logging
+	job.SourcePath = originalSourcePath
+	job.OutputPath = originalOutputPath
 
 	return nil
 }
@@ -211,4 +239,15 @@ func getHostname() string {
 		return "unknown"
 	}
 	return host
+}
+
+// cleanupJobCache removes the job cache directory
+func (w *Worker) cleanupJobCache(jobCacheDir string) {
+	if err := os.RemoveAll(jobCacheDir); err != nil {
+		slog.Warn("Failed to cleanup job cache directory",
+			"path", jobCacheDir,
+			"error", err)
+	} else {
+		slog.Debug("Cleaned up job cache directory", "path", jobCacheDir)
+	}
 }
