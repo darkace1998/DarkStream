@@ -12,16 +12,21 @@ func Init(level, format string) {
 	}
 
 	var handler slog.Handler
+	var unsupportedFormat bool
 	if format == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
 		if format != "text" && format != "" {
-			slog.Warn("Unsupported log format, defaulting to text", "format", format)
+			unsupportedFormat = true
 		}
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 
 	slog.SetDefault(slog.New(handler))
+
+	if unsupportedFormat {
+		slog.Warn("Unsupported log format, defaulting to text", "format", format)
+	}
 }
 
 func parseLogLevel(level string) slog.Level {

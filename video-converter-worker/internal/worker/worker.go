@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -93,7 +94,11 @@ func (w *Worker) processJobs(workerIndex int) {
 
 		job, err := w.masterClient.GetNextJob()
 		if err != nil {
-			slog.Debug("No jobs available, waiting", "error", err)
+			if errors.Is(err, client.ErrNoJobsAvailable) {
+				slog.Debug("No jobs available, waiting")
+			} else {
+				slog.Error("Failed to get next job", "error", err)
+			}
 			time.Sleep(w.config.Worker.JobCheckInterval)
 			continue
 		}

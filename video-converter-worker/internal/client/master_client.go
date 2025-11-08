@@ -3,13 +3,18 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 )
+
+// ErrNoJobsAvailable is returned when no jobs are available from the master
+var ErrNoJobsAvailable = errors.New("no jobs available")
 
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
@@ -24,7 +29,7 @@ func New(baseURL string, workerID string, gpuAvailable bool) *MasterClient {
 	return &MasterClient{
 		baseURL:      baseURL,
 		workerID:     workerID,
-		client:       &http.Client{},
+		client:       &http.Client{Timeout: 30 * time.Second},
 		gpuAvailable: gpuAvailable,
 	}
 }
@@ -41,7 +46,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNoContent {
-		return nil, fmt.Errorf("no jobs available")
+		return nil, ErrNoJobsAvailable
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -139,4 +144,11 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		slog.Warn("Heartbeat response status not OK",
+			"status", resp.StatusCode,
+			"body", string(body))
+	}
 }
