@@ -32,6 +32,31 @@ func initVulkan() error {
 	return vulkanInitErr
 }
 
+// createVulkanInstance creates a Vulkan instance for device enumeration
+func createVulkanInstance() (vk.Instance, error) {
+	appInfo := &vk.ApplicationInfo{
+		SType:              vk.StructureTypeApplicationInfo,
+		PApplicationName:   "DarkStream Video Converter\x00",
+		ApplicationVersion: vk.MakeVersion(1, 0, 0),
+		PEngineName:        "No Engine\x00",
+		EngineVersion:      vk.MakeVersion(1, 0, 0),
+		ApiVersion:         vk.ApiVersion10,
+	}
+
+	instanceCreateInfo := &vk.InstanceCreateInfo{
+		SType:            vk.StructureTypeInstanceCreateInfo,
+		PApplicationInfo: appInfo,
+	}
+
+	var instance vk.Instance
+	result := vk.CreateInstance(instanceCreateInfo, nil, &instance)
+	if result != vk.Success {
+		return nil, fmt.Errorf("failed to create Vulkan instance: %v", result)
+	}
+
+	return instance, nil
+}
+
 // NewVulkanDetector creates a new VulkanDetector instance
 func NewVulkanDetector(preferredDevice string) *VulkanDetector {
 	return &VulkanDetector{
@@ -139,30 +164,15 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 	}
 
 	// Create Vulkan instance
-	appInfo := &vk.ApplicationInfo{
-		SType:              vk.StructureTypeApplicationInfo,
-		PApplicationName:   "DarkStream Video Converter\x00",
-		ApplicationVersion: vk.MakeVersion(1, 0, 0),
-		PEngineName:        "No Engine\x00",
-		EngineVersion:      vk.MakeVersion(1, 0, 0),
-		ApiVersion:         vk.ApiVersion10,
-	}
-
-	instanceCreateInfo := &vk.InstanceCreateInfo{
-		SType:            vk.StructureTypeInstanceCreateInfo,
-		PApplicationInfo: appInfo,
-	}
-
-	var instance vk.Instance
-	result := vk.CreateInstance(instanceCreateInfo, nil, &instance)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to create Vulkan instance: %v", result)
+	instance, err := createVulkanInstance()
+	if err != nil {
+		return nil, err
 	}
 	defer vk.DestroyInstance(instance, nil)
 
 	// Enumerate physical devices to find our device
 	var deviceCount uint32
-	result = vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
+	result := vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
 	if result != vk.Success {
 		return nil, fmt.Errorf("failed to enumerate physical devices: %v", result)
 	}
@@ -192,9 +202,24 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 				vk.Version(props.ApiVersion).Patch(),
 			)
 
-			// Get max image dimensions
-			caps.MaxWidth = props.Limits.MaxImageDimension2D
-			caps.MaxHeight = props.Limits.MaxImageDimension2D
+			// Set conservative video resolution limits based on device type.
+			// Note: MaxImageDimension2D is for textures, not video encoding/decoding.
+			// True video limits would require querying VK_KHR_video_queue extensions.
+			// We use conservative defaults based on typical device capabilities.
+			switch device.Type {
+			case constants.VulkanDeviceTypeDiscrete:
+				// Discrete GPUs typically support up to 8K
+				caps.MaxWidth = 7680
+				caps.MaxHeight = 4320
+			case constants.VulkanDeviceTypeIntegrated:
+				// Integrated GPUs typically support up to 4K
+				caps.MaxWidth = 3840
+				caps.MaxHeight = 2160
+			default:
+				// Conservative defaults for other device types
+				caps.MaxWidth = 1920
+				caps.MaxHeight = 1080
+			}
 
 			break
 		}
@@ -216,13 +241,11 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 				extName := vk.ToString(extensions[i].ExtensionName[:])
 				caps.SupportedExtensions = append(caps.SupportedExtensions, extName)
 
-				// Check for video encoding/decoding extensions
-				if strings.Contains(extName, "video_encode") ||
-					strings.Contains(extName, "VK_KHR_video_encode") {
+				// Check for video encoding/decoding extensions using exact match
+				if extName == "VK_KHR_video_encode_queue" {
 					caps.CanEncode = true
 				}
-				if strings.Contains(extName, "video_decode") ||
-					strings.Contains(extName, "VK_KHR_video_decode") {
+				if extName == "VK_KHR_video_decode_queue" {
 					caps.CanDecode = true
 				}
 			}
@@ -250,30 +273,15 @@ func (vd *VulkanDetector) listVulkanDevices() ([]models.VulkanDevice, error) {
 	}
 
 	// Create Vulkan instance
-	appInfo := &vk.ApplicationInfo{
-		SType:              vk.StructureTypeApplicationInfo,
-		PApplicationName:   "DarkStream Video Converter\x00",
-		ApplicationVersion: vk.MakeVersion(1, 0, 0),
-		PEngineName:        "No Engine\x00",
-		EngineVersion:      vk.MakeVersion(1, 0, 0),
-		ApiVersion:         vk.ApiVersion10,
-	}
-
-	instanceCreateInfo := &vk.InstanceCreateInfo{
-		SType:            vk.StructureTypeInstanceCreateInfo,
-		PApplicationInfo: appInfo,
-	}
-
-	var instance vk.Instance
-	result := vk.CreateInstance(instanceCreateInfo, nil, &instance)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to create Vulkan instance: %v", result)
+	instance, err := createVulkanInstance()
+	if err != nil {
+		return nil, err
 	}
 	defer vk.DestroyInstance(instance, nil)
 
 	// Enumerate physical devices
 	var deviceCount uint32
-	result = vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
+	result := vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
 	if result != vk.Success {
 		return nil, fmt.Errorf("failed to enumerate physical devices: %v", result)
 	}
@@ -301,12 +309,25 @@ func (vd *VulkanDetector) listVulkanDevices() ([]models.VulkanDevice, error) {
 		// Map Vulkan device type to our constants
 		deviceType := mapVulkanDeviceType(props.DeviceType)
 
-		// Format driver version (vendor-specific, but we'll use a simple format)
-		driverVersion := fmt.Sprintf("%d.%d.%d",
-			vk.Version(props.DriverVersion).Major(),
-			vk.Version(props.DriverVersion).Minor(),
-			vk.Version(props.DriverVersion).Patch(),
-		)
+		// Format driver version.
+		// Note: NVIDIA uses a vendor-specific encoding for driver version.
+		// Other vendors typically use the standard Vulkan version format.
+		var driverVersion string
+		if props.VendorID == 0x10DE { // NVIDIA
+			// NVIDIA encoding: bits 31-22: major, 21-14: minor, 13-6: patch, 5-0: build
+			major := (props.DriverVersion >> 22) & 0x3FF
+			minor := (props.DriverVersion >> 14) & 0xFF
+			patch := (props.DriverVersion >> 6) & 0xFF
+			build := props.DriverVersion & 0x3F
+			driverVersion = fmt.Sprintf("%d.%d.%d.%d", major, minor, patch, build)
+		} else {
+			// Standard Vulkan version format for other vendors
+			driverVersion = fmt.Sprintf("%d.%d.%d",
+				vk.Version(props.DriverVersion).Major(),
+				vk.Version(props.DriverVersion).Minor(),
+				vk.Version(props.DriverVersion).Patch(),
+			)
+		}
 
 		// Check queue family support for compute/graphics
 		var queueFamilyCount uint32
@@ -378,65 +399,65 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 // selectDeviceWithPreference selects a device based on the given preference
 // This is a pure function that doesn't modify state, avoiding race conditions
 func selectDeviceWithPreference(devices []models.VulkanDevice, preference string) models.VulkanDevice {
-	if preference == "auto" || preference == "" {
-		// Auto mode: prioritize discrete GPUs, then integrated, then others
-		// First, try to find an available discrete GPU
+	// Use auto-selection logic for "auto" or empty preference, or as fallback
+	autoSelect := preference == "auto" || preference == ""
+
+	if !autoSelect {
+		// Find preferred device by name (case-insensitive)
+		preferredLower := strings.ToLower(preference)
 		for _, dev := range devices {
-			if dev.Available && dev.Type == constants.VulkanDeviceTypeDiscrete {
-				slog.Info("Auto-selected discrete GPU", "device", dev.Name)
+			if strings.Contains(strings.ToLower(dev.Name), preferredLower) && dev.Available {
+				slog.Info("Selected preferred device", "device", dev.Name, "preferred", preference)
 				return dev
 			}
 		}
 
-		// Next, try integrated GPU
+		// If preferred device not found available, check unavailable devices
 		for _, dev := range devices {
-			if dev.Available && dev.Type == constants.VulkanDeviceTypeIntegrated {
-				slog.Info("Auto-selected integrated GPU", "device", dev.Name)
-				return dev
+			if strings.Contains(strings.ToLower(dev.Name), preferredLower) {
+				slog.Warn("Preferred device found but not available",
+					"device", dev.Name,
+					"preferred", preference,
+				)
 			}
 		}
 
-		// Finally, select any available device
-		for _, dev := range devices {
-			if dev.Available {
-				slog.Info("Auto-selected available device", "device", dev.Name, "type", dev.Type)
-				return dev
-			}
-		}
-
-		// If no available devices found, return first device anyway
-		if len(devices) > 0 {
-			slog.Warn("No available devices found, using first device", "device", devices[0].Name)
-			return devices[0]
-		}
-		// Return empty device if no devices at all (shouldn't happen due to check in DetectVulkanCapabilities)
-		return models.VulkanDevice{}
+		// Fallback to auto-selection
+		slog.Warn("Preferred Vulkan device not found, falling back to auto-selection",
+			"preferred_device", preference,
+		)
 	}
 
-	// Find preferred device by name (case-insensitive)
-	preferredLower := strings.ToLower(preference)
+	// Auto-selection logic: prioritize discrete GPUs, then integrated, then others
+	// First, try to find an available discrete GPU
 	for _, dev := range devices {
-		if strings.Contains(strings.ToLower(dev.Name), preferredLower) && dev.Available {
-			slog.Info("Selected preferred device", "device", dev.Name, "preferred", preference)
+		if dev.Available && dev.Type == constants.VulkanDeviceTypeDiscrete {
+			slog.Info("Auto-selected discrete GPU", "device", dev.Name)
 			return dev
 		}
 	}
 
-	// If preferred device not found available, check unavailable devices
+	// Next, try integrated GPU
 	for _, dev := range devices {
-		if strings.Contains(strings.ToLower(dev.Name), preferredLower) {
-			slog.Warn("Preferred device found but not available",
-				"device", dev.Name,
-				"preferred", preference,
-			)
+		if dev.Available && dev.Type == constants.VulkanDeviceTypeIntegrated {
+			slog.Info("Auto-selected integrated GPU", "device", dev.Name)
+			return dev
 		}
 	}
 
-	// Fallback to auto-selection logic
-	slog.Warn("Preferred Vulkan device not found, falling back to auto-selection",
-		"preferred_device", preference,
-	)
+	// Finally, select any available device
+	for _, dev := range devices {
+		if dev.Available {
+			slog.Info("Auto-selected available device", "device", dev.Name, "type", dev.Type)
+			return dev
+		}
+	}
 
-	// Reuse auto-selection logic by calling with "auto"
-	return selectDeviceWithPreference(devices, "auto")
+	// If no available devices found, return first device anyway
+	if len(devices) > 0 {
+		slog.Warn("No available devices found, using first device", "device", devices[0].Name)
+		return devices[0]
+	}
+	// Return empty device if no devices at all (shouldn't happen due to check in DetectVulkanCapabilities)
+	return models.VulkanDevice{}
 }
