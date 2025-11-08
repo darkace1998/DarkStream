@@ -4,15 +4,32 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 	vk "github.com/vulkan-go/vulkan"
 )
 
+var (
+	vulkanInitOnce sync.Once
+	vulkanInitErr  error
+)
+
 // VulkanDetector handles detection and selection of Vulkan-capable GPUs
 type VulkanDetector struct {
 	preferredDevice string
+}
+
+// initVulkan initializes the Vulkan library once
+func initVulkan() error {
+	vulkanInitOnce.Do(func() {
+		vulkanInitErr = vk.Init()
+		if vulkanInitErr != nil {
+			slog.Warn("Vulkan library not found or failed to initialize", "error", vulkanInitErr)
+		}
+	})
+	return vulkanInitErr
 }
 
 // NewVulkanDetector creates a new VulkanDetector instance
@@ -116,8 +133,8 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 		MaxHeight:           2160,
 	}
 
-	// Initialize Vulkan
-	if err := vk.Init(); err != nil {
+	// Initialize Vulkan (only happens once)
+	if err := initVulkan(); err != nil {
 		return nil, fmt.Errorf("failed to initialize Vulkan: %w", err)
 	}
 
@@ -227,9 +244,8 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 
 // listVulkanDevices enumerates available Vulkan devices
 func (vd *VulkanDetector) listVulkanDevices() ([]models.VulkanDevice, error) {
-	// Initialize Vulkan
-	if err := vk.Init(); err != nil {
-		slog.Warn("Vulkan library not found or failed to initialize", "error", err)
+	// Initialize Vulkan (only happens once)
+	if err := initVulkan(); err != nil {
 		return nil, fmt.Errorf("failed to initialize Vulkan: %w", err)
 	}
 
@@ -356,7 +372,13 @@ func mapVulkanDeviceType(vkType vk.PhysicalDeviceType) string {
 
 // selectDevice selects the appropriate Vulkan device based on preferences
 func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.VulkanDevice {
-	if vd.preferredDevice == "auto" || vd.preferredDevice == "" {
+	return selectDeviceWithPreference(devices, vd.preferredDevice)
+}
+
+// selectDeviceWithPreference selects a device based on the given preference
+// This is a pure function that doesn't modify state, avoiding race conditions
+func selectDeviceWithPreference(devices []models.VulkanDevice, preference string) models.VulkanDevice {
+	if preference == "auto" || preference == "" {
 		// Auto mode: prioritize discrete GPUs, then integrated, then others
 		// First, try to find an available discrete GPU
 		for _, dev := range devices {
@@ -392,10 +414,10 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 	}
 
 	// Find preferred device by name (case-insensitive)
-	preferredLower := strings.ToLower(vd.preferredDevice)
+	preferredLower := strings.ToLower(preference)
 	for _, dev := range devices {
 		if strings.Contains(strings.ToLower(dev.Name), preferredLower) && dev.Available {
-			slog.Info("Selected preferred device", "device", dev.Name, "preferred", vd.preferredDevice)
+			slog.Info("Selected preferred device", "device", dev.Name, "preferred", preference)
 			return dev
 		}
 	}
@@ -405,20 +427,16 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 		if strings.Contains(strings.ToLower(dev.Name), preferredLower) {
 			slog.Warn("Preferred device found but not available",
 				"device", dev.Name,
-				"preferred", vd.preferredDevice,
+				"preferred", preference,
 			)
 		}
 	}
 
 	// Fallback to auto-selection logic
 	slog.Warn("Preferred Vulkan device not found, falling back to auto-selection",
-		"preferred_device", vd.preferredDevice,
+		"preferred_device", preference,
 	)
 
-	// Reuse auto-selection logic by recursively calling with "auto"
-	originalPreference := vd.preferredDevice
-	vd.preferredDevice = "auto"
-	selected := vd.selectDevice(devices)
-	vd.preferredDevice = originalPreference
-	return selected
+	// Reuse auto-selection logic by calling with "auto"
+	return selectDeviceWithPreference(devices, "auto")
 }
