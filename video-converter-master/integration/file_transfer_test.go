@@ -151,7 +151,7 @@ logging:
 		// Create a fake converted video
 		convertedContent := []byte("fake converted video content")
 		convertedFile := filepath.Join(testDir, "converted-test.mp4")
-		if err := os.WriteFile(convertedFile, convertedContent, 0600); err != nil {
+		if err := os.WriteFile(convertedFile, convertedContent, 0644); err != nil {
 			t.Fatalf("Failed to create converted video: %v", err)
 		}
 

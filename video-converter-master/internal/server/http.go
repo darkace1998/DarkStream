@@ -17,7 +17,7 @@ import (
 )
 
 // jobIDPattern validates job IDs to prevent injection attacks
-var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`)
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // validateJobID checks if a job ID is valid
 func validateJobID(jobID string) bool {

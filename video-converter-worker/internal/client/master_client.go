@@ -331,13 +331,13 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 	errChan := make(chan error, 1)
 	go func() {
 		defer func() {
-			if cerr := pipeWriter.Close(); cerr != nil {
-				slog.Warn("Failed to close pipe writer", "error", cerr)
+			if cerr := multipartWriter.Close(); cerr != nil {
+				slog.Warn("Failed to close multipart writer", "error", cerr)
 			}
 		}()
 		defer func() {
-			if cerr := multipartWriter.Close(); cerr != nil {
-				slog.Warn("Failed to close multipart writer", "error", cerr)
+			if cerr := pipeWriter.Close(); cerr != nil {
+				slog.Warn("Failed to close pipe writer", "error", cerr)
 			}
 		}()
 
