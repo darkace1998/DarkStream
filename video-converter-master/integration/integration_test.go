@@ -26,11 +26,11 @@ videosDir := filepath.Join(testDir, "videos")
 convertedDir := filepath.Join(testDir, "converted")
 dbPath := filepath.Join(testDir, "jobs.db")
 
-if err := os.MkdirAll(videosDir, 0755); err != nil {
-t.Fatalf("Failed to create videos directory: %v", err)
+if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	t.Fatalf("Failed to create videos directory: %v", err)
 }
-if err := os.MkdirAll(convertedDir, 0755); err != nil {
-t.Fatalf("Failed to create converted directory: %v", err)
+if err := os.MkdirAll(convertedDir, 0o750); err != nil {
+	t.Fatalf("Failed to create converted directory: %v", err)
 }
 
 // Copy test videos to input directory
@@ -76,19 +76,24 @@ logging:
 `, videosDir, convertedDir, dbPath, filepath.Join(testDir, "master.log"))
 
 masterConfigPath := filepath.Join(testDir, "master-config.yaml")
-if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0644); err != nil {
-t.Fatalf("Failed to write master config: %v", err)
+if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600); err != nil {
+	t.Fatalf("Failed to write master config: %v", err)
 }
 
 // Build master if needed
 masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
 
 // Start master server
+// #nosec G204 - masterBinary is constructed from controlled paths, not user input
 masterCmd := exec.Command(masterBinary, "--config", masterConfigPath)
 if err := masterCmd.Start(); err != nil {
-t.Fatalf("Failed to start master: %v", err)
+	t.Fatalf("Failed to start master: %v", err)
 }
-defer masterCmd.Process.Kill()
+defer func() {
+	if err := masterCmd.Process.Kill(); err != nil {
+		t.Logf("Failed to kill master process: %v", err)
+	}
+}()
 
 // Wait for master to start
 time.Sleep(3 * time.Second)
@@ -96,19 +101,27 @@ time.Sleep(3 * time.Second)
 // Verify master API is accessible
 resp, err := http.Get("http://127.0.0.1:18080/api/status")
 if err != nil {
-t.Fatalf("Master API not accessible: %v", err)
+	t.Fatalf("Master API not accessible: %v", err)
 }
-resp.Body.Close()
+defer func() {
+	if err := resp.Body.Close(); err != nil {
+		t.Logf("Failed to close response body: %v", err)
+	}
+}()
 if resp.StatusCode != http.StatusOK {
-t.Fatalf("Master API returned status %d", resp.StatusCode)
+	t.Fatalf("Master API returned status %d", resp.StatusCode)
 }
 
 // Verify jobs were created in database
 db, err := sql.Open("sqlite3", dbPath)
 if err != nil {
-t.Fatalf("Failed to open database: %v", err)
+	t.Fatalf("Failed to open database: %v", err)
 }
-defer db.Close()
+defer func() {
+	if err := db.Close(); err != nil {
+		t.Logf("Failed to close database: %v", err)
+	}
+}()
 
 var jobCount int
 err = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&jobCount)
@@ -125,17 +138,27 @@ t.Log("Integration test passed: Master server working correctly with test videos
 
 // copyFile copies a file from src to dst
 func copyFile(src, dst string) error {
-sourceFile, err := os.Open(src)
-if err != nil {
-return err
-}
-defer sourceFile.Close()
+	// #nosec G304 - src and dst are controlled test file paths, not user input
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := sourceFile.Close(); err != nil {
+			_ = err // Silently ignore close error in helper
+		}
+	}()
 
-destFile, err := os.Create(dst)
-if err != nil {
-return err
-}
-defer destFile.Close()
+	// #nosec G304 - dst is a controlled test file path, not user input
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := destFile.Close(); err != nil {
+			_ = err // Silently ignore close error in helper
+		}
+	}()
 
 _, err = io.Copy(destFile, sourceFile)
 return err

@@ -190,6 +190,7 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
+			//nolint:gosec // G115: attempt is bounded by maxRetries (3), bit shift is safe
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
@@ -241,11 +242,12 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 
 	// Create output directory
 	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	// Create output file
+	// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
 	outFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
@@ -286,6 +288,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
+			//nolint:gosec // G115: attempt is bounded by maxRetries (3), bit shift is safe
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
@@ -309,6 +312,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 // uploadConvertedVideoAttempt performs a single upload attempt
 func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) error {
 	// Open the file
+	//nolint:gosec // G304: filePath is derived from job metadata, not untrusted user input
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open video file: %w", err)

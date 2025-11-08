@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// Detect displays GPU and Vulkan capabilities available on the system.
 func Detect(args []string) {
 	fmt.Println("🖥️  GPU / Vulkan Detection")
 	fmt.Println()

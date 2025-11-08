@@ -26,17 +26,17 @@ func TestFileTransferWorkflow(t *testing.T) {
 	convertedDir := filepath.Join(testDir, "converted")
 	dbPath := filepath.Join(testDir, "jobs.db")
 
-	if err := os.MkdirAll(videosDir, 0755); err != nil {
+	if err := os.MkdirAll(videosDir, 0o750); err != nil {
 		t.Fatalf("Failed to create videos directory: %v", err)
 	}
-	if err := os.MkdirAll(convertedDir, 0755); err != nil {
+	if err := os.MkdirAll(convertedDir, 0o750); err != nil {
 		t.Fatalf("Failed to create converted directory: %v", err)
 	}
 
 	// Create a test video file
 	testVideoPath := filepath.Join(videosDir, "test.mp4")
 	testVideoContent := []byte("fake video content for testing")
-	if err := os.WriteFile(testVideoPath, testVideoContent, 0644); err != nil {
+	if err := os.WriteFile(testVideoPath, testVideoContent, 0o600); err != nil {
 		t.Fatalf("Failed to create test video: %v", err)
 	}
 
@@ -112,7 +112,7 @@ logging:
 `, videosDir, convertedDir, dbPath, filepath.Join(testDir, "master.log"))
 
 	masterConfigPath := filepath.Join(testDir, "master-config.yaml")
-	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0600); err != nil {
+	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600); err != nil {
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
@@ -151,7 +151,7 @@ logging:
 		// Create a fake converted video
 		convertedContent := []byte("fake converted video content")
 		convertedFile := filepath.Join(testDir, "converted-test.mp4")
-		if err := os.WriteFile(convertedFile, convertedContent, 0644); err != nil {
+		if err := os.WriteFile(convertedFile, convertedContent, 0o600); err != nil {
 			t.Fatalf("Failed to create converted video: %v", err)
 		}
 
@@ -196,10 +196,12 @@ func TestDownloadRetryLogic(t *testing.T) {
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
+			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			t.Logf("Retry attempt %d would wait for %v", attempt+1, delay)
 			
 			// Verify exponential backoff calculation
+			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
 			expectedDelay := baseDelay * time.Duration(1<<uint(attempt-1))
 			if delay != expectedDelay {
 				t.Errorf("Expected delay %v, got %v", expectedDelay, delay)
@@ -220,7 +222,7 @@ func TestUploadMultipartForm(t *testing.T) {
 	testDir := t.TempDir()
 	testFile := filepath.Join(testDir, "test.mp4")
 	testContent := []byte("test video content")
-	if err := os.WriteFile(testFile, testContent, 0600); err != nil {
+	if err := os.WriteFile(testFile, testContent, 0o600); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -228,6 +230,7 @@ func TestUploadMultipartForm(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	
+	// #nosec G304 - testFile is a controlled temporary test file path
 	file, err := os.Open(testFile)
 	if err != nil {
 		t.Fatalf("Failed to open test file: %v", err)

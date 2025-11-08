@@ -18,7 +18,11 @@ func TestTrackerCreateAndGetJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
 
 	// Create a test job
 	job := &models.Job{
@@ -62,7 +66,11 @@ func TestTrackerUpdateJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
 
 	// Create and insert job
 	job := &models.Job{
@@ -109,7 +117,11 @@ func TestTrackerWorkerHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
 
 	// Create heartbeat
 	hb := &models.WorkerHeartbeat{
@@ -145,7 +157,11 @@ func TestDatabaseCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
 
 	// Verify database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -161,7 +177,11 @@ func TestGetJobByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
 
 	// Create a test job
 	job := &models.Job{

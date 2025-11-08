@@ -105,21 +105,26 @@ func (w *Worker) processJobs(workerIndex int) {
 			continue
 		}
 
-		atomic.AddInt32(&w.activeJobs, 1)
-		defer atomic.AddInt32(&w.activeJobs, -1)
+		w.processJob(job)
+	}
+}
 
-		if err := w.executeJob(job); err != nil {
-			slog.Error("Job execution failed",
-				"job_id", job.ID,
-				"error", err,
-			)
-			if reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error()); reportErr != nil {
-				slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
-			}
-		} else {
-			slog.Info("Job completed successfully", "job_id", job.ID)
-			// Note: Job completion is already reported by the upload endpoint
+// processJob wraps a single job execution with proper resource management
+func (w *Worker) processJob(job *models.Job) {
+	atomic.AddInt32(&w.activeJobs, 1)
+	defer atomic.AddInt32(&w.activeJobs, -1)
+
+	if err := w.executeJob(job); err != nil {
+		slog.Error("Job execution failed",
+			"job_id", job.ID,
+			"error", err,
+		)
+		if reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error()); reportErr != nil {
+			slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
 		}
+	} else {
+		slog.Info("Job completed successfully", "job_id", job.ID)
+		// Note: Job completion is already reported by the upload endpoint
 	}
 }
 
@@ -137,7 +142,7 @@ func (w *Worker) processJobs(workerIndex int) {
 func (w *Worker) executeJob(job *models.Job) error {
 	// Create job cache directory
 	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
-	if err := os.MkdirAll(jobCacheDir, 0755); err != nil {
+	if err := os.MkdirAll(jobCacheDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create job cache directory: %w", err)
 	}
 	defer w.cleanupJobCache(jobCacheDir)

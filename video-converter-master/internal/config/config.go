@@ -10,6 +10,7 @@ import (
 
 // LoadMasterConfig reads and parses the master configuration file
 func LoadMasterConfig(path string) (*models.MasterConfig, error) {
+	// #nosec G304 - path is from command-line flags/config, not untrusted network input
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)

@@ -10,6 +10,7 @@ import (
 
 // LoadWorkerConfig reads and parses the worker configuration file
 func LoadWorkerConfig(path string) (*models.WorkerConfig, error) {
+	// #nosec G304 - path is from command-line flags/config, not untrusted network input
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)

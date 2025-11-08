@@ -12,7 +12,7 @@ func TestScanDirectory(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0755); err != nil {
+	if err := os.MkdirAll(videosDir, 0o750); err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
@@ -26,7 +26,7 @@ func TestScanDirectory(t *testing.T) {
 
 	for _, filename := range testFiles {
 		path := filepath.Join(videosDir, filename)
-		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}

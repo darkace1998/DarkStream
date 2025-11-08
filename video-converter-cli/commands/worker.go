@@ -7,9 +7,9 @@ import (
 	"os/exec"
 )
 
+// Worker starts the worker process with the provided configuration file.
 func Worker(args []string) {
-	fs := flag.NewFlagSet("worker", flag.ExitOnError)
-	fs.Parse(args)
+	_ = flag.NewFlagSet("worker", flag.ExitOnError)
 
 	// Expect the config file path as the first positional argument
 	if len(args) == 0 {
@@ -31,6 +31,7 @@ func Worker(args []string) {
 	}
 
 	// Execute the worker binary with the config
+	// #nosec G204 - configPath is from command-line args, not user input from network
 	cmd := exec.Command(workerBinary, "--config", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

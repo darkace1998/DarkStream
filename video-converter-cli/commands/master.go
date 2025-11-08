@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 )
 
+// Master starts the master coordinator process with the provided configuration file.
 func Master(args []string) {
-	fs := flag.NewFlagSet("master", flag.ExitOnError)
-	fs.Parse(args)
+	_ = flag.NewFlagSet("master", flag.ExitOnError)
 
 	// Expect the config file path as the first positional argument
 	if len(args) == 0 {
@@ -32,6 +32,7 @@ func Master(args []string) {
 	}
 
 	// Execute the master binary with the config
+	// #nosec G204 - configPath is from command-line args, not user input from network
 	cmd := exec.Command(masterBinary, "--config", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -77,5 +78,5 @@ func findBinary(name string) (string, error) {
 // On Windows, all files may appear executable. Consider using runtime.GOOS checks
 // or accepting that Windows behavior differs.
 func isExecutable(info os.FileInfo) bool {
-	return info.Mode()&0111 != 0
+	return info.Mode()&0o111 != 0
 }

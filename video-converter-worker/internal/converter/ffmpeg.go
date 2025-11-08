@@ -51,7 +51,7 @@ func (fc *FFmpegConverter) ConvertVideo(
 
 	// Ensure output directory exists
 	outputDir := filepath.Dir(job.OutputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -62,6 +62,7 @@ func (fc *FFmpegConverter) ConvertVideo(
 	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
 	defer cancel()
 
+	// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
 	cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -133,10 +134,8 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	args = append(args,
 		"-c:a", cfg.AudioCodec,
 		"-b:a", cfg.AudioBitrate,
+		"-y", job.OutputPath,
 	)
-
-	// Output file (overwrite if exists)
-	args = append(args, "-y", job.OutputPath)
 
 	return args
 }

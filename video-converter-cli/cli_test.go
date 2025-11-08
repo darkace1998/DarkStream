@@ -101,10 +101,16 @@ func TestEndToEndWithMaster(t *testing.T) {
 
 	// Create test directories
 	testDir := "/tmp/cli-integration-test"
-	os.RemoveAll(testDir)
-	os.MkdirAll(testDir+"/videos", 0755)
-	os.MkdirAll(testDir+"/converted", 0755)
-	defer os.RemoveAll(testDir)
+	_ = os.RemoveAll(testDir)
+	if err := os.MkdirAll(testDir+"/videos", 0o750); err != nil {
+		t.Fatalf("Failed to create test directories: %v", err)
+	}
+	if err := os.MkdirAll(testDir+"/converted", 0o750); err != nil {
+		t.Fatalf("Failed to create test directories: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(testDir)
+	}()
 
 	// Create test config
 	config := `server:
@@ -128,7 +134,7 @@ logging:
   format: text
 `
 	configPath := testDir + "/master-config.yaml"
-	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -140,7 +146,11 @@ logging:
 	if err := masterCmd.Start(); err != nil {
 		t.Fatalf("Failed to start master: %v", err)
 	}
-	defer masterCmd.Process.Kill()
+	defer func() {
+		if err := masterCmd.Process.Kill(); err != nil {
+			t.Logf("Failed to kill master process: %v", err)
+		}
+	}()
 
 	// Wait for server to start
 	time.Sleep(2 * time.Second)

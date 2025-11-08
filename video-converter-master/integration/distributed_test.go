@@ -18,23 +18,25 @@ import (
 
 // copyFile copies a file from src to dst
 func copyFileHelper(src, dst string) error {
+	// #nosec G304 - src is a controlled test file path, not user input
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if cerr := sourceFile.Close(); cerr != nil {
-			// Log but don't fail
+			_ = cerr // Silently ignore close error in helper
 		}
 	}()
 
+	// #nosec G304 - dst is a controlled test file path, not user input
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil {
-			// Log but don't fail
+			_ = cerr // Silently ignore close error in helper
 		}
 	}()
 
@@ -58,7 +60,7 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Create directories
 	for _, dir := range []string{videosDir, convertedDir, worker1Cache, worker2Cache} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
 		}
 	}
@@ -73,7 +75,7 @@ func TestDistributedFileTransfer(t *testing.T) {
 			t.Logf("Warning: Failed to copy test video %s: %v (will create dummy)", video, err)
 			// Create a dummy video file if real one not available
 			dummyContent := bytes.Repeat([]byte("fake video content "), 10000) // ~200KB
-			if err := os.WriteFile(dst, dummyContent, 0600); err != nil {
+			if err := os.WriteFile(dst, dummyContent, 0o600); err != nil {
 				t.Fatalf("Failed to create dummy video %s: %v", video, err)
 			}
 		}
@@ -110,7 +112,7 @@ logging:
 `, videosDir, convertedDir, dbPath, filepath.Join(testDir, "master.log"))
 
 	masterConfigPath := filepath.Join(testDir, "master-config.yaml")
-	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0600); err != nil {
+	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600); err != nil {
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
@@ -127,6 +129,7 @@ logging:
 
 	// Start master server
 	t.Log("Starting master server...")
+	// #nosec G204 - masterBinary is constructed from controlled paths, not user input
 	masterCmd := exec.Command(masterBinary, "--config", masterConfigPath)
 	masterCmd.Stdout = os.Stdout
 	masterCmd.Stderr = os.Stderr
@@ -228,12 +231,12 @@ logging:
 	}
 
 	worker1ConfigPath := filepath.Join(testDir, "worker1-config.yaml")
-	if err := os.WriteFile(worker1ConfigPath, []byte(createWorkerConfig("worker-1", worker1Cache)), 0600); err != nil {
+	if err := os.WriteFile(worker1ConfigPath, []byte(createWorkerConfig("worker-1", worker1Cache)), 0o600); err != nil {
 		t.Fatalf("Failed to write worker1 config: %v", err)
 	}
 
 	worker2ConfigPath := filepath.Join(testDir, "worker2-config.yaml")
-	if err := os.WriteFile(worker2ConfigPath, []byte(createWorkerConfig("worker-2", worker2Cache)), 0600); err != nil {
+	if err := os.WriteFile(worker2ConfigPath, []byte(createWorkerConfig("worker-2", worker2Cache)), 0o600); err != nil {
 		t.Fatalf("Failed to write worker2 config: %v", err)
 	}
 
@@ -244,6 +247,7 @@ logging:
 
 	// Start worker 1
 	t.Log("Starting worker 1...")
+	// #nosec G204 - workerBinary is constructed from controlled paths, not user input
 	worker1Cmd := exec.Command(workerBinary, "--config", worker1ConfigPath)
 	worker1Cmd.Stdout = os.Stdout
 	worker1Cmd.Stderr = os.Stderr
@@ -260,6 +264,7 @@ logging:
 
 	// Start worker 2
 	t.Log("Starting worker 2...")
+	// #nosec G204 - workerBinary is constructed from controlled paths, not user input
 	worker2Cmd := exec.Command(workerBinary, "--config", worker2ConfigPath)
 	worker2Cmd.Stdout = os.Stdout
 	worker2Cmd.Stderr = os.Stderr
@@ -297,10 +302,18 @@ logging:
 	for time.Since(startTime) < maxWaitTime {
 		var pendingCount, processingCount, completedCount, failedCount int
 
-		db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&pendingCount)
-		db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'processing'").Scan(&processingCount)
-		db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'completed'").Scan(&completedCount)
-		db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'failed'").Scan(&failedCount)
+		if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&pendingCount); err != nil {
+			t.Fatalf("Failed to query pending jobs: %v", err)
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'processing'").Scan(&processingCount); err != nil {
+			t.Fatalf("Failed to query processing jobs: %v", err)
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'completed'").Scan(&completedCount); err != nil {
+			t.Fatalf("Failed to query completed jobs: %v", err)
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'failed'").Scan(&failedCount); err != nil {
+			t.Fatalf("Failed to query failed jobs: %v", err)
+		}
 
 		t.Logf("Job status - Pending: %d, Processing: %d, Completed: %d, Failed: %d",
 			pendingCount, processingCount, completedCount, failedCount)
@@ -316,10 +329,18 @@ logging:
 
 	// Final status check
 	var finalPending, finalProcessing, finalCompleted, finalFailed int
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&finalPending)
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'processing'").Scan(&finalProcessing)
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'completed'").Scan(&finalCompleted)
-	db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'failed'").Scan(&finalFailed)
+	if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&finalPending); err != nil {
+		t.Fatalf("Failed to query final pending jobs: %v", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'processing'").Scan(&finalProcessing); err != nil {
+		t.Fatalf("Failed to query final processing jobs: %v", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'completed'").Scan(&finalCompleted); err != nil {
+		t.Fatalf("Failed to query final completed jobs: %v", err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'failed'").Scan(&finalFailed); err != nil {
+		t.Fatalf("Failed to query final failed jobs: %v", err)
+	}
 
 	t.Logf("\n=== Final Results ===")
 	t.Logf("Pending: %d", finalPending)

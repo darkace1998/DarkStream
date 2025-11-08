@@ -404,7 +404,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Create output directory if needed
 	outputDir := filepath.Dir(job.OutputPath)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
 		http.Error(w, "Failed to create output directory", http.StatusInternalServerError)
 		return
