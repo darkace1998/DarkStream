@@ -59,9 +59,7 @@ func findBinary(name string) (string, error) {
 	parentDir := filepath.Dir(currentDir)
 	candidatePaths := []string{
 		filepath.Join(parentDir, name, name),
-		filepath.Join(currentDir, "..", name, name),
 		filepath.Join(".", name),
-		filepath.Join("..", name, name),
 	}
 
 	for _, path := range candidatePaths {

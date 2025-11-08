@@ -52,14 +52,23 @@ func detectFFmpeg() {
 	if err == nil {
 		hwaccels := strings.Split(string(output), "\n")
 		fmt.Println("  └─ Hardware Acceleration:")
+		// Filter out empty lines and header
+		var filtered []string
 		for _, hwaccel := range hwaccels {
 			hwaccel = strings.TrimSpace(hwaccel)
 			if hwaccel != "" && hwaccel != "Hardware acceleration methods:" {
-				if strings.Contains(hwaccel, "vulkan") {
-					fmt.Printf("     ├─ %s ✓\n", hwaccel)
-				} else {
-					fmt.Printf("     ├─ %s\n", hwaccel)
-				}
+				filtered = append(filtered, hwaccel)
+			}
+		}
+		for i, hwaccel := range filtered {
+			prefix := "├─"
+			if i == len(filtered)-1 {
+				prefix = "└─"
+			}
+			if strings.Contains(hwaccel, "vulkan") {
+				fmt.Printf("     %s %s ✓\n", prefix, hwaccel)
+			} else {
+				fmt.Printf("     %s %s\n", prefix, hwaccel)
 			}
 		}
 	}
