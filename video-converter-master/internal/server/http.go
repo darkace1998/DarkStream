@@ -377,6 +377,13 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate job is in processing status
+	if job.Status != "processing" {
+		slog.Warn("Upload rejected - job not in processing status", "job_id", jobID, "status", job.Status)
+		http.Error(w, "Job is not in processing status", http.StatusBadRequest)
+		return
+	}
+
 	// Parse multipart form (32MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)

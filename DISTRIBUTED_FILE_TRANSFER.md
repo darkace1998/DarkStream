@@ -12,9 +12,9 @@ This implementation adds explicit file transfer mechanisms to the video converte
 Worker Workflow:
 1. Poll master for job → Get {JobID, SourcePath, OutputPath}
 2. Download source video from master via HTTP
-3. Store in local cache: /tmp/video-converter-cache/job-{JOB_ID}/source.mp4
+3. Store in local cache: /tmp/converter-cache/job_{JOB_ID}/source.{ext}
 4. Convert using FFmpeg with Vulkan acceleration
-5. Save output to: /tmp/video-converter-cache/job-{JOB_ID}/output.mp4
+5. Save output to: /tmp/converter-cache/job_{JOB_ID}/output.{ext}
 6. Upload converted video back to master via HTTP
 7. Master saves to storage: {OutputPath}
 8. Job marked as "completed"
@@ -34,7 +34,7 @@ Worker Workflow:
 
 **POST /api/worker/upload-video?job_id=<id>**
 - Receives multipart file upload from worker
-- Validates job exists
+- Validates job exists and is in "processing" status
 - Creates output directory if needed
 - Writes to temporary file first, then atomically renames
 - Updates job status to "completed"

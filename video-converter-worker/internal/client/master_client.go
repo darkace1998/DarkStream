@@ -233,8 +233,10 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 
 	// Validate Content-Length header
 	contentLength := resp.ContentLength
-	if contentLength <= 0 {
-		return fmt.Errorf("invalid Content-Length: %d", contentLength)
+	if contentLength < 0 {
+		return fmt.Errorf("Content-Length header missing or invalid")
+	} else if contentLength == 0 {
+		return fmt.Errorf("Content-Length is zero, expected non-empty file")
 	}
 
 	// Create output directory

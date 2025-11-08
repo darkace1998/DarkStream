@@ -41,7 +41,7 @@ This script:
 7. Shows final results and cache status
 
 **Requirements:**
-- Go 1.24+
+- Go 1.21+
 - FFmpeg (optional, for actual video conversion)
 - sqlite3 CLI (for monitoring)
 
