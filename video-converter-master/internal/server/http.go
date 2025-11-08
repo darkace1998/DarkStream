@@ -9,11 +9,23 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/db"
 )
+
+// jobIDPattern validates job IDs to prevent injection attacks
+var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`)
+
+// validateJobID checks if a job ID is valid
+func validateJobID(jobID string) bool {
+	if jobID == "" || len(jobID) > 100 {
+		return false
+	}
+	return jobIDPattern.MatchString(jobID)
+}
 
 // Server handles HTTP API requests
 type Server struct {
@@ -289,8 +301,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Get job_id from query parameters
 	jobID := r.URL.Query().Get("job_id")
-	if jobID == "" {
-		http.Error(w, "job_id parameter is required", http.StatusBadRequest)
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -352,8 +364,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Get job_id from query parameters
 	jobID := r.URL.Query().Get("job_id")
-	if jobID == "" {
-		http.Error(w, "job_id parameter is required", http.StatusBadRequest)
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
 		return
 	}
 

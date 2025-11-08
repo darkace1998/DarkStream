@@ -143,7 +143,12 @@ func (w *Worker) executeJob(job *models.Job) error {
 	defer w.cleanupJobCache(jobCacheDir)
 
 	// Download source video from master
-	sourceLocalPath := filepath.Join(jobCacheDir, "source.mp4")
+	// Preserve original file extension
+	sourceExt := filepath.Ext(job.SourcePath)
+	if sourceExt == "" {
+		sourceExt = ".mp4" // Default to .mp4 if no extension
+	}
+	sourceLocalPath := filepath.Join(jobCacheDir, "source"+sourceExt)
 	slog.Info("Downloading source video", "job_id", job.ID, "local_path", sourceLocalPath)
 	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
@@ -154,7 +159,12 @@ func (w *Worker) executeJob(job *models.Job) error {
 	job.SourcePath = sourceLocalPath
 
 	// Update output path to local cache
-	outputLocalPath := filepath.Join(jobCacheDir, "output.mp4")
+	// Preserve original output file extension
+	outputExt := filepath.Ext(job.OutputPath)
+	if outputExt == "" {
+		outputExt = ".mp4" // Default to .mp4 if no extension
+	}
+	outputLocalPath := filepath.Join(jobCacheDir, "output"+outputExt)
 	originalOutputPath := job.OutputPath
 	job.OutputPath = outputLocalPath
 
