@@ -88,8 +88,22 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 		PreferredFormat: constants.CodecH264,
 	}
 
+	// Initialize Vulkan (only happens once)
+	if err := initVulkan(); err != nil {
+		slog.Warn("Failed to initialize Vulkan, falling back to CPU encoding", "error", err)
+		return caps, nil
+	}
+
+	// Create Vulkan instance (reused for both device listing and capability query)
+	instance, err := createVulkanInstance()
+	if err != nil {
+		slog.Warn("Failed to create Vulkan instance, falling back to CPU encoding", "error", err)
+		return caps, nil
+	}
+	defer vk.DestroyInstance(instance, nil)
+
 	// Detect Vulkan devices
-	devices, err := vd.listVulkanDevices()
+	devices, err := vd.listVulkanDevicesWithInstance(instance)
 	if err != nil {
 		slog.Warn("Failed to list Vulkan devices, falling back to CPU encoding", "error", err)
 		// Return capabilities with Supported=false but no error (graceful fallback)
@@ -113,8 +127,8 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 	caps.Device = device
 	caps.Supported = true
 
-	// Query detailed capabilities from the selected device
-	deviceCaps, err := vd.queryDeviceCapabilities(device)
+	// Query detailed capabilities from the selected device (reusing the instance)
+	deviceCaps, err := vd.queryDeviceCapabilitiesWithInstance(instance, device)
 	if err != nil {
 		slog.Warn("Failed to query device capabilities, using defaults",
 			"device", device.Name,
@@ -148,8 +162,8 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 	return caps, nil
 }
 
-// queryDeviceCapabilities queries detailed capabilities from a Vulkan device
-func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*VulkanCapabilities, error) {
+// queryDeviceCapabilitiesWithInstance queries detailed capabilities from a Vulkan device using a provided instance
+func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instance, device models.VulkanDevice) (*VulkanCapabilities, error) {
 	caps := &VulkanCapabilities{
 		SupportedExtensions: []string{},
 		CanEncode:           false,
@@ -157,18 +171,6 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 		MaxWidth:            3840,
 		MaxHeight:           2160,
 	}
-
-	// Initialize Vulkan (only happens once)
-	if err := initVulkan(); err != nil {
-		return nil, fmt.Errorf("failed to initialize Vulkan: %w", err)
-	}
-
-	// Create Vulkan instance
-	instance, err := createVulkanInstance()
-	if err != nil {
-		return nil, err
-	}
-	defer vk.DestroyInstance(instance, nil)
 
 	// Enumerate physical devices to find our device
 	var deviceCount uint32
@@ -265,20 +267,8 @@ func (vd *VulkanDetector) queryDeviceCapabilities(device models.VulkanDevice) (*
 	return caps, nil
 }
 
-// listVulkanDevices enumerates available Vulkan devices
-func (vd *VulkanDetector) listVulkanDevices() ([]models.VulkanDevice, error) {
-	// Initialize Vulkan (only happens once)
-	if err := initVulkan(); err != nil {
-		return nil, fmt.Errorf("failed to initialize Vulkan: %w", err)
-	}
-
-	// Create Vulkan instance
-	instance, err := createVulkanInstance()
-	if err != nil {
-		return nil, err
-	}
-	defer vk.DestroyInstance(instance, nil)
-
+// listVulkanDevicesWithInstance enumerates available Vulkan devices using a provided instance
+func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([]models.VulkanDevice, error) {
 	// Enumerate physical devices
 	var deviceCount uint32
 	result := vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
