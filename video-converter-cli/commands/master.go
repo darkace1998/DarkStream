@@ -65,11 +65,15 @@ func findBinary(name string) (string, error) {
 	}
 
 	for _, path := range candidatePaths {
-		if _, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && isExecutable(info) {
 			absPath, _ := filepath.Abs(path)
 			return absPath, nil
 		}
 	}
 
 	return "", fmt.Errorf("%s binary not found in PATH or expected locations", name)
+}
+
+func isExecutable(info os.FileInfo) bool {
+	return info.Mode()&0111 != 0
 }
