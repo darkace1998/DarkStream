@@ -26,7 +26,7 @@ go build -o video-converter-cli
 Start the master coordinator that manages the job queue:
 
 ```bash
-video-converter-cli master --config /path/to/master-config.yaml
+video-converter-cli master /path/to/master-config.yaml
 ```
 
 Or using a config in the current directory:
@@ -40,7 +40,7 @@ video-converter-cli master config.yaml
 Start a worker that processes video conversion jobs:
 
 ```bash
-video-converter-cli worker --config /path/to/worker-config.yaml
+video-converter-cli worker /path/to/worker-config.yaml
 ```
 
 Or using a config in the current directory:
@@ -127,8 +127,8 @@ Environment:
 
 | Command | Description | Options |
 |---------|-------------|---------|
-| `master` | Start master coordinator | `--config` - Path to config file |
-| `worker` | Start worker process | `--config` - Path to config file |
+| `master` | Start master coordinator | `<config-file>` - Path to config file (positional) |
+| `worker` | Start worker process | `<config-file>` - Path to config file (positional) |
 | `status` | Show conversion progress | `--master-url` - Master server URL (default: http://localhost:8080) |
 | `stats` | Show detailed statistics | `--master-url` - Master server URL (default: http://localhost:8080) |
 | `retry` | Retry failed jobs | `--master-url` - Master server URL<br>`--limit` - Max jobs to retry (default: 100) |

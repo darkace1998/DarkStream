@@ -108,7 +108,7 @@ func detectSystem() {
 	fmt.Println("Environment:")
 	fmt.Printf("├─ OS: %s\n", runtime.GOOS)
 	fmt.Printf("├─ Architecture: %s\n", runtime.GOARCH)
-	fmt.Printf("└─ CPUs: %d\n", runtime.NumCPU())
+	fmt.Printf("├─ CPUs: %d\n", runtime.NumCPU())
 
 	// Get hostname
 	hostname, err := os.Hostname()

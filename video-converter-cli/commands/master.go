@@ -74,6 +74,10 @@ func findBinary(name string) (string, error) {
 	return "", fmt.Errorf("%s binary not found in PATH or expected locations", name)
 }
 
+// isExecutable checks if a file has executable permissions.
+// Note: This uses Unix-style permission bits and will not work correctly on Windows.
+// On Windows, all files may appear executable. Consider using runtime.GOOS checks
+// or accepting that Windows behavior differs.
 func isExecutable(info os.FileInfo) bool {
 	return info.Mode()&0111 != 0
 }

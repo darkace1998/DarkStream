@@ -57,5 +57,5 @@ Examples:
   video-converter-cli status --master-url http://localhost:8080
   video-converter-cli stats --master-url http://localhost:8080
   video-converter-cli detect
-	`)
+  `)
 }
