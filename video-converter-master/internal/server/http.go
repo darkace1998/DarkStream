@@ -309,7 +309,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Open the source file
-	file, err := http.Dir("/").Open(job.SourcePath)
+	file, err := os.Open(job.SourcePath)
 	if err != nil {
 		slog.Error("Failed to open source file", "path", job.SourcePath, "error", err)
 		http.Error(w, "Source file not found", http.StatusNotFound)
@@ -391,24 +391,38 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create the output file
-	outFile, err := os.Create(job.OutputPath)
+	// Create a temporary file first to ensure atomic write
+	tempFile, err := os.CreateTemp(outputDir, ".upload-*.mp4.tmp")
 	if err != nil {
-		slog.Error("Failed to create output file", "path", job.OutputPath, "error", err)
-		http.Error(w, "Failed to create output file", http.StatusInternalServerError)
+		slog.Error("Failed to create temp file", "error", err)
+		http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
 		return
 	}
+	tempPath := tempFile.Name()
 	defer func() {
-		if cerr := outFile.Close(); cerr != nil {
-			slog.Warn("Failed to close output file", "path", job.OutputPath, "error", cerr)
+		if cerr := tempFile.Close(); cerr != nil {
+			slog.Warn("Failed to close temp file", "error", cerr)
+		}
+		// Clean up temp file if it still exists (meaning we didn't rename it)
+		if _, err := os.Stat(tempPath); err == nil {
+			if rerr := os.Remove(tempPath); rerr != nil {
+				slog.Warn("Failed to remove temp file", "path", tempPath, "error", rerr)
+			}
 		}
 	}()
 
-	// Copy the uploaded file to the output path
-	bytesWritten, err := io.Copy(outFile, file)
+	// Copy the uploaded file to the temp file
+	bytesWritten, err := io.Copy(tempFile, file)
 	if err != nil {
-		slog.Error("Failed to write output file", "path", job.OutputPath, "error", err)
+		slog.Error("Failed to write temp file", "error", err)
 		http.Error(w, "Failed to write output file", http.StatusInternalServerError)
+		return
+	}
+
+	// Close the temp file before renaming
+	if err := tempFile.Close(); err != nil {
+		slog.Error("Failed to close temp file before rename", "error", err)
+		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
 	}
 
@@ -421,6 +435,17 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to update job", "job_id", jobID, "error", err)
 		http.Error(w, "Failed to update job", http.StatusInternalServerError)
+		return
+	}
+
+	// Atomically rename temp file to final location
+	if err := os.Rename(tempPath, job.OutputPath); err != nil {
+		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", job.OutputPath, "error", err)
+		// Try to rollback job status
+		job.Status = "processing"
+		job.CompletedAt = nil
+		s.db.UpdateJob(job)
+		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
 	}
 

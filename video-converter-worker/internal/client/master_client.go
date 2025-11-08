@@ -206,6 +206,7 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 		}
 	}
 
+	// This should never be reached, but included for safety
 	return fmt.Errorf("failed to download video after %d attempts", maxRetries)
 }
 
@@ -299,6 +300,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 		}
 	}
 
+	// This should never be reached, but included for safety
 	return fmt.Errorf("failed to upload video after %d attempts", maxRetries)
 }
 

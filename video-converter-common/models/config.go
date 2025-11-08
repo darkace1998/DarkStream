@@ -58,7 +58,7 @@ type WorkerConfig struct {
 		DownloadTimeout time.Duration `yaml:"download_timeout"`
 		UploadTimeout   time.Duration `yaml:"upload_timeout"`
 		CachePath       string        `yaml:"cache_path"`
-		ChunkSize       int           `yaml:"chunk_size"`
+		ChunkSize       int           `yaml:"chunk_size"` // Reserved for future chunked streaming; currently unused
 	} `yaml:"storage"`
 
 	FFmpeg struct {

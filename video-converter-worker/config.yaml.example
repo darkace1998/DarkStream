@@ -11,7 +11,7 @@ storage:
   download_timeout: 30m
   upload_timeout: 30m
   cache_path: /tmp/converter-cache
-  chunk_size: 10485760  # 10MB chunks
+  chunk_size: 10485760  # 10MB chunks (reserved for future chunked streaming; currently unused)
 
 ffmpeg:
   path: /usr/bin/ffmpeg

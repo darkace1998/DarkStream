@@ -13,6 +13,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Create test directory
 TEST_DIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR"' EXIT
 echo "Test directory: $TEST_DIR"
 
 # Setup directories

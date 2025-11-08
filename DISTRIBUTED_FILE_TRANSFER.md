@@ -34,9 +34,9 @@ Worker Workflow:
 
 **POST /api/worker/upload-video?job_id=<id>**
 - Receives multipart file upload from worker
-- Validates job belongs to requesting worker
+- Validates job exists
 - Creates output directory if needed
-- Saves file to job.OutputPath
+- Writes to temporary file first, then atomically renames
 - Updates job status to "completed"
 - Returns file size in response
 
