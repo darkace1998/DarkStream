@@ -171,23 +171,17 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Convert video
 	if err := w.ffmpegConverter.ConvertVideo(job, cfg); err != nil {
-		job.SourcePath = originalSourcePath
-		job.OutputPath = originalOutputPath
 		return fmt.Errorf("conversion failed: %w", err)
 	}
 
 	// Validate output
 	if err := w.ffmpegConverter.ValidateOutput(job.OutputPath); err != nil {
-		job.SourcePath = originalSourcePath
-		job.OutputPath = originalOutputPath
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Upload converted video to master
 	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
 	if err := w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath); err != nil {
-		job.SourcePath = originalSourcePath
-		job.OutputPath = originalOutputPath
 		return fmt.Errorf("upload failed: %w", err)
 	}
 

@@ -206,8 +206,8 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 		}
 	}
 
-	// This should never be reached, but included for safety
-	return fmt.Errorf("failed to download video after %d attempts", maxRetries)
+	// Unreachable: loop always returns on last iteration
+	panic("unreachable code in DownloadSourceVideo")
 }
 
 // downloadSourceVideoAttempt performs a single download attempt
@@ -300,8 +300,8 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 		}
 	}
 
-	// This should never be reached, but included for safety
-	return fmt.Errorf("failed to upload video after %d attempts", maxRetries)
+	// Unreachable: loop always returns on last iteration
+	panic("unreachable code in UploadConvertedVideo")
 }
 
 // uploadConvertedVideoAttempt performs a single upload attempt

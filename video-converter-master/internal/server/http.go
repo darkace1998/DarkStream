@@ -426,7 +426,14 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update job status to completed
+	// Atomically rename temp file to final location first
+	if err := os.Rename(tempPath, job.OutputPath); err != nil {
+		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", job.OutputPath, "error", err)
+		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
+		return
+	}
+
+	// Update job status to completed (only after successful file write)
 	now := time.Now()
 	job.Status = "completed"
 	job.OutputSize = bytesWritten
@@ -434,18 +441,9 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to update job", "job_id", jobID, "error", err)
-		http.Error(w, "Failed to update job", http.StatusInternalServerError)
-		return
-	}
-
-	// Atomically rename temp file to final location
-	if err := os.Rename(tempPath, job.OutputPath); err != nil {
-		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", job.OutputPath, "error", err)
-		// Try to rollback job status
-		job.Status = "processing"
-		job.CompletedAt = nil
-		s.db.UpdateJob(job)
-		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
+		// File is saved but status update failed - this is acceptable
+		// The job will remain in processing state and can be retried
+		http.Error(w, "Failed to update job status", http.StatusInternalServerError)
 		return
 	}
 
