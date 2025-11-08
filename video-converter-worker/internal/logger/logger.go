@@ -15,6 +15,9 @@ func Init(level, format string) {
 	if format == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
+		if format != "text" && format != "" {
+			slog.Warn("Unsupported log format, defaulting to text", "format", format)
+		}
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 

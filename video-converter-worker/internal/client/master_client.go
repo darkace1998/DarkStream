@@ -13,24 +13,26 @@ import (
 
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
-	baseURL  string
-	workerID string
-	client   *http.Client
+	baseURL      string
+	workerID     string
+	client       *http.Client
+	gpuAvailable bool
 }
 
 // New creates a new MasterClient instance
-func New(baseURL string, workerID string) *MasterClient {
+func New(baseURL string, workerID string, gpuAvailable bool) *MasterClient {
 	return &MasterClient{
-		baseURL:  baseURL,
-		workerID: workerID,
-		client:   &http.Client{},
+		baseURL:      baseURL,
+		workerID:     workerID,
+		client:       &http.Client{},
+		gpuAvailable: gpuAvailable,
 	}
 }
 
 // GetNextJob requests the next available job from the master
 func (mc *MasterClient) GetNextJob() (*models.Job, error) {
-	url := fmt.Sprintf("%s/api/worker/next-job?worker_id=%s&gpu_available=true",
-		mc.baseURL, mc.workerID)
+	url := fmt.Sprintf("%s/api/worker/next-job?worker_id=%s&gpu_available=%t",
+		mc.baseURL, mc.workerID, mc.gpuAvailable)
 
 	resp, err := mc.client.Get(url)
 	if err != nil {
@@ -119,11 +121,11 @@ func (mc *MasterClient) ReportJobFailed(jobID string, errorMsg string) error {
 }
 
 // SendHeartbeat sends a heartbeat to the master
-func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) error {
+func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 	body, err := json.Marshal(hb)
 	if err != nil {
 		slog.Error("Failed to marshal heartbeat", "error", err)
-		return nil // Non-critical failure
+		return
 	}
 
 	resp, err := mc.client.Post(
@@ -134,9 +136,7 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) error {
 
 	if err != nil {
 		slog.Error("Failed to send heartbeat", "error", err)
-		return nil // Non-critical failure
+		return
 	}
 	defer resp.Body.Close()
-
-	return nil
 }

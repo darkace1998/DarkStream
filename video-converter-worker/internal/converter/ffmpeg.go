@@ -99,8 +99,19 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 
 	// Use Vulkan for encoding
 	if cfg.UseVulkan {
+		var vulkanCodec string
+		switch cfg.Codec {
+		case "h264", "avc":
+			vulkanCodec = "h264_vulkan"
+		case "hevc", "h265":
+			vulkanCodec = "hevc_vulkan"
+		default:
+			// Fallback to h264_vulkan if unknown
+			slog.Warn("Unknown codec for Vulkan encoding, falling back to h264_vulkan", "codec", cfg.Codec)
+			vulkanCodec = "h264_vulkan"
+		}
 		args = append(args,
-			"-c:v", "h264_vulkan", // Vulkan codec
+			"-c:v", vulkanCodec,
 			"-preset", cfg.Preset,
 			"-b:v", cfg.Bitrate,
 		)

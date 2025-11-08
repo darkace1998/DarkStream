@@ -120,6 +120,10 @@ func (vd *VulkanDetector) selectDevice(devices []models.VulkanDevice) models.Vul
 
 	// Fallback to first device
 	if len(devices) > 0 {
+		slog.Warn("Preferred Vulkan device not found, falling back to first available device",
+			"preferred_device", vd.preferredDevice,
+			"selected_device", devices[0].Name,
+		)
 		return devices[0]
 	}
 	return models.VulkanDevice{}

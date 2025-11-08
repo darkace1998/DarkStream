@@ -35,7 +35,16 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		cfg.FFmpeg.Timeout,
 	)
 
-	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID)
+	// Detect Vulkan capabilities early
+	var vulkanCaps *converter.VulkanCapabilities
+	caps, err := vulkanDetector.DetectVulkanCapabilities()
+	if err != nil {
+		slog.Warn("Vulkan not available during initialization", "error", err)
+	} else {
+		vulkanCaps = caps
+	}
+
+	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID, vulkanCaps != nil && vulkanCaps.Supported)
 	validator := converter.NewValidator()
 
 	return &Worker{
@@ -46,6 +55,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		validator:       validator,
 		concurrency:     cfg.Worker.Concurrency,
 		activeJobs:      0,
+		vulkanCaps:      vulkanCaps,
 	}, nil
 }
 
@@ -57,13 +67,11 @@ func (w *Worker) Start() error {
 		"master_url", w.config.Worker.MasterURL,
 	)
 
-	// Detect Vulkan capabilities
-	caps, err := w.vulkanDetector.DetectVulkanCapabilities()
-	if err != nil {
-		slog.Warn("Vulkan not available, falling back to CPU", "error", err)
+	// Vulkan capabilities already detected in New()
+	if w.vulkanCaps != nil && w.vulkanCaps.Supported {
+		slog.Info("Vulkan available", "device", w.vulkanCaps.Device.Name)
 	} else {
-		slog.Info("Vulkan available", "device", caps.Device.Name)
-		w.vulkanCaps = caps
+		slog.Info("Vulkan not available, using CPU encoding")
 	}
 
 	// Start heartbeat goroutine
@@ -129,6 +137,14 @@ func (w *Worker) processJobs(workerIndex int) {
 }
 
 // executeJob executes a single job
+//
+// Error Handling:
+// Returns an error in the following cases:
+//   - Conversion failure: If the video conversion fails, returns a wrapped error with context "conversion failed".
+//   - Validation failure: If the output file fails validation, returns a wrapped error with context "validation failed".
+//
+// Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
+// Callers should inspect the error chain if they need to distinguish between error types.
 func (w *Worker) executeJob(job *models.Job) error {
 	// Create conversion config
 	cfg := &models.ConversionConfig{
@@ -150,16 +166,6 @@ func (w *Worker) executeJob(job *models.Job) error {
 	if err := w.ffmpegConverter.ValidateOutput(job.OutputPath); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
-
-	// Get output file size
-	info, err := os.Stat(job.OutputPath)
-	if err != nil {
-		return fmt.Errorf("failed to stat output file: %w", err)
-	}
-	slog.Info("Job metrics",
-		"job_id", job.ID,
-		"output_size_mb", float64(info.Size())/1024/1024,
-	)
 
 	return nil
 }

@@ -53,7 +53,7 @@ The worker consists of several internal packages:
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.22+
 - FFmpeg installed (with Vulkan support if using GPU acceleration)
 - Network access to master coordinator
 - Storage mount with read access to source videos and write access to output directory
