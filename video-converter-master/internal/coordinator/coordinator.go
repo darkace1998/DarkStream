@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,10 @@ func (c *Coordinator) Start() error {
 	failedInsertions := 0
 	for _, job := range jobs {
 		if err := c.db.CreateJob(job); err != nil {
+			if err == sql.ErrNoRows {
+				// Job already exists, skip silently
+				continue
+			}
 			slog.Error("Failed to create job", "job_id", job.ID, "error", err)
 			failedInsertions++
 		}
@@ -86,6 +91,14 @@ func (c *Coordinator) Start() error {
 	// Start monitoring failed jobs
 	c.wg.Add(1)
 	go c.monitorFailedJobs()
+
+	// Start periodic scanning for new files if scan_interval is configured
+	if c.config.Scanner.ScanInterval > 0 {
+		c.wg.Add(1)
+		go c.periodicScan()
+	} else {
+		slog.Info("Periodic scanning disabled (scan_interval not set)")
+	}
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -168,6 +181,47 @@ func (c *Coordinator) monitorFailedJobs() {
 			// Reset status to pending for retry
 			slog.Debug("Checking for failed jobs to retry")
 			// TODO: Implement retry logic
+		}
+	}
+}
+
+// periodicScan periodically scans for new video files
+func (c *Coordinator) periodicScan() {
+	defer c.wg.Done()
+	ticker := time.NewTicker(c.config.Scanner.ScanInterval)
+	defer ticker.Stop()
+
+	slog.Info("Periodic scanner started", "interval", c.config.Scanner.ScanInterval)
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			slog.Info("Periodic scanner stopping")
+			return
+		case <-ticker.C:
+			slog.Debug("Scanning for new video files")
+			jobs, err := c.scanner.ScanDirectory()
+			if err != nil {
+				slog.Error("Periodic scan failed", "error", err)
+				continue
+			}
+
+			newJobsCount := 0
+			for _, job := range jobs {
+				err := c.db.CreateJob(job)
+				if err == nil {
+					newJobsCount++
+				} else if err != sql.ErrNoRows {
+					// Error other than "already exists"
+					slog.Error("Failed to create job during periodic scan", "job_id", job.ID, "error", err)
+				}
+			}
+
+			if newJobsCount > 0 {
+				slog.Info("Found new video files during periodic scan", "new_jobs", newJobsCount, "total_scanned", len(jobs))
+			} else {
+				slog.Debug("No new video files found", "total_scanned", len(jobs))
+			}
 		}
 	}
 }

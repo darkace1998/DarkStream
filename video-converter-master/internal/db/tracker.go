@@ -74,16 +74,34 @@ func (t *Tracker) initSchema() error {
 }
 
 // CreateJob inserts a new job into the database
+// Returns error if insertion failed, nil if successful or if job already exists
 func (t *Tracker) CreateJob(job *models.Job) error {
-	_, err := t.db.Exec(`
+	result, err := t.db.Exec(`
 		INSERT OR IGNORE INTO jobs (
 			id, source_path, output_path, status, retry_count,
 			max_retries, created_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.SourcePath, job.OutputPath, job.Status,
 		job.RetryCount, job.MaxRetries, job.CreatedAt)
-	return err
+	
+	if err != nil {
+		return err
+	}
+	
+	// Check if a row was actually inserted
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	
+	// Return a sentinel error if job already existed
+	if rowsAffected == 0 {
+		return sql.ErrNoRows  // Job already exists
+	}
+	
+	return nil
 }
+
 
 // GetJobByID retrieves a job by its ID
 func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {

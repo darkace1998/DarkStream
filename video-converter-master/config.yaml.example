@@ -14,6 +14,7 @@ scanner:
     - .m4v
   output_base: /mnt/storage/converted
   recursive_depth: -1  # -1 for unlimited
+  scan_interval: 5m    # How often to scan for new files (e.g., 5m, 1h). Set to 0 to disable periodic scanning
 
 database:
   path: ./jobs.db

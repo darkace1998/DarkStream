@@ -27,10 +27,11 @@ type MasterConfig struct {
 	} `yaml:"server"`
 
 	Scanner struct {
-		RootPath        string   `yaml:"root_path"`
-		VideoExtensions []string `yaml:"video_extensions"`
-		OutputBase      string   `yaml:"output_base"`
-		RecursiveDepth  int      `yaml:"recursive_depth"`
+		RootPath        string        `yaml:"root_path"`
+		VideoExtensions []string      `yaml:"video_extensions"`
+		OutputBase      string        `yaml:"output_base"`
+		RecursiveDepth  int           `yaml:"recursive_depth"`
+		ScanInterval    time.Duration `yaml:"scan_interval"` // How often to scan for new files (0 = no periodic scanning)
 	} `yaml:"scanner"`
 
 	Database struct {
