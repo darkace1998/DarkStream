@@ -12,6 +12,11 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+const (
+	// MinOutputFileSize is the minimum acceptable size for output files (1MB)
+	MinOutputFileSize = 1024 * 1024
+)
+
 // FFmpegConverter handles video conversion using FFmpeg
 type FFmpegConverter struct {
 	ffmpegPath     string
@@ -145,7 +150,7 @@ func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
 	}
 
 	// Check minimum file size (1MB)
-	if info.Size() < 1024*1024 {
+	if info.Size() < MinOutputFileSize {
 		return fmt.Errorf("output file too small: %d bytes", info.Size())
 	}
 

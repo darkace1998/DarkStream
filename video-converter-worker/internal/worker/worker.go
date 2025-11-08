@@ -104,6 +104,7 @@ func (w *Worker) processJobs(workerIndex int) {
 		}
 
 		atomic.AddInt32(&w.activeJobs, 1)
+		defer atomic.AddInt32(&w.activeJobs, -1)
 
 		if err := w.executeJob(job); err != nil {
 			slog.Error("Job execution failed",
@@ -136,8 +137,6 @@ func (w *Worker) processJobs(workerIndex int) {
 				}
 			}
 		}
-
-		atomic.AddInt32(&w.activeJobs, -1)
 	}
 }
 
