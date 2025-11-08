@@ -9,7 +9,9 @@ worker:
 storage:
   mount_path: /mnt/storage
   download_timeout: 30m
+  upload_timeout: 30m
   cache_path: /tmp/converter-cache
+  chunk_size: 10485760  # 10MB chunks
 
 ffmpeg:
   path: /usr/bin/ffmpeg

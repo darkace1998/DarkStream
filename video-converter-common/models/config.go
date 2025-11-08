@@ -56,7 +56,9 @@ type WorkerConfig struct {
 	Storage struct {
 		MountPath       string        `yaml:"mount_path"`
 		DownloadTimeout time.Duration `yaml:"download_timeout"`
+		UploadTimeout   time.Duration `yaml:"upload_timeout"`
 		CachePath       string        `yaml:"cache_path"`
+		ChunkSize       int           `yaml:"chunk_size"`
 	} `yaml:"storage"`
 
 	FFmpeg struct {
