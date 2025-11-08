@@ -404,7 +404,9 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a temporary file first to ensure atomic write
-	tempFile, err := os.CreateTemp(outputDir, ".upload-*.mp4.tmp")
+	// Use the same extension as the output file
+	ext := filepath.Ext(job.OutputPath)
+	tempFile, err := os.CreateTemp(outputDir, ".upload-*"+ext+".tmp")
 	if err != nil {
 		slog.Error("Failed to create temp file", "error", err)
 		http.Error(w, "Failed to create temp file", http.StatusInternalServerError)

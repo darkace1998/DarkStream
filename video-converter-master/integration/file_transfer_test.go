@@ -26,17 +26,17 @@ func TestFileTransferWorkflow(t *testing.T) {
 	convertedDir := filepath.Join(testDir, "converted")
 	dbPath := filepath.Join(testDir, "jobs.db")
 
-	if err := os.MkdirAll(videosDir, 0750); err != nil {
+	if err := os.MkdirAll(videosDir, 0755); err != nil {
 		t.Fatalf("Failed to create videos directory: %v", err)
 	}
-	if err := os.MkdirAll(convertedDir, 0750); err != nil {
+	if err := os.MkdirAll(convertedDir, 0755); err != nil {
 		t.Fatalf("Failed to create converted directory: %v", err)
 	}
 
 	// Create a test video file
 	testVideoPath := filepath.Join(videosDir, "test.mp4")
 	testVideoContent := []byte("fake video content for testing")
-	if err := os.WriteFile(testVideoPath, testVideoContent, 0600); err != nil {
+	if err := os.WriteFile(testVideoPath, testVideoContent, 0644); err != nil {
 		t.Fatalf("Failed to create test video: %v", err)
 	}
 

@@ -58,7 +58,7 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Create directories
 	for _, dir := range []string{videosDir, convertedDir, worker1Cache, worker2Cache} {
-		if err := os.MkdirAll(dir, 0750); err != nil {
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
 		}
 	}
