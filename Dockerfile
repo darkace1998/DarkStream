@@ -1,9 +1,16 @@
 # Multi-stage build for DarkStream video converter system
 # Stage 1: Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bookworm AS builder
 
 # Install build dependencies
-RUN apk add --no-cache git gcc musl-dev sqlite-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    gcc \
+    build-essential \
+    sqlite3 \
+    libsqlite3-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /build
@@ -11,15 +18,15 @@ WORKDIR /build
 # Copy all source files
 COPY . .
 
-# Build the three main components
+# Build the three main components with CGO enabled for SQLite
 RUN cd video-converter-master && \
-    go build -o ../bin/video-converter-master -ldflags="-s -w" .
+    CGO_ENABLED=1 go build -o ../bin/video-converter-master -ldflags="-s -w" .
 
 RUN cd video-converter-worker && \
-    go build -o ../bin/video-converter-worker -ldflags="-s -w" .
+    CGO_ENABLED=1 go build -o ../bin/video-converter-worker -ldflags="-s -w" .
 
 RUN cd video-converter-cli && \
-    go build -o ../bin/video-converter-cli -ldflags="-s -w" .
+    CGO_ENABLED=1 go build -o ../bin/video-converter-cli -ldflags="-s -w" .
 
 # Stage 2: Master service image
 FROM ubuntu:24.04 AS master
@@ -51,25 +58,17 @@ ENV LOG_FORMAT=json
 ENTRYPOINT ["./video-converter-master"]
 CMD ["-config", "config.yaml"]
 
-# Stage 3: Worker service image with NVIDIA GPU support
-FROM nvidia/cuda:12.6.1-runtime-ubuntu24.04 AS worker
+# Stage 3: Worker service image with GPU support
+FROM ubuntu:24.04 AS worker
 
-# Install runtime dependencies including Vulkan and Mesa for GPU support
+# Install runtime dependencies with GPU support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    ca-certificates && \
+    apt-get install -y --no-install-recommends \
     libvulkan1 \
-    vulkan-tools \
-    mesa-vulkan-drivers \
-    libgl1-mesa-glx \
-    libxrender1 \
-    libx11-6 \
-    libxext6 \
-    libxfixes3 \
-    nvidia-utils \
-    libcuda1 \
-    libnvidia-gl-535 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    mesa-vulkan-drivers && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -80,15 +79,12 @@ COPY --from=builder /build/video-converter-worker/config.yaml.example ./config.y
 # Create directories for temporary work
 RUN mkdir -p /tmp/worker /app/db
 
-# Expose health check port (if implemented)
+# Expose health check port
 EXPOSE 8081
 
 # Set environment variables for GPU support
 ENV LOG_LEVEL=info
 ENV LOG_FORMAT=json
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 ENTRYPOINT ["./video-converter-worker"]
 CMD ["-config", "config.yaml"]
