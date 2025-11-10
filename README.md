@@ -1,11 +1,3 @@
-# Distributed Video Converter - Architecture & Implementation Guide
-
-**Date:** 2025-11-07  
-**Author:** darkace1998  
-**Status:** Design Document
-
----
-
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -368,7 +360,7 @@ func parseLogLevel(level string) slog.Level {
 // go.mod for video-converter-common
 module github.com/darkace1998/video-converter-common
 
-go 1.23
+go 1.24
 
 require gopkg.in/yaml.v3 v3.0.1
 ```

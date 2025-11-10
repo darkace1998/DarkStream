@@ -6,6 +6,18 @@
 version: 2
 updates:
   - package-ecosystem: "gomod" # See documentation for possible values
-    directory: "/" # Location of package manifests
+    directory: "/video-converter-cli" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "gomod" # See documentation for possible values
+    directory: "/video-converter-common" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "gomod" # See documentation for possible values
+    directory: "/video-converter-master" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "gomod" # See documentation for possible values
+    directory: "/video-converter-worker" # Location of package manifests
     schedule:
       interval: "weekly"

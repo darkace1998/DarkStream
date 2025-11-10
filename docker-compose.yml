@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  # Master coordinator service
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: master
+    container_name: darkstream-master
+    hostname: master
+    ports:
+      - "8080:8080"
+    environment:
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+    volumes:
+      # Shared storage for video files
+      - videos_storage:/mnt/storage/videos
+      # Database persistence
+      - master_db:/app/db
+      # Config volume (mount your custom config here)
+      - ./video-converter-master/config.yaml.example:/app/config.yaml:ro
+    networks:
+      - darkstream
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Worker 1 - GPU enabled
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: darkstream-worker-1
+    hostname: worker1
+    environment:
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+      MASTER_HOST: master
+      MASTER_PORT: "8080"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      # Shared storage for video files
+      - videos_storage:/mnt/storage/videos
+      # Temporary work directory
+      - worker1_tmp:/tmp/worker
+      # Config volume
+      - ./video-converter-worker/config.yaml.example:/app/config.yaml:ro
+    networks:
+      - darkstream
+    depends_on:
+      master:
+        condition: service_healthy
+    restart: unless-stopped
+    # GPU support - requires NVIDIA Docker runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Worker 2 - Optional second worker
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: darkstream-worker-2
+    hostname: worker2
+    environment:
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+      MASTER_HOST: master
+      MASTER_PORT: "8080"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - videos_storage:/mnt/storage/videos
+      - worker2_tmp:/tmp/worker
+      - ./video-converter-worker/config.yaml.example:/app/config.yaml:ro
+    networks:
+      - darkstream
+    depends_on:
+      master:
+        condition: service_healthy
+    restart: unless-stopped
+    # GPU support - requires NVIDIA Docker runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # CLI service for monitoring (optional)
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cli
+    container_name: darkstream-cli
+    volumes:
+      - videos_storage:/mnt/storage/videos
+    networks:
+      - darkstream
+    depends_on:
+      master:
+        condition: service_healthy
+    # Run as interactive only
+    stdin_open: true
+    tty: true
+    entrypoint: /bin/sh
+
+volumes:
+  # Persistent storage for videos
+  videos_storage:
+    driver: local
+  
+  # Database storage for master
+  master_db:
+    driver: local
+  
+  # Temporary work directories for workers
+  worker1_tmp:
+    driver: local
+  
+  worker2_tmp:
+    driver: local
+
+networks:
+  darkstream:
+    driver: bridge

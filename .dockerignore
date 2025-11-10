@@ -1,0 +1,53 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Development files
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+docs/
+docs/**
+
+# Test files
+*_test.go
+*.test
+.coverage
+coverage.out
+
+# Build artifacts
+bin/
+dist/
+*.o
+*.a
+*.so
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# Temp/Log files
+*.log
+tmp/
+temp/
+
+# Example configs (can be included if needed)
+# config.yaml.example
