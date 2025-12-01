@@ -1,3 +1,5 @@
+// Package utils provides utility functions for file operations and logging configuration.
+//
 //nolint:revive // Package name "utils" is acceptable for utility functions
 package utils
 

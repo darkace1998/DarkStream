@@ -1,3 +1,4 @@
+// Package main implements the video converter CLI application.
 package main
 
 import (
