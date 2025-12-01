@@ -68,7 +68,7 @@ func NewVulkanDetector(preferredDevice string) *VulkanDetector {
 type VulkanCapabilities struct {
 	Supported           bool
 	Device              models.VulkanDevice
-	ApiVersion          string
+	APIVersion          string
 	SupportedExtensions []string
 	CanEncode           bool
 	CanDecode           bool
@@ -135,13 +135,13 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 			"error", err,
 		)
 		// Set reasonable defaults
-		caps.ApiVersion = "1.0"
+		caps.APIVersion = "1.0"
 		caps.CanEncode = true
 		caps.CanDecode = true
 		caps.MaxWidth = 3840
 		caps.MaxHeight = 2160
 	} else {
-		caps.ApiVersion = deviceCaps.ApiVersion
+		caps.APIVersion = deviceCaps.APIVersion
 		caps.SupportedExtensions = deviceCaps.SupportedExtensions
 		caps.CanEncode = deviceCaps.CanEncode
 		caps.CanDecode = deviceCaps.CanDecode
@@ -153,7 +153,7 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 		"name", device.Name,
 		"type", device.Type,
 		"driver_version", device.DriverVersion,
-		"api_version", caps.ApiVersion,
+		"api_version", caps.APIVersion,
 		"can_encode", caps.CanEncode,
 		"can_decode", caps.CanDecode,
 		"max_resolution", fmt.Sprintf("%dx%d", caps.MaxWidth, caps.MaxHeight),
@@ -198,7 +198,7 @@ func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instan
 			found = true
 
 			// Get API version
-			caps.ApiVersion = fmt.Sprintf("%d.%d.%d",
+			caps.APIVersion = fmt.Sprintf("%d.%d.%d",
 				vk.Version(props.ApiVersion).Major(),
 				vk.Version(props.ApiVersion).Minor(),
 				vk.Version(props.ApiVersion).Patch(),

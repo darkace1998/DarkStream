@@ -1,3 +1,4 @@
+// Package logger provides logging initialization for the master coordinator.
 package logger
 
 import (

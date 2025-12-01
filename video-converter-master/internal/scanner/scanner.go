@@ -1,3 +1,4 @@
+// Package scanner implements file system scanning for video files.
 package scanner
 
 import (

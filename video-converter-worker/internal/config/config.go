@@ -1,3 +1,4 @@
+// Package config provides configuration loading for workers.
 package config
 
 import (

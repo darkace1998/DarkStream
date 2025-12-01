@@ -1,3 +1,4 @@
+// Package logger provides logging initialization for workers.
 package logger
 
 import (

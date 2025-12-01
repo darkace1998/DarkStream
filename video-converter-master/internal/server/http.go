@@ -1,3 +1,4 @@
+// Package server implements the HTTP server for the master coordinator.
 package server
 
 import (

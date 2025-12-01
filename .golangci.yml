@@ -1,4 +1,4 @@
-version: "2"
+version: 2
 
 run:
   timeout: 5m
@@ -16,21 +16,21 @@ linters:
     - gosec
     - gocritic
 
-  settings:
-    revive:
-      severity: warning
-      rules:
-        - name: exported
-          severity: warning
-          disabled: false
-    gocritic:
-      enabled-tags:
-        - diagnostic
-        - style
-        - performance
-      disabled-checks:
-        - unnamedResult
-        - hugeParam
+linters-settings:
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        severity: warning
+        disabled: false
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - unnamedResult
+      - hugeParam
 
 issues:
   max-issues-per-linter: 0

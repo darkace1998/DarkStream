@@ -1,3 +1,4 @@
+// Package models defines data models and configuration structures for the video converter application.
 package models
 
 import "time"
