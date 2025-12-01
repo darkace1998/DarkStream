@@ -1,4 +1,4 @@
-// Package utils provides utility functions for file operations.
+// Package utils provides utility functions for file operations and logging configuration.
 package utils
 
 import (
