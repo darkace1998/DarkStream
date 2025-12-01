@@ -1,3 +1,4 @@
+// Package config provides configuration loading for the master coordinator.
 package config
 
 import (

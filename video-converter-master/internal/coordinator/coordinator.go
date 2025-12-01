@@ -1,3 +1,4 @@
+// Package coordinator implements the master coordinator for distributed video conversion.
 package coordinator
 
 import (

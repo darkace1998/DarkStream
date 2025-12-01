@@ -1,3 +1,4 @@
+// Package utils provides utility functions for file operations.
 package utils
 
 import (

@@ -1,3 +1,4 @@
+// Package main implements the master coordinator service entry point.
 package main
 
 import (

@@ -1,3 +1,4 @@
+// Package constants defines shared constants used across the video converter application.
 package constants
 
 // Job statuses

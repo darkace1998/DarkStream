@@ -1,3 +1,4 @@
+// Package db provides database tracking for jobs and workers.
 package db
 
 import (
@@ -6,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/darkace1998/video-converter-common/models"
+	// SQLite driver for database/sql
 	_ "github.com/mattn/go-sqlite3"
 )
 

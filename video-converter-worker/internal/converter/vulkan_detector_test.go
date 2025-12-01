@@ -268,7 +268,7 @@ func TestDetectVulkanCapabilities_NoVulkanGracefulFallback(t *testing.T) {
 	t.Logf("Vulkan supported: %v", caps.Supported)
 	if caps.Supported {
 		t.Logf("Device: %s (%s)", caps.Device.Name, caps.Device.Type)
-		t.Logf("API Version: %s", caps.ApiVersion)
+		t.Logf("API Version: %s", caps.APIVersion)
 		t.Logf("Max Resolution: %dx%d", caps.MaxWidth, caps.MaxHeight)
 		t.Logf("Can Encode: %v, Can Decode: %v", caps.CanEncode, caps.CanDecode)
 	}

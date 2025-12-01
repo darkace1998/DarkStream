@@ -1,3 +1,4 @@
+// Package commands provides CLI commands for the video converter.
 package commands
 
 import (
@@ -9,7 +10,7 @@ import (
 )
 
 // Detect displays GPU and Vulkan capabilities available on the system.
-func Detect(args []string) {
+func Detect(_ []string) {
 	fmt.Println("🖥️  GPU / Vulkan Detection")
 	fmt.Println()
 

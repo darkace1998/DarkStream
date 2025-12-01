@@ -4,7 +4,7 @@ package models
 type VulkanCapabilities struct {
 	Supported           bool           `json:"supported"`
 	Device              VulkanDevice   `json:"device"`
-	ApiVersion          string         `json:"api_version"`
+	APIVersion          string         `json:"api_version"`
 	SupportedExtensions []string       `json:"supported_extensions"`
 	CanEncode           bool           `json:"can_encode"`
 	CanDecode           bool           `json:"can_decode"`

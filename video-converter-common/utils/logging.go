@@ -1,3 +1,6 @@
+// Package utils provides utility functions for logging configuration.
+//
+//nolint:revive // Package name "utils" is acceptable for utility functions
 package utils
 
 import (

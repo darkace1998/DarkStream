@@ -1,3 +1,4 @@
+// Package worker implements the video conversion worker.
 package worker
 
 import (

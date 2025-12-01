@@ -1,3 +1,4 @@
+// Package main implements the video converter CLI tests.
 package main
 
 import (
