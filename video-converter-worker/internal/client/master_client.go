@@ -83,7 +83,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 
 // ReportJobComplete reports successful job completion to the master
 func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"job_id":      jobID,
 		"worker_id":   mc.workerID,
 		"output_size": outputSize,
@@ -118,7 +118,7 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 
 // ReportJobFailed reports job failure to the master
 func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"job_id":        jobID,
 		"worker_id":     mc.workerID,
 		"error_message": errorMsg,
@@ -189,10 +189,11 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	maxRetries := 3
 	baseDelay := 2 * time.Second
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
-			//nolint:gosec // G115: attempt is bounded by maxRetries (3), bit shift is safe
-			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			// Safe bit shift with bounded attempt value (0-2 range)
+			shiftAmount := uint(attempt - 1) // attempt-1 is always in range [0, 1]
+			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
 		}
@@ -287,10 +288,11 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 	maxRetries := 3
 	baseDelay := 2 * time.Second
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
-			//nolint:gosec // G115: attempt is bounded by maxRetries (3), bit shift is safe
-			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			// Safe bit shift with bounded attempt value (0-2 range)
+			shiftAmount := uint(attempt - 1) // attempt-1 is always in range [0, 1]
+			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
 		}
