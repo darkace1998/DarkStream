@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -31,6 +32,22 @@ func TestCLIHelp(t *testing.T) {
 	if !strings.Contains(outputStr, "status") {
 		t.Error("Expected 'status' command in help")
 	}
+}
+
+// TestMain builds the CLI binary before running tests and cleans up afterwards.
+func TestMain(m *testing.M) {
+	// Build the CLI binary used by the integration-style tests.
+	buildCmd := exec.Command("go", "build", "-o", "video-converter-cli", ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to build CLI binary: %s: %v\n", string(out), err)
+		os.Exit(2)
+	}
+
+	code := m.Run()
+
+	// Clean up the built binary
+	_ = os.Remove("video-converter-cli")
+	os.Exit(code)
 }
 
 func TestDetectCommand(t *testing.T) {
