@@ -105,17 +105,20 @@ jobs:
 
     - name: Build binaries
       run: |
-        mkdir -p bin
-        cd video-converter-common && go build -v -o ../bin/ ./... && cd ..
-        cd video-converter-master && go build -v -o ../bin/video-converter-master ./... && cd ..
-        cd video-converter-worker && go build -v -o ../bin/video-converter-worker ./... && cd ..
-        cd video-converter-cli && go build -v -o ../bin/video-converter-cli ./... && cd ..
-        ls -la bin/
+        bash ./scripts/build.sh
 
     - name: Test binaries
       run: |
         ./bin/video-converter-cli --help || echo "CLI help succeeded or not available"
         echo "Build test completed"
+
+    - name: Upload built binaries
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: built-binaries
+        path: bin/
+        retention-days: 7
 
   lint:
     name: Lint

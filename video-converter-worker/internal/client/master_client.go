@@ -189,7 +189,7 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	maxRetries := 3
 	baseDelay := 2 * time.Second
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range make([]struct{}, maxRetries) {
 		if attempt > 0 {
 			// Safe bit shift with bounded attempt value (0-2 range)
 			// attempt-1 is always in range [0, 1], safe to cast directly to uint
@@ -289,7 +289,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 	maxRetries := 3
 	baseDelay := 2 * time.Second
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range make([]struct{}, maxRetries) {
 		if attempt > 0 {
 			// Safe bit shift with bounded attempt value (0-2 range)
 			// attempt-1 is always in range [0, 1], safe to cast directly to uint
