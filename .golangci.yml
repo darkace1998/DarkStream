@@ -1,4 +1,3 @@
-version: "2"
 linters:    
   default: all
   enable:
@@ -60,7 +59,7 @@ formatters:
     - gofmt
     - gofumpt
     - goimports
-    
+
 output:
   format: colored-line-number
   print-issued-lines: true
