@@ -43,7 +43,7 @@ func Retry(args []string) {
 		return
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return

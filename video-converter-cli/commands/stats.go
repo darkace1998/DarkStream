@@ -40,7 +40,7 @@ func Stats(args []string) {
 		return
 	}
 
-	var stats map[string]interface{}
+	var stats map[string]any
 	if err := json.Unmarshal(body, &stats); err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
@@ -50,7 +50,7 @@ func Stats(args []string) {
 	slog.Info("")
 
 	// Job statistics
-	if jobs, ok := stats["jobs"].(map[string]interface{}); ok {
+	if jobs, ok := stats["jobs"].(map[string]any); ok {
 		slog.Info("Job Status:")
 		for status, count := range jobs {
 			slog.Info(fmt.Sprintf("  ├─ %s: %v", status, count))
@@ -59,7 +59,7 @@ func Stats(args []string) {
 	}
 
 	// Workers
-	if workers, ok := stats["workers"].(map[string]interface{}); ok {
+	if workers, ok := stats["workers"].(map[string]any); ok {
 		slog.Info("Workers:")
 		if active, ok := workers["active"]; ok {
 			slog.Info(fmt.Sprintf("  ├─ Active: %v", active))

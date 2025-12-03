@@ -39,7 +39,7 @@ func Status(args []string) {
 		return
 	}
 
-	var stats map[string]interface{}
+	var stats map[string]any
 	if err := json.Unmarshal(body, &stats); err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
@@ -52,7 +52,7 @@ func Status(args []string) {
 	slog.Info(fmt.Sprintf("└─ Failed: %v", getIntValue(stats, "failed")))
 }
 
-func getIntValue(m map[string]interface{}, key string) int {
+func getIntValue(m map[string]any, key string) int {
 	if val, ok := m[key]; ok {
 		switch v := val.(type) {
 		case float64:
