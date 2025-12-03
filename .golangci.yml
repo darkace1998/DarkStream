@@ -2,7 +2,6 @@ version: '2'
 
 linters:    
   default: all
-  enable:
   disable:
     # Disable overly strict or impractical linters
     - depguard           # Allow all imports (too restrictive for this project)
@@ -44,13 +43,9 @@ linters:
     goconst:
       min-len: 3
       min-occurrences: 3
-    gofumpt:
-      extra-rules: false
-      lang-version: "1.21"
     gosec:
       excludes:
         - G103
-    govet:
 
 issues:
   max-issues-per-linter: 0
