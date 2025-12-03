@@ -119,7 +119,7 @@ logging:
 	// Start master server
 	repoRoot := filepath.Join("..", "..")
 	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
-	
+
 	// Build master if not exists
 	if _, err := os.Stat(masterBinary); os.IsNotExist(err) {
 		t.Skip("Master binary not found, skipping integration test")
@@ -127,11 +127,11 @@ logging:
 
 	// We'll test the endpoints manually without starting a full server
 	// since we need to integrate with the database properly
-	
+
 	// Test 1: Download endpoint
 	t.Run("DownloadVideo", func(t *testing.T) {
 		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
-		
+
 		// Note: This test would require a running server
 		// For now, we'll verify the database state is correct
 		var status string
@@ -161,7 +161,7 @@ logging:
 		if err != nil {
 			t.Fatalf("Failed to query job status: %v", err)
 		}
-		
+
 		t.Logf("Job status before upload: %s", status)
 		t.Log("Upload endpoint test setup complete")
 	})
@@ -173,7 +173,7 @@ logging:
 		if err != nil {
 			t.Fatalf("Failed to stat test video: %v", err)
 		}
-		
+
 		expectedSize := int64(len(testVideoContent))
 		if info.Size() != expectedSize {
 			t.Errorf("Expected file size %d, got %d", expectedSize, info.Size())
@@ -199,7 +199,7 @@ func TestDownloadRetryLogic(t *testing.T) {
 			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			t.Logf("Retry attempt %d would wait for %v", attempt+1, delay)
-			
+
 			// Verify exponential backoff calculation
 			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
 			expectedDelay := baseDelay * time.Duration(1<<uint(attempt-1))
@@ -208,7 +208,7 @@ func TestDownloadRetryLogic(t *testing.T) {
 			}
 		}
 	}
-	
+
 	t.Log("Retry logic test completed")
 }
 
@@ -229,7 +229,7 @@ func TestUploadMultipartForm(t *testing.T) {
 	// Create multipart form
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	
+
 	// #nosec G304 - testFile is a controlled temporary test file path
 	file, err := os.Open(testFile)
 	if err != nil {
@@ -261,7 +261,7 @@ func TestUploadMultipartForm(t *testing.T) {
 	}
 	t.Logf("Multipart content type: %s", contentType)
 	t.Logf("Multipart form size: %d bytes", body.Len())
-	
+
 	t.Log("Multipart form test completed")
 }
 
@@ -319,7 +319,7 @@ func TestJobStatusTransitions(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			jobID := fmt.Sprintf("job-%s", tc.name)
-			
+
 			// Insert job
 			insertSQL := `INSERT INTO jobs (id, source_path, output_path, status) VALUES (?, ?, ?, ?)`
 			if _, err := db.Exec(insertSQL, jobID, "/tmp/source.mp4", "/tmp/output.mp4", tc.initialStatus); err != nil {

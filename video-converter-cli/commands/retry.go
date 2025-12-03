@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 )
@@ -20,38 +21,38 @@ func Retry(args []string) {
 	// #nosec G107 - URL is from flag-parsed masterURL, not untrusted network input
 	resp, err := http.Post(url, "application/json", nil)
 	if err != nil {
-		fmt.Printf("Error connecting to master server: %v\n", err)
-		fmt.Printf("Make sure the master server is running at %s\n", *masterURL)
+		slog.Error("Error connecting to master server", "error", err)
+		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
 		os.Exit(1)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			fmt.Printf("Error closing response body: %v\n", err)
+			slog.Error("Error closing response body", "error", err)
 		}
 	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Error reading response: %v\n", err)
+		slog.Error("Error reading response", "error", err)
 		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Error: received status code %d\n", resp.StatusCode)
-		fmt.Printf("Response: %s\n", string(body))
+		slog.Error("Error: received status code", "status", resp.StatusCode)
+		slog.Info(fmt.Sprintf("Response: %s", string(body)))
 		return
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("Error parsing response: %v\n", err)
+		slog.Error("Error parsing response", "error", err)
 		return
 	}
 
 	retried := getIntValue(result, "retried")
-	fmt.Printf("♻️  Successfully retried %d failed job(s)\n", retried)
+	slog.Info(fmt.Sprintf("♻️  Successfully retried %d failed job(s)", retried))
 
 	if retried == 0 {
-		fmt.Println("No failed jobs to retry.")
+		slog.Info("No failed jobs to retry.")
 	}
 }

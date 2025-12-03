@@ -20,6 +20,8 @@ import (
 // jobIDPattern validates job IDs to prevent injection attacks
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+const statusProcessing = "processing"
+
 // validateJobID checks if a job ID is valid
 func validateJobID(jobID string) bool {
 	if jobID == "" || len(jobID) > 100 {
@@ -64,7 +66,10 @@ func (s *Server) Start() error {
 	}
 
 	slog.Info("HTTP server starting", "addr", s.addr)
-	return s.server.ListenAndServe()
+	if err := s.server.ListenAndServe(); err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+	return nil
 }
 
 // Shutdown gracefully shuts down the HTTP server
@@ -73,7 +78,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	slog.Info("Shutting down HTTP server")
-	return s.server.Shutdown(ctx)
+	if err := s.server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown server: %w", err)
+	}
+	return nil
 }
 
 // GetNextJob handles requests for the next pending job
@@ -96,7 +104,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job.Status = "processing"
+	job.Status = statusProcessing
 	job.WorkerID = workerID
 	now := time.Now()
 	job.StartedAt = &now
@@ -316,7 +324,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate job is in processing status
-	if job.Status != "processing" {
+	if job.Status != statusProcessing {
 		http.Error(w, "Job is not in processing status", http.StatusBadRequest)
 		return
 	}
@@ -379,7 +387,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate job is in processing status
-	if job.Status != "processing" {
+	if job.Status != statusProcessing {
 		slog.Warn("Upload rejected - job not in processing status", "job_id", jobID, "status", job.Status)
 		http.Error(w, "Job is not in processing status", http.StatusBadRequest)
 		return

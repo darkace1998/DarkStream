@@ -99,10 +99,10 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 		"application/json",
 		bytes.NewReader(body),
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to report job complete: %w", err)
 	}
+
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
 			slog.Warn("Failed to close response body", "error", cerr)

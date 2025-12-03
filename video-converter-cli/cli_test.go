@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -179,5 +179,5 @@ logging:
 		t.Errorf("Expected stats output, got: %s", outputStr)
 	}
 
-	fmt.Println("✅ All integration tests passed")
+	slog.Info("✅ All integration tests passed")
 }

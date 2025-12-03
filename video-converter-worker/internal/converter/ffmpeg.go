@@ -43,7 +43,6 @@ func (fc *FFmpegConverter) ConvertVideo(
 	job *models.Job,
 	cfg *models.ConversionConfig,
 ) error {
-
 	slog.Info("Starting conversion",
 		"job_id", job.ID,
 		"source", job.SourcePath,
@@ -86,7 +85,6 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	job *models.Job,
 	cfg *models.ConversionConfig,
 ) []string {
-
 	args := []string{
 		"-i", job.SourcePath,
 	}

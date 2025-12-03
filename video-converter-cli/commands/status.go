@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 )
@@ -17,38 +18,38 @@ func Status(args []string) {
 
 	resp, err := http.Get(*masterURL + "/api/status")
 	if err != nil {
-		fmt.Printf("Error connecting to master server: %v\n", err)
-		fmt.Printf("Make sure the master server is running at %s\n", *masterURL)
+		slog.Error("Error connecting to master server", "error", err)
+		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
 		os.Exit(1)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			fmt.Printf("Error closing response body: %v\n", err)
+			slog.Error("Error closing response body", "error", err)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Error: received status code %d from master server\n", resp.StatusCode)
+		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
 		return
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Error reading response: %v\n", err)
+		slog.Error("Error reading response", "error", err)
 		return
 	}
 
 	var stats map[string]interface{}
 	if err := json.Unmarshal(body, &stats); err != nil {
-		fmt.Printf("Error parsing response: %v\n", err)
+		slog.Error("Error parsing response", "error", err)
 		return
 	}
 
-	fmt.Println("📊 Conversion Progress")
-	fmt.Println("├─ Completed:", getIntValue(stats, "completed"))
-	fmt.Println("├─ Processing:", getIntValue(stats, "processing"))
-	fmt.Println("├─ Pending:", getIntValue(stats, "pending"))
-	fmt.Println("└─ Failed:", getIntValue(stats, "failed"))
+	slog.Info("📊 Conversion Progress")
+	slog.Info(fmt.Sprintf("├─ Completed: %v", getIntValue(stats, "completed")))
+	slog.Info(fmt.Sprintf("├─ Processing: %v", getIntValue(stats, "processing")))
+	slog.Info(fmt.Sprintf("├─ Pending: %v", getIntValue(stats, "pending")))
+	slog.Info(fmt.Sprintf("└─ Failed: %v", getIntValue(stats, "failed")))
 }
 
 func getIntValue(m map[string]interface{}, key string) int {

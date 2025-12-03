@@ -2,7 +2,7 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/darkace1998/video-converter-cli/commands"
@@ -31,14 +31,14 @@ func main() {
 	case "detect":
 		commands.Detect(subArgs)
 	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
+		slog.Error("Unknown command", "command", cmd)
 		printUsage()
 		os.Exit(1)
 	}
 }
 
 func printUsage() {
-	fmt.Println(`
+	slog.Info(`
 Video Converter CLI
 
 Usage:

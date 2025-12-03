@@ -21,7 +21,7 @@ func copyFileHelper(src, dst string) error {
 	// #nosec G304 - src is a controlled test file path, not user input
 	sourceFile, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer func() {
 		if cerr := sourceFile.Close(); cerr != nil {
@@ -32,7 +32,7 @@ func copyFileHelper(src, dst string) error {
 	// #nosec G304 - dst is a controlled test file path, not user input
 	destFile, err := os.Create(dst)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create destination file: %w", err)
 	}
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil {
@@ -41,10 +41,15 @@ func copyFileHelper(src, dst string) error {
 	}()
 
 	_, err = io.Copy(destFile, sourceFile)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+	return nil
 }
 
 // TestDistributedFileTransfer tests the complete workflow with 1 master and 2 workers
+//
+//nolint:gocognit
 func TestDistributedFileTransfer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping distributed integration test in short mode")
@@ -351,14 +356,14 @@ logging:
 	// Verify file transfers occurred
 	if finalCompleted > 0 {
 		t.Log("✓ File transfer test PASSED - Jobs completed successfully")
-		
+
 		// Verify cache cleanup
 		worker1Files, _ := filepath.Glob(filepath.Join(worker1Cache, "job_*"))
 		worker2Files, _ := filepath.Glob(filepath.Join(worker2Cache, "job_*"))
-		
+
 		t.Logf("Worker 1 cache remaining jobs: %d", len(worker1Files))
 		t.Logf("Worker 2 cache remaining jobs: %d", len(worker2Files))
-		
+
 		if len(worker1Files) == 0 && len(worker2Files) == 0 {
 			t.Log("✓ Cache cleanup verified - No job directories remaining")
 		}
@@ -387,11 +392,14 @@ logging:
 			}
 			t.Logf("Job %s: Worker=%s, Status=%s, Size=%d bytes", id, workerID, status, outputSize)
 		}
+		if err := rows.Err(); err != nil {
+			t.Logf("Error iterating rows: %v", err)
+		}
 	}
 
 	// Test API endpoints
 	t.Log("\n=== Testing API Endpoints ===")
-	
+
 	// Test status endpoint
 	statusResp, err := http.Get("http://127.0.0.1:38080/api/status")
 	if err != nil {
@@ -402,19 +410,23 @@ logging:
 				t.Logf("Failed to close response body: %v", cerr)
 			}
 		}()
-		
+
 		var statusData map[string]interface{}
 		if err := json.NewDecoder(statusResp.Body).Decode(&statusData); err != nil {
 			t.Logf("Failed to decode status: %v", err)
 		} else {
-			statusJSON, _ := json.MarshalIndent(statusData, "", "  ")
-			t.Logf("Status endpoint response:\n%s", statusJSON)
+			statusJSON, err := json.MarshalIndent(statusData, "", "  ")
+			if err != nil {
+				t.Logf("Failed to marshal status: %v", err)
+			} else {
+				t.Logf("Status endpoint response:\n%s", statusJSON)
+			}
 		}
 	}
 
 	t.Log("\n=== Distributed File Transfer Test Complete ===")
 	t.Logf("✓ Master: 1 instance running")
 	t.Logf("✓ Workers: 2 instances running")
-	t.Logf("✓ File transfer mechanism: %s", 
+	t.Logf("✓ File transfer mechanism: %s",
 		map[bool]string{true: "WORKING", false: "NEEDS INVESTIGATION"}[finalCompleted > 0])
 }

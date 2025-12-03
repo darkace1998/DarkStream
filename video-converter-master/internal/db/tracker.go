@@ -72,7 +72,10 @@ func (t *Tracker) initSchema() error {
 	`
 
 	_, err := t.db.Exec(schema)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to execute schema: %w", err)
+	}
+	return nil
 }
 
 // CreateJob inserts a new job into the database
@@ -85,25 +88,24 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.SourcePath, job.OutputPath, job.Status,
 		job.RetryCount, job.MaxRetries, job.CreatedAt)
-	
+
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to execute insert: %w", err)
 	}
-	
+
 	// Check if a row was actually inserted
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	
+
 	// Return a sentinel error if job already existed
 	if rowsAffected == 0 {
-		return sql.ErrNoRows  // Job already exists
+		return sql.ErrNoRows // Job already exists
 	}
-	
+
 	return nil
 }
-
 
 // GetJobByID retrieves a job by its ID
 func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
@@ -114,15 +116,15 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
-		FROM jobs WHERE id = ?
-	`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+		COALESCE(source_duration, 0), COALESCE(output_size, 0)
+	FROM jobs WHERE id = ?
+`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan job row: %w", err)
 	}
 
 	if startedAt.Valid {
@@ -153,7 +155,7 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 		&job.SourceDuration, &job.OutputSize)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan job row: %w", err)
 	}
 
 	if startedAt.Valid {
@@ -177,7 +179,10 @@ func (t *Tracker) UpdateJob(job *models.Job) error {
 	`, job.Status, job.WorkerID, job.StartedAt, job.CompletedAt,
 		job.ErrorMessage, job.RetryCount, job.SourceDuration,
 		job.OutputSize, job.ID)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to update job: %w", err)
+	}
+	return nil
 }
 
 // UpdateWorkerHeartbeat updates worker status in the database
@@ -194,7 +199,10 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 			memory_usage = excluded.memory_usage
 	`, hb.WorkerID, hb.Hostname, hb.Timestamp, hb.VulkanAvailable,
 		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to upsert worker heartbeat: %w", err)
+	}
+	return nil
 }
 
 // GetJobStats returns statistics about job statuses
@@ -207,7 +215,7 @@ func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
 		GROUP BY status
 	`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query job stats: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
@@ -226,7 +234,7 @@ func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating job stats rows: %w", err)
 	}
 
 	return stats, nil
@@ -234,5 +242,8 @@ func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
 
 // Close closes the database connection
 func (t *Tracker) Close() error {
-	return t.db.Close()
+	if err := t.db.Close(); err != nil {
+		return fmt.Errorf("failed to close database: %w", err)
+	}
+	return nil
 }

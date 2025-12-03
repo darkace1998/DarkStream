@@ -4,6 +4,7 @@ package coordinator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,7 +26,7 @@ type Coordinator struct {
 	db      *db.Tracker
 	scanner *scanner.Scanner
 	server  *server.Server
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 }
@@ -73,7 +74,7 @@ func (c *Coordinator) Start() error {
 	failedInsertions := 0
 	for _, job := range jobs {
 		if err := c.db.CreateJob(job); err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				// Job already exists, skip silently
 				continue
 			}
@@ -117,7 +118,7 @@ func (c *Coordinator) Start() error {
 		<-sigChan
 		slog.Info("Received shutdown signal, stopping monitoring goroutines and HTTP server")
 		c.cancel()
-		
+
 		// Attempt graceful shutdown of HTTP server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -128,21 +129,21 @@ func (c *Coordinator) Start() error {
 
 	// Wait for HTTP server to exit
 	err = <-serverErrChan
-	
+
 	// Wait for monitoring goroutines to stop before closing database
 	slog.Info("Waiting for monitoring goroutines to stop")
 	c.wg.Wait()
-	
+
 	// Close database connection
 	if dbErr := c.db.Close(); dbErr != nil {
 		slog.Error("Failed to close database", "error", dbErr)
 	}
-	
+
 	// Check if server was gracefully shut down
-	if err == http.ErrServerClosed {
+	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-	
+
 	return err
 }
 
@@ -212,7 +213,7 @@ func (c *Coordinator) periodicScan() {
 				err := c.db.CreateJob(job)
 				if err == nil {
 					newJobsCount++
-				} else if err != sql.ErrNoRows {
+				} else if !errors.Is(err, sql.ErrNoRows) {
 					// Error other than "already exists"
 					slog.Error("Failed to create job during periodic scan", "job_id", job.ID, "error", err)
 				}

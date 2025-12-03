@@ -3,6 +3,7 @@ package commands
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,8 +15,8 @@ func Master(args []string) {
 
 	// Expect the config file path as the first positional argument
 	if len(args) == 0 {
-		fmt.Println("Error: config file path is required")
-		fmt.Println("Usage: video-converter-cli master <config-file>")
+		slog.Error("config file path is required")
+		slog.Info("Usage: video-converter-cli master <config-file>")
 		os.Exit(1)
 	}
 
@@ -24,10 +25,11 @@ func Master(args []string) {
 	// Find the master binary
 	masterBinary, err := findBinary("video-converter-master")
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		fmt.Println("\nPlease build the master binary first:")
-		fmt.Println("  cd video-converter-master")
-		fmt.Println("  go build -o video-converter-master")
+		slog.Error("Error", "error", fmt.Sprintf("%v", err))
+		slog.Info("")
+		slog.Info("Please build the master binary first:")
+		slog.Info("  cd video-converter-master")
+		slog.Info("  go build -o video-converter-master")
 		os.Exit(1)
 	}
 
@@ -39,7 +41,7 @@ func Master(args []string) {
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("Master process failed: %v\n", err)
+		slog.Error("Master process failed", "error", err)
 		os.Exit(1)
 	}
 }

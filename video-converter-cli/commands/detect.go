@@ -2,25 +2,26 @@
 package commands
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
 // Detect displays GPU and Vulkan capabilities available on the system.
 func Detect(_ []string) {
-	fmt.Println("🖥️  GPU / Vulkan Detection")
-	fmt.Println()
+	slog.Info("🖥️  GPU / Vulkan Detection")
+	slog.Info("")
 
 	// Check FFmpeg availability
 	detectFFmpeg()
-	fmt.Println()
+	slog.Info("")
 
 	// Check Vulkan support
 	detectVulkan()
-	fmt.Println()
+	slog.Info("")
 
 	// System information
 	detectSystem()
@@ -29,13 +30,13 @@ func Detect(_ []string) {
 func detectFFmpeg() {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		fmt.Println("FFmpeg Status: ✗ Not Found")
-		fmt.Println("  Please install FFmpeg to use video conversion")
+		slog.Info("FFmpeg Status: ✗ Not Found")
+		slog.Info("  Please install FFmpeg to use video conversion")
 		return
 	}
 
-	fmt.Println("FFmpeg Status: ✓ Available")
-	fmt.Printf("  ├─ Path: %s\n", ffmpegPath)
+	slog.Info("FFmpeg Status: ✓ Available")
+	slog.Info("  ├─ Path: " + ffmpegPath)
 
 	// Get FFmpeg version
 	cmd := exec.Command("ffmpeg", "-version")
@@ -44,7 +45,7 @@ func detectFFmpeg() {
 		lines := strings.Split(string(output), "\n")
 		if len(lines) > 0 {
 			version := strings.TrimSpace(lines[0])
-			fmt.Printf("  └─ Version: %s\n", version)
+			slog.Info("  └─ Version: " + version)
 		}
 	}
 
@@ -53,7 +54,7 @@ func detectFFmpeg() {
 	output, err = cmd.Output()
 	if err == nil {
 		hwaccels := strings.Split(string(output), "\n")
-		fmt.Println("  └─ Hardware Acceleration:")
+		slog.Info("  └─ Hardware Acceleration:")
 		// Filter out empty lines and header
 		var filtered []string
 		for _, hwaccel := range hwaccels {
@@ -68,9 +69,9 @@ func detectFFmpeg() {
 				prefix = "└─"
 			}
 			if strings.Contains(hwaccel, "vulkan") {
-				fmt.Printf("     %s %s ✓\n", prefix, hwaccel)
+				slog.Info("     " + prefix + " " + hwaccel + " ✓")
 			} else {
-				fmt.Printf("     %s %s\n", prefix, hwaccel)
+				slog.Info("     " + prefix + " " + hwaccel)
 			}
 		}
 	}
@@ -80,19 +81,19 @@ func detectVulkan() {
 	// Try to detect Vulkan using vulkaninfo
 	vulkanPath, err := exec.LookPath("vulkaninfo")
 	if err != nil {
-		fmt.Println("Vulkan Status: ⚠ Cannot detect (vulkaninfo not found)")
-		fmt.Println("  Install vulkan-tools to check Vulkan capabilities")
+		slog.Info("Vulkan Status: ⚠ Cannot detect (vulkaninfo not found)")
+		slog.Info("  Install vulkan-tools to check Vulkan capabilities")
 		return
 	}
 
-	fmt.Println("Vulkan Status: ✓ Tools Available")
-	fmt.Printf("  └─ Path: %s\n", vulkanPath)
+	slog.Info("Vulkan Status: ✓ Tools Available")
+	slog.Info("  └─ Path: " + vulkanPath)
 
 	// Try to get basic Vulkan info
 	cmd := exec.Command("vulkaninfo", "--summary")
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Println("  └─ Device Detection: Failed (no Vulkan devices found)")
+		slog.Info("  └─ Device Detection: Failed (no Vulkan devices found)")
 		return
 	}
 
@@ -103,27 +104,27 @@ func detectVulkan() {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "deviceName") || strings.Contains(line, "GPU") {
 			if !deviceFound {
-				fmt.Println("  └─ Devices:")
+				slog.Info("  └─ Devices:")
 				deviceFound = true
 			}
-			fmt.Printf("     ├─ %s\n", line)
+			slog.Info("     ├─ " + line)
 		}
 	}
 
 	if !deviceFound {
-		fmt.Println("  └─ No Vulkan-capable devices detected")
+		slog.Info("  └─ No Vulkan-capable devices detected")
 	}
 }
 
 func detectSystem() {
-	fmt.Println("Environment:")
-	fmt.Printf("├─ OS: %s\n", runtime.GOOS)
-	fmt.Printf("├─ Architecture: %s\n", runtime.GOARCH)
-	fmt.Printf("├─ CPUs: %d\n", runtime.NumCPU())
+	slog.Info("Environment:")
+	slog.Info("├─ OS: " + runtime.GOOS)
+	slog.Info("├─ Architecture: " + runtime.GOARCH)
+	slog.Info("├─ CPUs: " + strconv.Itoa(runtime.NumCPU()))
 
 	// Get hostname
 	hostname, err := os.Hostname()
 	if err == nil {
-		fmt.Printf("└─ Hostname: %s\n", hostname)
+		slog.Info("└─ Hostname: " + hostname)
 	}
 }

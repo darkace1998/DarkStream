@@ -1,37 +1,69 @@
 version: "2"
-
-run:
-  timeout: 5m
-  modules-download-mode: readonly
-
-linters:
+linters:    
+  default: all
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - misspell
-    - revive
-    - gosec
-    - gocritic
-
-linters-settings:
-  revive:
-    severity: warning
-    rules:
-      - name: exported
-        severity: warning
-        disabled: false
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - unnamedResult
-      - hugeParam
+  disable:
+    # Disable overly strict or impractical linters
+    - depguard           # Allow all imports (too restrictive for this project)
+    - err113             # Allow dynamic errors (static errors not always practical)
+    - exhaustruct        # Don't require all struct fields (too verbose)
+    - exhaustive         # Don't require all switch cases (allow default handling)
+    - godox              # Allow TODO/FIXME comments
+    - gomoddirectives    # Allow local replace directives (needed for multi-module projects)
+    - noctx              # Allow HTTP calls without context (not always needed)
+    - noinlineerr        # Allow inline error handling (more concise)
+    - nlreturn           # Don't require blank line before return (personal preference)
+    - paralleltest       # Don't require t.Parallel() (may not be needed for all tests)
+    - testpackage        # Allow tests in same package (white-box testing)
+    - varnamelen         # Allow short variable names (standard Go practice)
+    - wsl                # Whitespace linter (too opinionated)
+    - wsl_v5             # Whitespace linter v5 (too opinionated)
+    - tagliatelle        # Don't enforce tag naming convention (allow snake_case for JSON)
+    - mnd                # Don't flag magic numbers (sometimes constants are overkill)
+    - perfsprint         # Don't enforce fmt.Sprintf vs string concat (micro-optimization)
+    - intrange           # Don't require Go 1.22+ range syntax (compatibility)
+    - lll                # Don't enforce line length (some lines need to be long)
+    - funcorder          # Don't enforce function ordering
+    - gochecknoglobals   # Allow globals when needed (e.g., sync.Once)
+    - godot              # Don't enforce periods in comments (too strict)
+    - errname            # Don't enforce error naming convention
+    - nestif             # Don't flag nested if statements
+    - whitespace         # Don't enforce whitespace rules
+  settings:
+    cyclop:
+      max-complexity: 20
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    funlen:
+      lines: 200
+      statements: 100
+    gocyclo:
+      min-complexity: 40
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gofumpt:
+      extra-rules: false
+      lang-version: "1.21"
+    gosec:
+      excludes:
+        - G103
+    govet:
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+    
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true

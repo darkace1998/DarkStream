@@ -24,8 +24,8 @@ type VulkanDetector struct {
 // initVulkan initializes the Vulkan library once
 func initVulkan() error {
 	vulkanInitOnce.Do(func() {
-		vulkanInitErr = vk.Init()
-		if vulkanInitErr != nil {
+		if err := vk.Init(); err != nil {
+			vulkanInitErr = fmt.Errorf("failed to initialize Vulkan: %w", err)
 			slog.Warn("Vulkan library not found or failed to initialize", "error", vulkanInitErr)
 		}
 	})
