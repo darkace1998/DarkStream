@@ -1,3 +1,27 @@
+---
+
+## Testing
+
+### Running Race Detector Tests (Local)
+
+To run the race detector locally across all modules, use the included helper script:
+
+```bash
+./scripts/run-race-tests.sh
+```
+
+You can also run a single module by passing its folder name as an argument (e.g., `video-converter-worker`):
+
+```bash
+./scripts/run-race-tests.sh video-converter-worker
+```
+
+This script runs `go test -race` for each module and produces a coverage file per module (e.g., `coverage-video-converter-worker.out`).
+
+### CI
+
+The repository's CI already runs race detector tests in GitHub Actions. You can find the job in `.github/workflows/ci.yaml`.
+
 ## Table of Contents
 
 1. [Overview](#overview)
