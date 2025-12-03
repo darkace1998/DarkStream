@@ -29,6 +29,7 @@ linters:
     - errname            # Don't enforce error naming convention
     - nestif             # Don't flag nested if statements
     - whitespace         # Don't enforce whitespace rules
+    - gosec              # Disabled due to SSA panic in golangci-lint v2.x
   settings:
     cyclop:
       max-complexity: 20
@@ -43,9 +44,6 @@ linters:
     goconst:
       min-len: 3
       min-occurrences: 3
-    gosec:
-      excludes:
-        - G103
 
 issues:
   max-issues-per-linter: 0
