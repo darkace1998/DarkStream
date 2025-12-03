@@ -192,8 +192,8 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	for attempt := range make([]struct{}, maxRetries) {
 		if attempt > 0 {
 			// Safe bit shift with bounded attempt value (0-2 range)
-			// attempt-1 is always in range [0, 1], safe to cast directly to uint
-			shiftAmount := uint(attempt - 1) // attempt-1 is always in range [0, 1]
+			// attempt-1 is always in range [0, 1]
+			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
@@ -292,8 +292,8 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 	for attempt := range make([]struct{}, maxRetries) {
 		if attempt > 0 {
 			// Safe bit shift with bounded attempt value (0-2 range)
-			// attempt-1 is always in range [0, 1], safe to cast directly to uint
-			shiftAmount := uint(attempt - 1) // attempt-1 is always in range [0, 1]
+			// attempt-1 is always in range [0, 1]
+			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
@@ -318,6 +318,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) error {
 	// Open the file
 	// filePath is derived from job metadata, not untrusted user input
+	// #nosec G304: filePath comes from job metadata
 	//nolint:gosec // G304: filePath comes from job metadata
 	file, err := os.Open(filePath)
 	if err != nil {

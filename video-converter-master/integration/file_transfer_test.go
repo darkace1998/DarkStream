@@ -196,13 +196,14 @@ func TestDownloadRetryLogic(t *testing.T) {
 
 	for attempt := range make([]struct{}, maxRetries) {
 		if attempt > 0 {
-			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
-			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			// attempt is guaranteed to be small positive integer (< maxRetries)
+			shiftAmount := attempt - 1
+			delay := baseDelay * time.Duration(1<<shiftAmount)
 			t.Logf("Retry attempt %d would wait for %v", attempt+1, delay)
 
 			// Verify exponential backoff calculation
-			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
-			expectedDelay := baseDelay * time.Duration(1<<uint(attempt-1))
+			// attempt is guaranteed to be small positive integer (< maxRetries)
+			expectedDelay := baseDelay * time.Duration(1<<shiftAmount)
 			if delay != expectedDelay {
 				t.Errorf("Expected delay %v, got %v", expectedDelay, delay)
 			}
