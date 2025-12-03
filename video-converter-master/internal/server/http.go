@@ -289,7 +289,7 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"timestamp": time.Now(),
 		"jobs":      stats,
 	}
@@ -481,7 +481,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Return success response with file size
 	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{
+	response := map[string]any{
 		"file_size": bytesWritten,
 		"status":    "completed",
 	}

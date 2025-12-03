@@ -174,19 +174,23 @@ jobs:
     - name: Run Gosec Security Scanner (common)
       uses: securego/gosec@master
       with:
-        args: './video-converter-common/...'
+        working-directory: video-converter-common
+        args: './...'
 
     - name: Run Gosec Security Scanner (master)
       uses: securego/gosec@master
       with:
-        args: './video-converter-master/...'
+        working-directory: video-converter-master
+        args: './...'
 
     - name: Run Gosec Security Scanner (worker)
       uses: securego/gosec@master
       with:
-        args: './video-converter-worker/...'
+        working-directory: video-converter-worker
+        args: './...'
 
     - name: Run Gosec Security Scanner (cli)
       uses: securego/gosec@master
       with:
-        args: './video-converter-cli/...'
+        working-directory: video-converter-cli
+        args: './...'

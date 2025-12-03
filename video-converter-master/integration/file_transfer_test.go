@@ -194,7 +194,7 @@ func TestDownloadRetryLogic(t *testing.T) {
 	maxRetries := 3
 	baseDelay := 2 * time.Second
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
 			// #nosec G115 - attempt is guaranteed to be small positive integer (< maxRetries)
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))

@@ -77,7 +77,6 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan directory: %w", err)
 	}

@@ -88,7 +88,6 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.SourcePath, job.OutputPath, job.Status,
 		job.RetryCount, job.MaxRetries, job.CreatedAt)
-
 	if err != nil {
 		return fmt.Errorf("failed to execute insert: %w", err)
 	}
@@ -206,8 +205,8 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 }
 
 // GetJobStats returns statistics about job statuses
-func (t *Tracker) GetJobStats() (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
+func (t *Tracker) GetJobStats() (map[string]any, error) {
+	stats := make(map[string]any)
 
 	rows, err := t.db.Query(`
 		SELECT status, COUNT(*) as count

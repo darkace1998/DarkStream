@@ -1,0 +1,8 @@
+go 1.24
+
+use (
+	./video-converter-cli
+	./video-converter-common
+	./video-converter-master
+	./video-converter-worker
+)
