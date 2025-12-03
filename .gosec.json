@@ -1,0 +1,11 @@
+{
+  "global": {
+    "nosec": false,
+    "no-fail": false
+  },
+  "analyzers": {
+    "disabled": [
+      "buildssa"
+    ]
+  }
+}
