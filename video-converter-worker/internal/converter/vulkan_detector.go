@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
+	vk "github.com/darkace1998/golang-vulkan-api"
 	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
-	vk "github.com/vulkan-go/vulkan"
 )
 
 var (
@@ -24,10 +24,9 @@ type VulkanDetector struct {
 // initVulkan initializes the Vulkan library once
 func initVulkan() error {
 	vulkanInitOnce.Do(func() {
-		if err := vk.Init(); err != nil {
-			vulkanInitErr = fmt.Errorf("failed to initialize Vulkan: %w", err)
-			slog.Warn("Vulkan library not found or failed to initialize", "error", vulkanInitErr)
-		}
+		// The Golang-Vulkan-api doesn't require explicit initialization
+		// as it handles CGO binding automatically. Return nil for success.
+		vulkanInitErr = nil
 	})
 	return vulkanInitErr
 }
@@ -35,23 +34,20 @@ func initVulkan() error {
 // createVulkanInstance creates a Vulkan instance for device enumeration
 func createVulkanInstance() (vk.Instance, error) {
 	appInfo := &vk.ApplicationInfo{
-		SType:              vk.StructureTypeApplicationInfo,
-		PApplicationName:   "DarkStream Video Converter\x00",
+		ApplicationName:    "DarkStream Video Converter",
 		ApplicationVersion: vk.MakeVersion(1, 0, 0),
-		PEngineName:        "No Engine\x00",
+		EngineName:         "No Engine",
 		EngineVersion:      vk.MakeVersion(1, 0, 0),
-		ApiVersion:         vk.ApiVersion10,
+		APIVersion:         vk.Version13,
 	}
 
 	instanceCreateInfo := &vk.InstanceCreateInfo{
-		SType:            vk.StructureTypeInstanceCreateInfo,
-		PApplicationInfo: appInfo,
+		ApplicationInfo: appInfo,
 	}
 
-	var instance vk.Instance
-	result := vk.CreateInstance(instanceCreateInfo, nil, &instance)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to create Vulkan instance: %v", result)
+	instance, err := vk.CreateInstance(instanceCreateInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Vulkan instance: %w", err)
 	}
 
 	return instance, nil
@@ -100,7 +96,7 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 		slog.Warn("Failed to create Vulkan instance, falling back to CPU encoding", "error", err)
 		return caps, nil
 	}
-	defer vk.DestroyInstance(instance, nil)
+	defer vk.DestroyInstance(instance)
 
 	// Detect Vulkan devices
 	devices, err := vd.listVulkanDevicesWithInstance(instance)
@@ -173,25 +169,16 @@ func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instan
 	}
 
 	// Enumerate physical devices to find our device
-	var deviceCount uint32
-	result := vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to enumerate physical devices: %v", result)
-	}
-
-	physicalDevices := make([]vk.PhysicalDevice, deviceCount)
-	result = vk.EnumeratePhysicalDevices(instance, &deviceCount, physicalDevices)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to get physical devices: %v", result)
+	physicalDevices, err := vk.EnumeratePhysicalDevices(instance)
+	if err != nil {
+		return nil, fmt.Errorf("failed to enumerate physical devices: %w", err)
 	}
 
 	// Find the matching physical device
 	var selectedPhysicalDevice vk.PhysicalDevice
 	var found bool
 	for _, physicalDevice := range physicalDevices {
-		var props vk.PhysicalDeviceProperties
-		vk.GetPhysicalDeviceProperties(physicalDevice, &props)
-		props.Deref()
+		props := vk.GetPhysicalDeviceProperties(physicalDevice)
 
 		if props.DeviceID == device.DeviceID && props.VendorID == device.VendorID {
 			selectedPhysicalDevice = physicalDevice
@@ -199,9 +186,9 @@ func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instan
 
 			// Get API version
 			caps.APIVersion = fmt.Sprintf("%d.%d.%d",
-				vk.Version(props.ApiVersion).Major(),
-				vk.Version(props.ApiVersion).Minor(),
-				vk.Version(props.ApiVersion).Patch(),
+				props.APIVersion.Major(),
+				props.APIVersion.Minor(),
+				props.APIVersion.Patch(),
 			)
 
 			// Set conservative video resolution limits based on device type.
@@ -232,24 +219,18 @@ func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instan
 	}
 
 	// Query device extensions
-	var extensionCount uint32
-	result = vk.EnumerateDeviceExtensionProperties(selectedPhysicalDevice, "", &extensionCount, nil)
-	if result == vk.Success && extensionCount > 0 {
-		extensions := make([]vk.ExtensionProperties, extensionCount)
-		result = vk.EnumerateDeviceExtensionProperties(selectedPhysicalDevice, "", &extensionCount, extensions)
-		if result == vk.Success {
-			for i := uint32(0); i < extensionCount; i++ {
-				extensions[i].Deref()
-				extName := vk.ToString(extensions[i].ExtensionName[:])
-				caps.SupportedExtensions = append(caps.SupportedExtensions, extName)
+	extensions, err := vk.EnumerateDeviceExtensionProperties(selectedPhysicalDevice, "")
+	if err == nil && len(extensions) > 0 {
+		for _, ext := range extensions {
+			extName := ext.ExtensionName
+			caps.SupportedExtensions = append(caps.SupportedExtensions, extName)
 
-				// Check for video encoding/decoding extensions using exact match
-				if extName == "VK_KHR_video_encode_queue" {
-					caps.CanEncode = true
-				}
-				if extName == "VK_KHR_video_decode_queue" {
-					caps.CanDecode = true
-				}
+			// Check for video encoding/decoding extensions using exact match
+			if extName == "VK_KHR_video_encode_queue" {
+				caps.CanEncode = true
+			}
+			if extName == "VK_KHR_video_decode_queue" {
+				caps.CanDecode = true
 			}
 		}
 	}
@@ -270,31 +251,22 @@ func (vd *VulkanDetector) queryDeviceCapabilitiesWithInstance(instance vk.Instan
 // listVulkanDevicesWithInstance enumerates available Vulkan devices using a provided instance
 func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([]models.VulkanDevice, error) {
 	// Enumerate physical devices
-	var deviceCount uint32
-	result := vk.EnumeratePhysicalDevices(instance, &deviceCount, nil)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to enumerate physical devices: %v", result)
+	physicalDevices, err := vk.EnumeratePhysicalDevices(instance)
+	if err != nil {
+		return nil, fmt.Errorf("failed to enumerate physical devices: %w", err)
 	}
 
-	if deviceCount == 0 {
+	if len(physicalDevices) == 0 {
 		return nil, fmt.Errorf("no Vulkan-capable devices found")
 	}
 
-	physicalDevices := make([]vk.PhysicalDevice, deviceCount)
-	result = vk.EnumeratePhysicalDevices(instance, &deviceCount, physicalDevices)
-	if result != vk.Success {
-		return nil, fmt.Errorf("failed to get physical devices: %v", result)
-	}
-
 	// Extract device information
-	devices := make([]models.VulkanDevice, 0, deviceCount)
+	devices := make([]models.VulkanDevice, 0, len(physicalDevices))
 	for _, physicalDevice := range physicalDevices {
-		var props vk.PhysicalDeviceProperties
-		vk.GetPhysicalDeviceProperties(physicalDevice, &props)
+		props := vk.GetPhysicalDeviceProperties(physicalDevice)
 
 		// Convert device name from C string
-		props.Deref()
-		deviceName := vk.ToString(props.DeviceName[:])
+		deviceName := props.DeviceName
 
 		// Map Vulkan device type to our constants
 		deviceType := mapVulkanDeviceType(props.DeviceType)
@@ -313,28 +285,24 @@ func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([
 		} else {
 			// Standard Vulkan version format for other vendors
 			driverVersion = fmt.Sprintf("%d.%d.%d",
-				vk.Version(props.DriverVersion).Major(),
-				vk.Version(props.DriverVersion).Minor(),
-				vk.Version(props.DriverVersion).Patch(),
+				props.APIVersion.Major(),
+				props.APIVersion.Minor(),
+				props.APIVersion.Patch(),
 			)
 		}
 
 		// Check queue family support for compute/graphics
-		var queueFamilyCount uint32
-		vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nil)
-		queueFamilies := make([]vk.QueueFamilyProperties, queueFamilyCount)
-		vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies)
+		queueFamilies := vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice)
 
 		// Check if device supports graphics and compute operations
 		hasGraphics := false
 		hasCompute := false
-		for i := uint32(0); i < queueFamilyCount; i++ {
-			queueFamilies[i].Deref()
-			queueFlags := queueFamilies[i].QueueFlags
-			if queueFlags&vk.QueueFlags(vk.QueueGraphicsBit) != 0 {
+		for _, qf := range queueFamilies {
+			queueFlags := qf.QueueFlags
+			if queueFlags&vk.QueueGraphicsBit != 0 {
 				hasGraphics = true
 			}
-			if queueFlags&vk.QueueFlags(vk.QueueComputeBit) != 0 {
+			if queueFlags&vk.QueueComputeBit != 0 {
 				hasCompute = true
 			}
 		}
@@ -368,13 +336,13 @@ func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([
 // mapVulkanDeviceType converts Vulkan device type to our constant
 func mapVulkanDeviceType(vkType vk.PhysicalDeviceType) string {
 	switch vkType {
-	case vk.PhysicalDeviceTypeDiscreteGpu:
+	case 1: // VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
 		return constants.VulkanDeviceTypeDiscrete
-	case vk.PhysicalDeviceTypeIntegratedGpu:
+	case 2: // VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
 		return constants.VulkanDeviceTypeIntegrated
-	case vk.PhysicalDeviceTypeVirtualGpu:
+	case 3: // VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU
 		return constants.VulkanDeviceTypeVirtual
-	case vk.PhysicalDeviceTypeCpu:
+	case 4: // VK_PHYSICAL_DEVICE_TYPE_CPU
 		return constants.VulkanDeviceTypeCPU
 	default:
 		return constants.VulkanDeviceTypeIntegrated // fallback
