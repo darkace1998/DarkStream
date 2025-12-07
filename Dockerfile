@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     libsqlite3-dev \
     pkg-config \
+    libvulkan-dev \
+    vulkan-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
