@@ -113,6 +113,7 @@ FROM ubuntu:24.04 AS all-in-one
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libvulkan1 \
+    libvulkan-dev \
     vulkan-tools \
     ca-certificates \
     curl \
