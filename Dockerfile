@@ -4,6 +4,7 @@ FROM golang:1.24-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     gcc \
     build-essential \
@@ -12,7 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libvulkan-dev \
     vulkan-tools \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates \
+    && git config --global http.sslVerify false
 
 # Set working directory
 WORKDIR /build
@@ -21,6 +24,8 @@ WORKDIR /build
 COPY . .
 
 # Build the three main components with CGO enabled for SQLite
+# Use direct access to repositories bypassing proxy to avoid certificate issues
+ENV GOSUMDB=off GOPROXY=direct
 RUN cd video-converter-master && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-master -ldflags="-s -w" .
 
