@@ -12,12 +12,13 @@ type LoggingSettings struct {
 
 // ConversionSettings defines video conversion parameters used by both Master and Worker
 type ConversionSettings struct {
-	TargetResolution string `yaml:"target_resolution"`
-	Codec            string `yaml:"codec"`
-	Bitrate          string `yaml:"bitrate"`
-	Preset           string `yaml:"preset"`
-	AudioCodec       string `yaml:"audio_codec"`
-	AudioBitrate     string `yaml:"audio_bitrate"`
+	TargetResolution string `json:"resolution"    yaml:"target_resolution"`
+	Codec            string `json:"codec"         yaml:"codec"`
+	Bitrate          string `json:"bitrate"       yaml:"bitrate"`
+	Preset           string `json:"preset"        yaml:"preset"`
+	AudioCodec       string `json:"audio_codec"   yaml:"audio_codec"`
+	AudioBitrate     string `json:"audio_bitrate" yaml:"audio_bitrate"`
+	OutputFormat     string `json:"output_format" yaml:"output_format"` // mp4, mkv, webm, avi
 }
 
 // MasterConfig holds the configuration for the master coordinator service.

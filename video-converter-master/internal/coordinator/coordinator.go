@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"github.com/darkace1998/video-converter-master/internal/scanner"
 	"github.com/darkace1998/video-converter-master/internal/server"
@@ -38,6 +40,15 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		return nil, fmt.Errorf("failed to create database tracker: %w", err)
 	}
 
+	// Initialize configuration manager
+	// Config file will be stored next to the database file
+	configPath := filepath.Join(filepath.Dir(cfg.Database.Path), "active-config.json")
+	configMgr, err := config.NewManager(configPath, &cfg.Conversion)
+	if err != nil {
+		_ = tracker.Close()
+		return nil, fmt.Errorf("failed to create config manager: %w", err)
+	}
+
 	scn := scanner.New(
 		cfg.Scanner.RootPath,
 		cfg.Scanner.VideoExtensions,
@@ -45,7 +56,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := server.New(tracker, addr)
+	srv := server.New(tracker, addr, configMgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

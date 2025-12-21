@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 )
 
@@ -32,22 +33,32 @@ func validateJobID(jobID string) bool {
 
 // Server handles HTTP API requests
 type Server struct {
-	db     *db.Tracker
-	addr   string
-	server *http.Server
+	db        *db.Tracker
+	addr      string
+	server    *http.Server
+	configMgr *config.Manager
 }
 
 // New creates a new HTTP server instance
-func New(tracker *db.Tracker, addr string) *Server {
+func New(tracker *db.Tracker, addr string, configMgr *config.Manager) *Server {
 	return &Server{
-		db:   tracker,
-		addr: addr,
+		db:        tracker,
+		addr:      addr,
+		configMgr: configMgr,
 	}
 }
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
+
+	// Web UI
+	mux.HandleFunc("/", s.ServeWebUI)
+
+	// Configuration API
+	mux.HandleFunc("/api/config", s.handleConfig)
+
+	// Worker API
 	mux.HandleFunc("/api/worker/next-job", s.GetNextJob)
 	mux.HandleFunc("/api/worker/job-complete", s.JobComplete)
 	mux.HandleFunc("/api/worker/job-failed", s.JobFailed)
@@ -82,6 +93,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("failed to shutdown server: %w", err)
 	}
 	return nil
+}
+
+// handleConfig routes GET/POST requests to appropriate config handlers
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.GetConfig(w, r)
+	case http.MethodPost:
+		s.UpdateConfig(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // GetNextJob handles requests for the next pending job
