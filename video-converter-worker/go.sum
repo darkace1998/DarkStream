@@ -1,5 +1,5 @@
-github.com/darkace1998/golang-vulkan-api v1.0.1 h1:7IoD/QyJWxvO85jrq5535Yn/OPlo2taQInreRalCAjs=
-github.com/darkace1998/golang-vulkan-api v1.0.1/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
+github.com/darkace1998/golang-vulkan-api v1.0.3 h1:d8iIsOnzFjx5Utb74hPr3NdjJOkF7kh3bZTzr7Z40fY=
+github.com/darkace1998/golang-vulkan-api v1.0.3/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=

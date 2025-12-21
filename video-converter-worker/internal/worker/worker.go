@@ -197,8 +197,8 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Determine output extension based on output format
 	outputExt := "." + dynamicCfg.OutputFormat
-	if outputExt == "." || outputExt == ".mp4" {
-		// Use original extension if no format specified or mp4
+	if dynamicCfg.OutputFormat == "" {
+		// Use original extension if no format specified
 		outputExt = filepath.Ext(job.OutputPath)
 		if outputExt == "" {
 			outputExt = ".mp4" // Default to .mp4 if no extension
