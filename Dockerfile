@@ -1,9 +1,10 @@
 # Multi-stage build for DarkStream video converter system
-# Stage 1: Build stage
-FROM golang:1.24-bookworm AS builder
+# Stage 1: Build stage - Use Ubuntu 24.04 for newer Vulkan headers
+FROM ubuntu:24.04 AS builder
 
-# Install build dependencies
+# Install Go 1.24 and build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     gcc \
     build-essential \
@@ -12,7 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libvulkan-dev \
     vulkan-tools \
+    wget \
+    && wget -O go.tar.gz https://go.dev/dl/go1.24.9.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go.tar.gz \
+    && rm go.tar.gz \
     && rm -rf /var/lib/apt/lists/*
+
+# Set Go environment variables
+ENV PATH=/usr/local/go/bin:$PATH \
+    GOPATH=/go \
+    CGO_ENABLED=1
 
 # Set working directory
 WORKDIR /build
@@ -21,6 +31,8 @@ WORKDIR /build
 COPY . .
 
 # Build the three main components with CGO enabled for SQLite
+# Use direct access to repositories bypassing proxy to avoid certificate issues
+ENV GOSUMDB=off GOPROXY=direct
 RUN cd video-converter-master && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-master -ldflags="-s -w" .
 

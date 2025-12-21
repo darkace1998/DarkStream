@@ -26,6 +26,11 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
 
+    - name: Install Vulkan development libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev pkg-config
+
     - name: Cache Go modules
       uses: actions/cache@v4
       with:
@@ -105,6 +110,11 @@ jobs:
       with:
         go-version: '1.24'
 
+    - name: Install Vulkan development libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev pkg-config
+
     - name: Cache Go modules
       uses: actions/cache@v4
       with:
@@ -144,6 +154,11 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
+
+    - name: Install Vulkan development libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev pkg-config
 
     - name: golangci-lint (common)
       uses: golangci/golangci-lint-action@v8
@@ -185,6 +200,11 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
+
+    - name: Install Vulkan development libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev pkg-config
 
     - name: Run Gosec Security Scanner (common)
       uses: securego/gosec@master
