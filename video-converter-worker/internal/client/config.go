@@ -18,6 +18,8 @@ const (
 	DefaultConfigRefreshInterval = 30 * time.Second
 	DefaultMaxRetries            = 3
 	DefaultRetryBaseDelay        = 2 * time.Second
+	fetchWaitDuration            = 100 * time.Millisecond
+	maxFetchWaitRetries          = 50 // Maximum times to retry waiting for another goroutine's fetch
 )
 
 // ConfigFetcher handles fetching and caching configuration from the master
@@ -62,8 +64,24 @@ func NewConfigFetcherWithOptions(baseURL string, refreshInterval time.Duration, 
 // It returns the cached config if available and still fresh
 // Uses a single-flight pattern to prevent concurrent requests when cache is stale
 func (cf *ConfigFetcher) FetchConfig() (*models.ConversionSettings, error) {
+	return cf.fetchConfigWithRetry(0)
+}
+
+// fetchConfigWithRetry implements FetchConfig with a retry counter to prevent infinite recursion
+func (cf *ConfigFetcher) fetchConfigWithRetry(waitRetries int) (*models.ConversionSettings, error) {
+	// First try with read lock - fast path for cached config
+	cf.mu.RLock()
+	if cf.cachedConfig != nil && time.Since(cf.lastFetchTime) < cf.refreshInterval {
+		cfg := *cf.cachedConfig
+		cf.mu.RUnlock()
+		return &cfg, nil
+	}
+	cf.mu.RUnlock()
+
+	// Need to potentially update - acquire write lock
 	cf.mu.Lock()
-	// Check cache while holding write lock
+
+	// Double-check cache after acquiring write lock
 	if cf.cachedConfig != nil && time.Since(cf.lastFetchTime) < cf.refreshInterval {
 		cfg := *cf.cachedConfig
 		cf.mu.Unlock()
@@ -72,16 +90,18 @@ func (cf *ConfigFetcher) FetchConfig() (*models.ConversionSettings, error) {
 
 	// If another goroutine is already fetching, wait and use cached result
 	if cf.fetching {
-		// Release lock and wait briefly, then retry with cached config
 		cachedCfg := cf.cachedConfig
 		cf.mu.Unlock()
 		if cachedCfg != nil {
 			cfg := *cachedCfg
 			return &cfg, nil
 		}
-		// No cache available, wait a bit and retry
-		time.Sleep(100 * time.Millisecond)
-		return cf.FetchConfig()
+		// No cache available, wait a bit and retry (with bounds to prevent infinite recursion)
+		if waitRetries >= maxFetchWaitRetries {
+			return nil, fmt.Errorf("timed out waiting for config fetch after %d retries", waitRetries)
+		}
+		time.Sleep(fetchWaitDuration)
+		return cf.fetchConfigWithRetry(waitRetries + 1)
 	}
 
 	// Mark as fetching
