@@ -282,6 +282,11 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 
 // GetJobsByStatus retrieves all jobs with a specific status
 func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, error) {
+	// Validate limit parameter to prevent SQL injection
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must be non-negative")
+	}
+
 	query := `
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
@@ -338,6 +343,11 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 
 // GetJobHistory retrieves job history within a time range
 func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models.Job, error) {
+	// Validate limit parameter to prevent SQL injection
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must be non-negative")
+	}
+
 	query := `
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -265,7 +266,7 @@ func (fc *FFmpegConverter) getVideoDuration(sourcePath string) (float64, error) 
 
 // trackProgress monitors FFmpeg's progress output
 func (fc *FFmpegConverter) trackProgress(
-	stderr *os.File,
+	stderr io.ReadCloser,
 	totalDuration float64,
 	callback ProgressCallback,
 ) {
@@ -281,11 +282,11 @@ func (fc *FFmpegConverter) trackProgress(
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Extract current time
+		// Extract current time (out_time_ms is in microseconds)
 		if matches := timePattern.FindStringSubmatch(line); len(matches) > 1 {
-			timeMs, err := strconv.ParseInt(matches[1], 10, 64)
+			timeUs, err := strconv.ParseInt(matches[1], 10, 64)
 			if err == nil {
-				currentTime = float64(timeMs) / 1000000.0 // Convert microseconds to seconds
+				currentTime = float64(timeUs) / 1000000.0 // Convert microseconds to seconds
 			}
 		}
 

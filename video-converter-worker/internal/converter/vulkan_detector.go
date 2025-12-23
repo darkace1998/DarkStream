@@ -16,6 +16,11 @@ var (
 	vulkanInitErr  error
 )
 
+const (
+	// VulkanValidationLayer is the standard Khronos validation layer
+	VulkanValidationLayer = "VK_LAYER_KHRONOS_validation"
+)
+
 // VulkanDetector handles detection and selection of Vulkan-capable GPUs
 type VulkanDetector struct {
 	preferredDevice     string
@@ -49,14 +54,14 @@ func (vd *VulkanDetector) createVulkanInstance() (vk.Instance, error) {
 
 	// Add validation layers if enabled
 	if vd.enableValidation {
-		validationLayers := []string{"VK_LAYER_KHRONOS_validation"}
+		validationLayers := []string{VulkanValidationLayer}
 		
 		// Check if validation layers are available
 		availableLayers, err := vk.EnumerateInstanceLayerProperties()
 		if err == nil {
 			layerFound := false
 			for _, layer := range availableLayers {
-				if layer.LayerName == "VK_LAYER_KHRONOS_validation" {
+				if layer.LayerName == VulkanValidationLayer {
 					layerFound = true
 					break
 				}
