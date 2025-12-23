@@ -280,6 +280,337 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	return workers, nil
 }
 
+// GetJobsByStatus retrieves all jobs with a specific status
+func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, error) {
+	// Validate limit parameter to prevent SQL injection
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must be non-negative")
+	}
+
+	query := `
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs WHERE status = ?
+		ORDER BY created_at DESC
+	`
+	
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := t.db.Query(query, status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query jobs by status: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+		
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+		
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetJobHistory retrieves job history within a time range
+func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models.Job, error) {
+	// Validate limit parameter to prevent SQL injection
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must be non-negative")
+	}
+
+	query := `
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs
+		WHERE created_at BETWEEN ? AND ?
+		ORDER BY created_at DESC
+	`
+	
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := t.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query job history: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+		
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+		
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetJobMetrics returns aggregated metrics for jobs
+func (t *Tracker) GetJobMetrics() (map[string]any, error) {
+	metrics := make(map[string]any)
+
+	// Get total conversion time
+	var totalDuration sql.NullFloat64
+	err := t.db.QueryRow(`
+		SELECT SUM(
+			JULIANDAY(completed_at) - JULIANDAY(started_at)
+		) * 24 * 60 * 60 as total_duration_seconds
+		FROM jobs
+		WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
+	`).Scan(&totalDuration)
+	
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate total duration: %w", err)
+	}
+	
+	if totalDuration.Valid {
+		metrics["total_conversion_time_seconds"] = totalDuration.Float64
+	} else {
+		metrics["total_conversion_time_seconds"] = 0.0
+	}
+
+	// Get average conversion time
+	var avgDuration sql.NullFloat64
+	err = t.db.QueryRow(`
+		SELECT AVG(
+			JULIANDAY(completed_at) - JULIANDAY(started_at)
+		) * 24 * 60 * 60 as avg_duration_seconds
+		FROM jobs
+		WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
+	`).Scan(&avgDuration)
+	
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate average duration: %w", err)
+	}
+	
+	if avgDuration.Valid {
+		metrics["average_conversion_time_seconds"] = avgDuration.Float64
+	} else {
+		metrics["average_conversion_time_seconds"] = 0.0
+	}
+
+	// Get total output size
+	var totalSize sql.NullInt64
+	err = t.db.QueryRow(`
+		SELECT SUM(output_size) as total_size
+		FROM jobs
+		WHERE status = 'completed'
+	`).Scan(&totalSize)
+	
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate total size: %w", err)
+	}
+	
+	if totalSize.Valid {
+		metrics["total_output_size_bytes"] = totalSize.Int64
+	} else {
+		metrics["total_output_size_bytes"] = int64(0)
+	}
+
+	// Get job counts by status
+	statusCounts := make(map[string]int)
+	rows, err := t.db.Query(`
+		SELECT status, COUNT(*) as count
+		FROM jobs
+		GROUP BY status
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query status counts: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			slog.Warn("Failed to scan status count", "error", err)
+			continue
+		}
+		statusCounts[status] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating status rows: %w", err)
+	}
+
+	metrics["status_counts"] = statusCounts
+
+	return metrics, nil
+}
+
+// GetActiveWorkers returns workers that have sent a heartbeat within the threshold
+func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.WorkerHeartbeat, error) {
+	query := `
+		SELECT id, hostname, last_heartbeat, vulkan_available,
+			active_jobs, gpu_name, cpu_usage, memory_usage
+		FROM workers
+		WHERE last_heartbeat >= datetime('now', '-' || ? || ' seconds')
+		ORDER BY last_heartbeat DESC
+	`
+
+	rows, err := t.db.Query(query, heartbeatThresholdSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active workers: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var workers []*models.WorkerHeartbeat
+	for rows.Next() {
+		var w models.WorkerHeartbeat
+		var lastHeartbeat sql.NullTime
+		if err := rows.Scan(
+			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
+			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage,
+		); err != nil {
+			slog.Warn("Failed to scan worker row", "error", err)
+			continue
+		}
+		if lastHeartbeat.Valid {
+			w.Timestamp = lastHeartbeat.Time
+		}
+		workers = append(workers, &w)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating worker rows: %w", err)
+	}
+
+	return workers, nil
+}
+
+// GetWorkerStats returns aggregated statistics for workers
+func (t *Tracker) GetWorkerStats() (map[string]any, error) {
+	stats := make(map[string]any)
+
+	// Get total workers
+	var totalWorkers int
+	err := t.db.QueryRow(`SELECT COUNT(*) FROM workers`).Scan(&totalWorkers)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count workers: %w", err)
+	}
+	stats["total_workers"] = totalWorkers
+
+	// Get workers with Vulkan support
+	var vulkanWorkers int
+	err = t.db.QueryRow(`
+		SELECT COUNT(*) FROM workers WHERE vulkan_available = 1
+	`).Scan(&vulkanWorkers)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count vulkan workers: %w", err)
+	}
+	stats["vulkan_workers"] = vulkanWorkers
+
+	// Get average active jobs
+	var avgActiveJobs sql.NullFloat64
+	err = t.db.QueryRow(`
+		SELECT AVG(active_jobs) FROM workers
+	`).Scan(&avgActiveJobs)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate average active jobs: %w", err)
+	}
+	if avgActiveJobs.Valid {
+		stats["average_active_jobs"] = avgActiveJobs.Float64
+	} else {
+		stats["average_active_jobs"] = 0.0
+	}
+
+	// Get average CPU usage
+	var avgCPUUsage sql.NullFloat64
+	err = t.db.QueryRow(`
+		SELECT AVG(cpu_usage) FROM workers WHERE cpu_usage > 0
+	`).Scan(&avgCPUUsage)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate average CPU usage: %w", err)
+	}
+	if avgCPUUsage.Valid {
+		stats["average_cpu_usage"] = avgCPUUsage.Float64
+	} else {
+		stats["average_cpu_usage"] = 0.0
+	}
+
+	// Get average memory usage
+	var avgMemoryUsage sql.NullFloat64
+	err = t.db.QueryRow(`
+		SELECT AVG(memory_usage) FROM workers WHERE memory_usage > 0
+	`).Scan(&avgMemoryUsage)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to calculate average memory usage: %w", err)
+	}
+	if avgMemoryUsage.Valid {
+		stats["average_memory_usage"] = avgMemoryUsage.Float64
+	} else {
+		stats["average_memory_usage"] = 0.0
+	}
+
+	return stats, nil
+}
+
 // Close closes the database connection
 func (t *Tracker) Close() error {
 	if err := t.db.Close(); err != nil {

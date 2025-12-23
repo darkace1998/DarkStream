@@ -41,9 +41,10 @@ const (
 
 // Audio codecs
 const (
-	AudioCodecAAC  = "aac"
-	AudioCodecMP3  = "mp3"
-	AudioCodecOPUS = "opus"
+	AudioCodecAAC    = "aac"
+	AudioCodecMP3    = "mp3"
+	AudioCodecOPUS   = "opus"
+	AudioCodecVorbis = "vorbis"
 )
 
 // Presets
@@ -59,6 +60,14 @@ const (
 	LogLevelInfo  = "info"
 	LogLevelWarn  = "warn"
 	LogLevelError = "error"
+)
+
+// Output formats
+const (
+	FormatMP4  = "mp4"
+	FormatMKV  = "mkv"
+	FormatWebM = "webm"
+	FormatAVI  = "avi"
 )
 
 // Log formats

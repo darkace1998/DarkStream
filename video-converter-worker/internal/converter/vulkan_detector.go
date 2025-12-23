@@ -16,9 +16,16 @@ var (
 	vulkanInitErr  error
 )
 
+const (
+	// VulkanValidationLayer is the standard Khronos validation layer
+	VulkanValidationLayer = "VK_LAYER_KHRONOS_validation"
+)
+
 // VulkanDetector handles detection and selection of Vulkan-capable GPUs
 type VulkanDetector struct {
-	preferredDevice string
+	preferredDevice     string
+	enableValidation    bool
+	validationLayersSet bool
 }
 
 // initVulkan initializes the Vulkan library once
@@ -32,7 +39,7 @@ func initVulkan() error {
 }
 
 // createVulkanInstance creates a Vulkan instance for device enumeration
-func createVulkanInstance() (vk.Instance, error) {
+func (vd *VulkanDetector) createVulkanInstance() (vk.Instance, error) {
 	appInfo := &vk.ApplicationInfo{
 		ApplicationName:    "DarkStream Video Converter",
 		ApplicationVersion: vk.MakeVersion(1, 0, 0),
@@ -43,6 +50,33 @@ func createVulkanInstance() (vk.Instance, error) {
 
 	instanceCreateInfo := &vk.InstanceCreateInfo{
 		ApplicationInfo: appInfo,
+	}
+
+	// Add validation layers if enabled
+	if vd.enableValidation {
+		validationLayers := []string{VulkanValidationLayer}
+		
+		// Check if validation layers are available
+		availableLayers, err := vk.EnumerateInstanceLayerProperties()
+		if err == nil {
+			layerFound := false
+			for _, layer := range availableLayers {
+				if layer.LayerName == VulkanValidationLayer {
+					layerFound = true
+					break
+				}
+			}
+			
+			if layerFound {
+				instanceCreateInfo.EnabledLayerNames = validationLayers
+				vd.validationLayersSet = true
+				slog.Info("Vulkan validation layers enabled")
+			} else {
+				slog.Warn("Vulkan validation layers requested but not available")
+			}
+		} else {
+			slog.Warn("Failed to enumerate Vulkan layers", "error", err)
+		}
 	}
 
 	instance, err := vk.CreateInstance(instanceCreateInfo)
@@ -56,7 +90,18 @@ func createVulkanInstance() (vk.Instance, error) {
 // NewVulkanDetector creates a new VulkanDetector instance
 func NewVulkanDetector(preferredDevice string) *VulkanDetector {
 	return &VulkanDetector{
-		preferredDevice: preferredDevice,
+		preferredDevice:     preferredDevice,
+		enableValidation:    false,
+		validationLayersSet: false,
+	}
+}
+
+// NewVulkanDetectorWithValidation creates a new VulkanDetector with validation layers
+func NewVulkanDetectorWithValidation(preferredDevice string, enableValidation bool) *VulkanDetector {
+	return &VulkanDetector{
+		preferredDevice:     preferredDevice,
+		enableValidation:    enableValidation,
+		validationLayersSet: false,
 	}
 }
 
@@ -91,7 +136,7 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 	}
 
 	// Create Vulkan instance (reused for both device listing and capability query)
-	instance, err := createVulkanInstance()
+	instance, err := vd.createVulkanInstance()
 	if err != nil {
 		slog.Warn("Failed to create Vulkan instance, falling back to CPU encoding", "error", err)
 		return caps, nil

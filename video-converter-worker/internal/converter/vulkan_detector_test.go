@@ -250,6 +250,48 @@ func TestNewVulkanDetector(t *testing.T) {
 	}
 }
 
+// TestNewVulkanDetectorWithValidation tests validation layer constructor
+func TestNewVulkanDetectorWithValidation(t *testing.T) {
+	tests := []struct {
+		name             string
+		preferredDevice  string
+		enableValidation bool
+	}{
+		{
+			name:             "validation enabled",
+			preferredDevice:  "auto",
+			enableValidation: true,
+		},
+		{
+			name:             "validation disabled",
+			preferredDevice:  "auto",
+			enableValidation: false,
+		},
+		{
+			name:             "validation with specific device",
+			preferredDevice:  "NVIDIA",
+			enableValidation: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewVulkanDetectorWithValidation(tt.preferredDevice, tt.enableValidation)
+			if detector.preferredDevice != tt.preferredDevice {
+				t.Errorf("Expected preferredDevice %s, got %s",
+					tt.preferredDevice, detector.preferredDevice)
+			}
+			if detector.enableValidation != tt.enableValidation {
+				t.Errorf("Expected enableValidation %v, got %v",
+					tt.enableValidation, detector.enableValidation)
+			}
+			if detector.validationLayersSet {
+				t.Error("Expected validationLayersSet to be false initially")
+			}
+		})
+	}
+}
+
 // TestDetectVulkanCapabilities_NoVulkan tests graceful fallback when Vulkan is unavailable
 // Note: This test will actually try to initialize Vulkan, so it may pass or fail depending
 // on whether Vulkan is available on the system. The important thing is that it doesn't crash.
