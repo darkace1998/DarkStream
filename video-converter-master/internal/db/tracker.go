@@ -239,6 +239,47 @@ func (t *Tracker) GetJobStats() (map[string]any, error) {
 	return stats, nil
 }
 
+// GetWorkers returns all workers from the database
+func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
+	rows, err := t.db.Query(`
+		SELECT id, hostname, last_heartbeat, vulkan_available,
+			active_jobs, gpu_name, cpu_usage, memory_usage
+		FROM workers
+		ORDER BY last_heartbeat DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query workers: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var workers []*models.WorkerHeartbeat
+	for rows.Next() {
+		var w models.WorkerHeartbeat
+		var lastHeartbeat sql.NullTime
+		if err := rows.Scan(
+			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
+			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage,
+		); err != nil {
+			slog.Warn("Failed to scan worker row", "error", err)
+			continue
+		}
+		if lastHeartbeat.Valid {
+			w.Timestamp = lastHeartbeat.Time
+		}
+		workers = append(workers, &w)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating worker rows: %w", err)
+	}
+
+	return workers, nil
+}
+
 // Close closes the database connection
 func (t *Tracker) Close() error {
 	if err := t.db.Close(); err != nil {

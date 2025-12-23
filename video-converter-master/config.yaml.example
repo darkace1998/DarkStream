@@ -26,6 +26,7 @@ conversion:
   preset: fast
   audio_codec: aac
   audio_bitrate: 128k
+  output_format: mp4  # mp4, mkv, webm, avi
 
 logging:
   level: info

@@ -1,7 +1,7 @@
 worker:
   id: worker-1
   concurrency: 3
-  master_url: http://localhost:8080
+  master_url: http://localhost:8080  # REQUIRED - master server URL
   heartbeat_interval: 30s
   job_check_interval: 5s
   job_timeout: 2h
@@ -22,6 +22,9 @@ vulkan:
   preferred_device: auto
   enable_validation: false
 
+# Conversion settings are now pulled dynamically from the master server.
+# The settings below are DEPRECATED and only used as a fallback if the master is unreachable.
+# To configure conversion settings, use the web interface at http://<master_url>/
 conversion:
   target_resolution: 1920x1080
   codec: h264

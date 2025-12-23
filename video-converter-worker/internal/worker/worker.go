@@ -20,6 +20,7 @@ import (
 type Worker struct {
 	config          *models.WorkerConfig
 	masterClient    *client.MasterClient
+	configFetcher   *client.ConfigFetcher
 	ffmpegConverter *converter.FFmpegConverter
 	vulkanDetector  *converter.VulkanDetector
 	validator       *converter.Validator
@@ -49,11 +50,13 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 
 	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID, vulkanCaps != nil && vulkanCaps.Supported)
 	masterClient.SetTransferTimeouts(cfg.Storage.DownloadTimeout, cfg.Storage.UploadTimeout)
+	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
 	validator := converter.NewValidator()
 
 	return &Worker{
 		config:          cfg,
 		masterClient:    masterClient,
+		configFetcher:   configFetcher,
 		ffmpegConverter: ffmpegConverter,
 		vulkanDetector:  vulkanDetector,
 		validator:       validator,
@@ -76,6 +79,26 @@ func (w *Worker) Start() error {
 		slog.Info("Vulkan available", "device", w.vulkanCaps.Device.Name)
 	} else {
 		slog.Info("Vulkan not available, using CPU encoding")
+	}
+
+	// Fetch initial configuration from master
+	cfg, err := w.configFetcher.FetchConfig()
+	if err != nil {
+		// If we have static config as fallback, use it
+		if w.config.Conversion.TargetResolution != "" {
+			slog.Warn("Failed to fetch config from master, using static config fallback",
+				"error", err,
+				"resolution", w.config.Conversion.TargetResolution,
+			)
+		} else {
+			return fmt.Errorf("failed to fetch initial configuration from master: %w", err)
+		}
+	} else {
+		slog.Info("Configuration fetched from master",
+			"resolution", cfg.TargetResolution,
+			"codec", cfg.Codec,
+			"format", cfg.OutputFormat,
+		)
 	}
 
 	// Start heartbeat goroutine
@@ -164,26 +187,44 @@ func (w *Worker) executeJob(job *models.Job) error {
 	originalSourcePath := job.SourcePath
 	job.SourcePath = sourceLocalPath
 
-	// Update output path to local cache
-	// Preserve original output file extension
-	outputExt := filepath.Ext(job.OutputPath)
-	if outputExt == "" {
-		outputExt = ".mp4" // Default to .mp4 if no extension
+	// Fetch dynamic configuration from master
+	dynamicCfg, err := w.configFetcher.FetchConfig()
+	if err != nil {
+		slog.Warn("Failed to fetch config, using static fallback", "error", err)
+		// Use static config as fallback
+		dynamicCfg = &w.config.Conversion
+	}
+
+	// Determine output extension based on output format
+	outputExt := "." + dynamicCfg.OutputFormat
+	if dynamicCfg.OutputFormat == "" {
+		// Use original extension if no format specified
+		outputExt = filepath.Ext(job.OutputPath)
+		if outputExt == "" {
+			outputExt = ".mp4" // Default to .mp4 if no extension
+		}
 	}
 	outputLocalPath := filepath.Join(jobCacheDir, "output"+outputExt)
 	originalOutputPath := job.OutputPath
 	job.OutputPath = outputLocalPath
 
-	// Create conversion config
+	// Create conversion config from dynamic settings
 	cfg := &models.ConversionConfig{
-		TargetResolution: w.config.Conversion.TargetResolution,
-		Codec:            w.config.Conversion.Codec,
-		Bitrate:          w.config.Conversion.Bitrate,
-		Preset:           w.config.Conversion.Preset,
-		AudioCodec:       w.config.Conversion.AudioCodec,
-		AudioBitrate:     w.config.Conversion.AudioBitrate,
+		TargetResolution: dynamicCfg.TargetResolution,
+		Codec:            dynamicCfg.Codec,
+		Bitrate:          dynamicCfg.Bitrate,
+		Preset:           dynamicCfg.Preset,
+		AudioCodec:       dynamicCfg.AudioCodec,
+		AudioBitrate:     dynamicCfg.AudioBitrate,
 		UseVulkan:        w.config.FFmpeg.UseVulkan,
 	}
+
+	slog.Info("Using conversion config",
+		"job_id", job.ID,
+		"resolution", cfg.TargetResolution,
+		"codec", cfg.Codec,
+		"format", dynamicCfg.OutputFormat,
+	)
 
 	// Convert video
 	if err := w.ffmpegConverter.ConvertVideo(job, cfg); err != nil {
