@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -31,20 +32,121 @@ func validateJobID(jobID string) bool {
 	return jobIDPattern.MatchString(jobID)
 }
 
+// rateLimiter implements simple token bucket rate limiting per IP
+type rateLimiter struct {
+	mu            sync.Mutex
+	requestCounts map[string]*bucketState
+	cleanupTicker *time.Ticker
+}
+
+type bucketState struct {
+	tokens     int
+	lastRefill time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	rl := &rateLimiter{
+		requestCounts: make(map[string]*bucketState),
+		cleanupTicker: time.NewTicker(5 * time.Minute),
+	}
+	
+	// Start cleanup goroutine
+	go rl.cleanup()
+	
+	return rl
+}
+
+func (rl *rateLimiter) cleanup() {
+	for range rl.cleanupTicker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, state := range rl.requestCounts {
+			// Remove entries not accessed in last 10 minutes
+			if now.Sub(state.lastRefill) > 10*time.Minute {
+				delete(rl.requestCounts, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *rateLimiter) allow(ip string, maxTokens int, refillRate time.Duration) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	state, exists := rl.requestCounts[ip]
+	
+	if !exists {
+		state = &bucketState{
+			tokens:     maxTokens - 1,
+			lastRefill: now,
+		}
+		rl.requestCounts[ip] = state
+		return true
+	}
+
+	// Refill tokens based on time elapsed
+	elapsed := now.Sub(state.lastRefill)
+	tokensToAdd := int(elapsed / refillRate)
+	
+	if tokensToAdd > 0 {
+		state.tokens += tokensToAdd
+		if state.tokens > maxTokens {
+			state.tokens = maxTokens
+		}
+		state.lastRefill = now
+	}
+
+	// Check if request allowed
+	if state.tokens > 0 {
+		state.tokens--
+		return true
+	}
+
+	return false
+}
+
+func (rl *rateLimiter) stop() {
+	rl.cleanupTicker.Stop()
+}
+
 // Server handles HTTP API requests
 type Server struct {
-	db        *db.Tracker
-	addr      string
-	server    *http.Server
-	configMgr *config.Manager
+	db          *db.Tracker
+	addr        string
+	server      *http.Server
+	configMgr   *config.Manager
+	rateLimiter *rateLimiter
 }
 
 // New creates a new HTTP server instance
 func New(tracker *db.Tracker, addr string, configMgr *config.Manager) *Server {
 	return &Server{
-		db:        tracker,
-		addr:      addr,
-		configMgr: configMgr,
+		db:          tracker,
+		addr:        addr,
+		configMgr:   configMgr,
+		rateLimiter: newRateLimiter(),
+	}
+}
+
+// rateLimitMiddleware applies rate limiting to endpoints
+func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract client IP (considering X-Forwarded-For header)
+		ip := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			ip = forwarded
+		}
+		
+		// Apply rate limit: 100 requests per minute per IP
+		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
+			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		
+		next(w, r)
 	}
 }
 
@@ -56,17 +158,17 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/", s.ServeWebUI)
 
 	// Configuration API
-	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/config", s.rateLimitMiddleware(s.handleConfig))
 
-	// Worker API
-	mux.HandleFunc("/api/worker/next-job", s.GetNextJob)
-	mux.HandleFunc("/api/worker/job-complete", s.JobComplete)
-	mux.HandleFunc("/api/worker/job-failed", s.JobFailed)
-	mux.HandleFunc("/api/worker/heartbeat", s.WorkerHeartbeat)
-	mux.HandleFunc("/api/worker/download-video", s.DownloadVideo)
-	mux.HandleFunc("/api/worker/upload-video", s.UploadVideo)
-	mux.HandleFunc("/api/status", s.GetStatus)
-	mux.HandleFunc("/api/stats", s.GetStats)
+	// Worker API - with rate limiting
+	mux.HandleFunc("/api/worker/next-job", s.rateLimitMiddleware(s.GetNextJob))
+	mux.HandleFunc("/api/worker/job-complete", s.rateLimitMiddleware(s.JobComplete))
+	mux.HandleFunc("/api/worker/job-failed", s.rateLimitMiddleware(s.JobFailed))
+	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.WorkerHeartbeat))
+	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.DownloadVideo))
+	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.UploadVideo))
+	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
+	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -88,6 +190,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.server == nil {
 		return nil
 	}
+	
+	// Stop rate limiter cleanup
+	s.rateLimiter.stop()
+	
 	slog.Info("Shutting down HTTP server")
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)
@@ -107,7 +213,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetNextJob handles requests for the next pending job
+// GetNextJob handles requests for the next pending job with load balancing
 func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -119,6 +225,35 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
+	}
+	
+	// Optional: get worker's GPU availability for future prioritization
+	gpuAvailable := r.URL.Query().Get("gpu_available") == "true"
+	_ = gpuAvailable // Reserved for future GPU-specific job routing
+
+	// Check worker's current load before assigning more jobs
+	workers, err := s.db.GetActiveWorkers(120) // 2 minute threshold
+	if err != nil {
+		slog.Error("Failed to get active workers for load balancing", "error", err)
+		// Continue anyway, don't block job assignment
+	} else {
+		// Find the requesting worker's current load
+		for _, worker := range workers {
+			if worker.WorkerID == workerID {
+				// Simple load balancing: don't assign jobs if worker is heavily loaded
+				// This could be made configurable based on worker capacity
+				const maxJobsPerWorker = 5
+				if worker.ActiveJobs >= maxJobsPerWorker {
+					slog.Info("Worker at capacity, not assigning new job",
+						"worker_id", workerID,
+						"active_jobs", worker.ActiveJobs,
+						"max_jobs", maxJobsPerWorker)
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				break
+			}
+		}
 	}
 
 	job, err := s.db.GetNextPendingJob()

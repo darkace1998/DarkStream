@@ -13,8 +13,14 @@ scanner:
     - .webm
     - .m4v
   output_base: /mnt/storage/converted
-  recursive_depth: -1  # -1 for unlimited
+  recursive_depth: -1  # -1 for unlimited, 0 for root only, >0 for specific depth
   scan_interval: 5m    # How often to scan for new files (e.g., 5m, 1h). Set to 0 to disable periodic scanning
+  min_file_size: 0     # Minimum file size in bytes (0 = no minimum)
+  max_file_size: 0     # Maximum file size in bytes (0 = no maximum)
+  skip_hidden_files: true   # Skip files starting with '.'
+  skip_hidden_dirs: true    # Skip directories starting with '.'
+  replace_source: false     # Replace source file with output (use with caution!)
+  detect_duplicates: true   # Detect and skip duplicate files based on content hash
 
 database:
   path: ./jobs.db

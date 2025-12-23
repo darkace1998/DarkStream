@@ -29,11 +29,17 @@ type MasterConfig struct {
 	} `yaml:"server"`
 
 	Scanner struct {
-		RootPath        string        `yaml:"root_path"`
-		VideoExtensions []string      `yaml:"video_extensions"`
-		OutputBase      string        `yaml:"output_base"`
-		RecursiveDepth  int           `yaml:"recursive_depth"`
-		ScanInterval    time.Duration `yaml:"scan_interval"` // How often to scan for new files (0 = no periodic scanning)
+		RootPath         string        `yaml:"root_path"`
+		VideoExtensions  []string      `yaml:"video_extensions"`
+		OutputBase       string        `yaml:"output_base"`
+		RecursiveDepth   int           `yaml:"recursive_depth"`   // -1 for unlimited
+		ScanInterval     time.Duration `yaml:"scan_interval"`     // How often to scan for new files (0 = no periodic scanning)
+		MinFileSize      int64         `yaml:"min_file_size"`     // Minimum file size in bytes (0 = no minimum)
+		MaxFileSize      int64         `yaml:"max_file_size"`     // Maximum file size in bytes (0 = no maximum)
+		SkipHiddenFiles  bool          `yaml:"skip_hidden_files"` // Skip files starting with '.'
+		SkipHiddenDirs   bool          `yaml:"skip_hidden_dirs"`  // Skip directories starting with '.'
+		ReplaceSource    bool          `yaml:"replace_source"`    // Replace source file with output
+		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
 	} `yaml:"scanner"`
 
 	Database struct {

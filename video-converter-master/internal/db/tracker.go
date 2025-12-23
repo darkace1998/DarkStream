@@ -611,6 +611,191 @@ func (t *Tracker) GetWorkerStats() (map[string]any, error) {
 	return stats, nil
 }
 
+// GetStaleProcessingJobs returns jobs stuck in processing state longer than timeout
+func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, error) {
+	query := `
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs
+		WHERE status = 'processing'
+		AND started_at IS NOT NULL
+		AND started_at <= datetime('now', '-' || ? || ' seconds')
+		ORDER BY started_at ASC
+	`
+
+	rows, err := t.db.Query(query, timeoutSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stale jobs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetRetryableFailedJobs returns failed jobs that can be retried
+func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
+	query := `
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs
+		WHERE status = 'failed'
+		AND retry_count < max_retries
+		ORDER BY created_at ASC
+	`
+
+	rows, err := t.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query retryable jobs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetJobsForWorker returns all jobs assigned to a worker
+func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
+	query := `
+		SELECT id, source_path, output_path, status, created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		FROM jobs
+		WHERE worker_id = ? AND status = 'processing'
+		ORDER BY started_at ASC
+	`
+
+	rows, err := t.db.Query(query, workerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query worker jobs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// ResetJobToPending resets a job status to pending for retry
+func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool) error {
+	var err error
+	if incrementRetry {
+		_, err = t.db.Exec(`
+			UPDATE jobs
+			SET status = 'pending', worker_id = '', error_message = '', retry_count = retry_count + 1
+			WHERE id = ?
+		`, jobID)
+	} else {
+		_, err = t.db.Exec(`
+			UPDATE jobs
+			SET status = 'pending', worker_id = '', error_message = ''
+			WHERE id = ?
+		`, jobID)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to reset job to pending: %w", err)
+	}
+	return nil
+}
+
 // Close closes the database connection
 func (t *Tracker) Close() error {
 	if err := t.db.Close(); err != nil {
