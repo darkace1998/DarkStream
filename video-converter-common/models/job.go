@@ -28,6 +28,7 @@ type ConversionConfig struct {
 	UseVulkan        bool   `json:"use_vulkan"`
 	AudioCodec       string `json:"audio_codec"`   // aac
 	AudioBitrate     string `json:"audio_bitrate"` // 128k
+	OutputFormat     string `json:"output_format"` // mp4, mkv, webm, avi
 }
 
 // WorkerHeartbeat contains status information sent periodically from workers to the master.
