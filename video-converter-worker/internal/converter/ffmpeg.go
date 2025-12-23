@@ -24,6 +24,13 @@ const (
 	MinOutputFileSize = 1024 * 1024
 )
 
+var (
+	// ffmpegTimePattern matches FFmpeg's out_time_ms field (in microseconds)
+	ffmpegTimePattern = regexp.MustCompile(`out_time_ms=(\d+)`)
+	// ffmpegFPSPattern matches FFmpeg's fps field
+	ffmpegFPSPattern = regexp.MustCompile(`fps=([\d.]+)`)
+)
+
 // ProgressCallback is a function type for progress updates during conversion
 type ProgressCallback func(progress float64, fps float64)
 
@@ -271,10 +278,6 @@ func (fc *FFmpegConverter) trackProgress(
 	callback ProgressCallback,
 ) {
 	scanner := bufio.NewScanner(stderr)
-	
-	// Regex patterns for extracting progress information
-	timePattern := regexp.MustCompile(`out_time_ms=(\d+)`)
-	fpsPattern := regexp.MustCompile(`fps=([\d.]+)`)
 
 	var currentTime float64
 	var fps float64
@@ -282,8 +285,8 @@ func (fc *FFmpegConverter) trackProgress(
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Extract current time (out_time_ms is in microseconds)
-		if matches := timePattern.FindStringSubmatch(line); len(matches) > 1 {
+		// Extract current time from FFmpeg's out_time_ms field (in microseconds)
+		if matches := ffmpegTimePattern.FindStringSubmatch(line); len(matches) > 1 {
 			timeUs, err := strconv.ParseInt(matches[1], 10, 64)
 			if err == nil {
 				currentTime = float64(timeUs) / 1000000.0 // Convert microseconds to seconds
@@ -291,7 +294,7 @@ func (fc *FFmpegConverter) trackProgress(
 		}
 
 		// Extract FPS
-		if matches := fpsPattern.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := ffmpegFPSPattern.FindStringSubmatch(line); len(matches) > 1 {
 			parsedFPS, err := strconv.ParseFloat(matches[1], 64)
 			if err == nil {
 				fps = parsedFPS
