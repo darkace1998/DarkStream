@@ -13,35 +13,87 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+// Default configuration values for ConfigFetcher
+const (
+	DefaultConfigRefreshInterval = 30 * time.Second
+	DefaultMaxRetries            = 3
+	DefaultRetryBaseDelay        = 2 * time.Second
+)
+
 // ConfigFetcher handles fetching and caching configuration from the master
 type ConfigFetcher struct {
-	baseURL       string
-	client        *http.Client
-	mu            sync.RWMutex
-	cachedConfig  *models.ConversionSettings
-	lastFetchTime time.Time
+	baseURL         string
+	client          *http.Client
+	mu              sync.RWMutex
+	cachedConfig    *models.ConversionSettings
+	lastFetchTime   time.Time
 	refreshInterval time.Duration
+	maxRetries      int
+	retryBaseDelay  time.Duration
+	fetching        bool // Prevents concurrent fetch operations
 }
 
-// NewConfigFetcher creates a new ConfigFetcher instance
+// NewConfigFetcher creates a new ConfigFetcher instance with default settings
 func NewConfigFetcher(baseURL string) *ConfigFetcher {
+	return NewConfigFetcherWithOptions(baseURL, DefaultConfigRefreshInterval, DefaultMaxRetries, DefaultRetryBaseDelay)
+}
+
+// NewConfigFetcherWithOptions creates a new ConfigFetcher with custom settings
+func NewConfigFetcherWithOptions(baseURL string, refreshInterval time.Duration, maxRetries int, retryBaseDelay time.Duration) *ConfigFetcher {
+	if refreshInterval <= 0 {
+		refreshInterval = DefaultConfigRefreshInterval
+	}
+	if maxRetries <= 0 {
+		maxRetries = DefaultMaxRetries
+	}
+	if retryBaseDelay <= 0 {
+		retryBaseDelay = DefaultRetryBaseDelay
+	}
 	return &ConfigFetcher{
 		baseURL:         baseURL,
 		client:          &http.Client{Timeout: 30 * time.Second},
-		refreshInterval: 30 * time.Second,
+		refreshInterval: refreshInterval,
+		maxRetries:      maxRetries,
+		retryBaseDelay:  retryBaseDelay,
 	}
 }
 
 // FetchConfig fetches the current configuration from the master
 // It returns the cached config if available and still fresh
+// Uses a single-flight pattern to prevent concurrent requests when cache is stale
 func (cf *ConfigFetcher) FetchConfig() (*models.ConversionSettings, error) {
-	cf.mu.RLock()
+	cf.mu.Lock()
+	// Check cache while holding write lock
 	if cf.cachedConfig != nil && time.Since(cf.lastFetchTime) < cf.refreshInterval {
 		cfg := *cf.cachedConfig
-		cf.mu.RUnlock()
+		cf.mu.Unlock()
 		return &cfg, nil
 	}
-	cf.mu.RUnlock()
+
+	// If another goroutine is already fetching, wait and use cached result
+	if cf.fetching {
+		// Release lock and wait briefly, then retry with cached config
+		cachedCfg := cf.cachedConfig
+		cf.mu.Unlock()
+		if cachedCfg != nil {
+			cfg := *cachedCfg
+			return &cfg, nil
+		}
+		// No cache available, wait a bit and retry
+		time.Sleep(100 * time.Millisecond)
+		return cf.FetchConfig()
+	}
+
+	// Mark as fetching
+	cf.fetching = true
+	cf.mu.Unlock()
+
+	// Ensure we clear fetching flag when done
+	defer func() {
+		cf.mu.Lock()
+		cf.fetching = false
+		cf.mu.Unlock()
+	}()
 
 	// Fetch fresh config
 	return cf.fetchFromMaster()
@@ -62,13 +114,10 @@ func (cf *ConfigFetcher) GetCachedConfig() *models.ConversionSettings {
 
 // fetchFromMaster fetches configuration from the master with retry logic
 func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
-	maxRetries := 3
-	baseDelay := 2 * time.Second
-
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < cf.maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := baseDelay * time.Duration(1<<(attempt-1))
+			delay := cf.retryBaseDelay * time.Duration(1<<(attempt-1))
 			slog.Info("Retrying config fetch", "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
 		}
@@ -96,7 +145,7 @@ func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
 	}
 	cf.mu.RUnlock()
 
-	return nil, fmt.Errorf("failed to fetch config after %d attempts: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("failed to fetch config after %d attempts: %w", cf.maxRetries, lastErr)
 }
 
 // fetchConfigAttempt performs a single config fetch attempt
@@ -114,7 +163,11 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			slog.Warn("Failed to read response body for error reporting", "error", readErr)
+			return nil, fmt.Errorf("unexpected status code: %d, failed to read body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"sync"
@@ -55,8 +56,13 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 
 	// Try to load from JSON file first
 	if cfg, err := m.loadFromFile(); err == nil {
-		m.config = cfg
-		return m, nil
+		// Validate loaded config to catch manually edited invalid configurations
+		if validErr := validateConfig(cfg); validErr != nil {
+			slog.Warn("Loaded config failed validation, using YAML defaults", "error", validErr)
+		} else {
+			m.config = cfg
+			return m, nil
+		}
 	}
 
 	// Fall back to YAML defaults
@@ -127,13 +133,19 @@ func (m *Manager) Update(cfg *ActiveConfig) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	cfg.UpdatedAt = time.Now()
 	cfg.Version = m.config.Version + 1
 	m.config = cfg
+	m.mu.Unlock()
 
-	return m.saveToFile()
+	// Perform file I/O outside the critical section to reduce lock contention
+	if err := m.saveToFile(); err != nil {
+		// Log the error but don't fail - in-memory state is already updated
+		slog.Error("Failed to persist config to file", "error", err)
+		return err
+	}
+
+	return nil
 }
 
 // loadFromFile loads configuration from the JSON file

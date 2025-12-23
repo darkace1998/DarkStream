@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/darkace1998/video-converter-master/internal/config"
 )
+
+// workerOnlineThreshold defines how long since last heartbeat before a worker is considered offline
+const workerOnlineThreshold = 2 * time.Minute
 
 // webUITemplate is the HTML template for the web interface
 var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
@@ -293,7 +295,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 			Hostname:      wk.Hostname,
 			GPU:           wk.GPU,
 			ActiveJobs:    wk.ActiveJobs,
-			IsOnline:      now.Sub(wk.Timestamp) < 2*time.Minute,
+			IsOnline:      now.Sub(wk.Timestamp) < workerOnlineThreshold,
 			LastHeartbeat: wk.Timestamp,
 		})
 	}
@@ -363,22 +365,3 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
-
-// GetConversionSettings returns the conversion settings for workers
-func (s *Server) GetConversionSettings(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	settings := s.configMgr.GetConversionSettings()
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(settings); err != nil {
-		slog.Error("Failed to encode conversion settings", "error", err)
-		return
-	}
-}
-
-// Ensure io package is used
-var _ = io.EOF
