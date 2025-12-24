@@ -1,13 +1,13 @@
 # Binaries
-master
-worker
-video-converter-cli
-video-converter-master
-video-converter-worker
+/master
+/worker
+/video-converter-cli
+/video-converter-master
+/video-converter-worker
 !video-converter-worker/
 !video-converter-master/
 !video-converter-cli/
-cli
+/cli
 *.exe
 *.dll
 *.so
