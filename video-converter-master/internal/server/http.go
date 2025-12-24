@@ -803,6 +803,9 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Store previous status for logging
+	previousStatus := job.Status
+
 	// Update job status to cancelled (using failed with specific error message)
 	job.Status = "failed"
 	job.ErrorMessage = "Job cancelled by user"
@@ -812,7 +815,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Job cancelled via CLI", "job_id", jobID, "previous_status", job.Status)
+	slog.Info("Job cancelled via CLI", "job_id", jobID, "previous_status", previousStatus)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{

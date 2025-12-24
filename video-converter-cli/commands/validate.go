@@ -111,8 +111,6 @@ func validateConfigLocally(configType string, content []byte) []string {
 	}
 
 	// Basic YAML structure check - look for required keys
-	contentStr := string(content)
-
 	switch configType {
 	case "master":
 		requiredKeys := []string{"server:", "scanner:", "database:"}
@@ -151,8 +149,6 @@ func validateConfigLocally(configType string, content []byte) []string {
 	if !bytes.Contains(content, []byte("logging:")) {
 		slog.Warn("No logging section found in configuration")
 	}
-
-	_ = contentStr // prevent unused variable warning
 
 	return errors
 }
