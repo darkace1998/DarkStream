@@ -21,6 +21,12 @@ import (
 // ErrNoJobsAvailable is returned when no jobs are available from the master
 var ErrNoJobsAvailable = errors.New("no jobs available")
 
+// Throttling constants
+const (
+	// ThrottleMaxWaitDuration is the maximum time to wait when rate limiting
+	ThrottleMaxWaitDuration = 100 * time.Millisecond
+)
+
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
 	baseURL            string
@@ -415,8 +421,8 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	if tr.tokens <= 0 {
 		// Calculate wait time to get at least some tokens
 		waitDuration := time.Duration(float64(time.Second) * float64(len(p)) / float64(tr.bytesPerSec))
-		if waitDuration > 100*time.Millisecond {
-			waitDuration = 100 * time.Millisecond // Cap wait time
+		if waitDuration > ThrottleMaxWaitDuration {
+			waitDuration = ThrottleMaxWaitDuration // Cap wait time
 		}
 		tr.mu.Unlock()
 		time.Sleep(waitDuration)
