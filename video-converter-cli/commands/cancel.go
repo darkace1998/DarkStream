@@ -12,16 +12,21 @@ import (
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
 )
 
-// Retry retries failed jobs on the master server.
-func Retry(args []string) {
-	fs := flag.NewFlagSet("retry", flag.ExitOnError)
+// Cancel cancels a job on the master server.
+func Cancel(args []string) {
+	fs := flag.NewFlagSet("cancel", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
-	limit := fs.Int("limit", 100, "Maximum number of jobs to retry")
+	jobID := fs.String("job-id", "", "Job ID to cancel (required)")
 	format := fs.String("format", "table", "Output format: table, json, csv")
 	_ = fs.Parse(args)
 
-	url := fmt.Sprintf("%s/api/retry?limit=%d", *masterURL, *limit)
-	// #nosec G107 - URL is from flag-parsed masterURL, not untrusted network input
+	if *jobID == "" {
+		slog.Error("Job ID is required")
+		slog.Info("Usage: video-converter-cli cancel --job-id <job-id>")
+		os.Exit(1)
+	}
+
+	url := fmt.Sprintf("%s/api/job/cancel?job_id=%s", *masterURL, *jobID)
 	resp, err := http.Post(url, "application/json", nil)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
@@ -37,19 +42,19 @@ func Retry(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Error("Error: received status code", "status", resp.StatusCode)
+		slog.Error("Failed to cancel job", "status", resp.StatusCode)
 		slog.Info(fmt.Sprintf("Response: %s", string(body)))
-		return
+		os.Exit(1)
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
@@ -57,18 +62,10 @@ func Retry(args []string) {
 	switch formatter.ParseFormat(*format) {
 	case formatter.FormatJSON:
 		_ = out.PrintJSON(result)
-	case formatter.FormatCSV:
-		headers := []string{"Action", "Count"}
-		rows := [][]string{
-			{"retried", fmt.Sprintf("%d", getIntValue(result, "retried"))},
-		}
-		_ = out.PrintCSV(headers, rows)
 	default:
-		retried := getIntValue(result, "retried")
-		slog.Info(fmt.Sprintf("♻️  Successfully retried %d failed job(s)", retried))
-
-		if retried == 0 {
-			slog.Info("No failed jobs to retry.")
+		slog.Info(fmt.Sprintf("🚫 Job %s cancelled successfully", *jobID))
+		if msg, ok := result["message"].(string); ok {
+			slog.Info(msg)
 		}
 	}
 }
