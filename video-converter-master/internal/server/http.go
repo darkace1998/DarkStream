@@ -17,6 +17,7 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
+	"gopkg.in/yaml.v3"
 )
 
 // jobIDPattern validates job IDs to prevent injection attacks
@@ -169,6 +170,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.UploadVideo))
 	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
 	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
+
+	// CLI API endpoints
+	mux.HandleFunc("/api/retry", s.rateLimitMiddleware(s.RetryFailedJobs))
+	mux.HandleFunc("/api/jobs", s.rateLimitMiddleware(s.ListJobs))
+	mux.HandleFunc("/api/job/cancel", s.rateLimitMiddleware(s.CancelJob))
+	mux.HandleFunc("/api/workers", s.rateLimitMiddleware(s.ListWorkers))
+	mux.HandleFunc("/api/validate-config", s.rateLimitMiddleware(s.ValidateConfig))
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -647,4 +655,319 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to encode upload response", "error", err)
 		return
 	}
+}
+
+// RetryFailedJobs handles retrying failed jobs via CLI
+func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get limit parameter (default 100)
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		parsedLimit, err := parseInt(limitStr)
+		if err != nil || parsedLimit <= 0 {
+			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+			return
+		}
+		limit = parsedLimit
+	}
+
+	// Get failed jobs that can be retried
+	failedJobs, err := s.db.GetRetryableFailedJobs()
+	if err != nil {
+		slog.Error("Failed to get retryable jobs", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Retry up to 'limit' jobs
+	retriedCount := 0
+	for i, job := range failedJobs {
+		if i >= limit {
+			break
+		}
+		if err := s.db.ResetJobToPending(job.ID, true); err != nil {
+			slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
+			continue
+		}
+		retriedCount++
+		slog.Info("Retried failed job via CLI", "job_id", job.ID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"retried": retriedCount,
+		"message": fmt.Sprintf("Successfully retried %d job(s)", retriedCount),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode retry response", "error", err)
+		return
+	}
+}
+
+// ListJobs handles listing jobs with optional filters
+func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get query parameters
+	status := r.URL.Query().Get("status")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		parsedLimit, err := parseInt(limitStr)
+		if err != nil || parsedLimit <= 0 {
+			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+			return
+		}
+		limit = parsedLimit
+	}
+
+	var jobs []*models.Job
+	var err error
+
+	if status != "" {
+		// Validate status value
+		validStatuses := []string{"pending", "processing", "completed", "failed"}
+		isValidStatus := false
+		for _, vs := range validStatuses {
+			if status == vs {
+				isValidStatus = true
+				break
+			}
+		}
+		if !isValidStatus {
+			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed", http.StatusBadRequest)
+			return
+		}
+		jobs, err = s.db.GetJobsByStatus(status, limit)
+	} else {
+		// Get all jobs (pending first as most relevant)
+		jobs, err = s.db.GetJobsByStatus("pending", limit)
+		if err == nil {
+			// Also get processing and failed jobs
+			processingJobs, _ := s.db.GetJobsByStatus("processing", limit)
+			failedJobs, _ := s.db.GetJobsByStatus("failed", limit)
+			jobs = append(jobs, processingJobs...)
+			jobs = append(jobs, failedJobs...)
+		}
+	}
+
+	if err != nil {
+		slog.Error("Failed to list jobs", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"jobs":  jobs,
+		"count": len(jobs),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode jobs response", "error", err)
+		return
+	}
+}
+
+// CancelJob handles cancelling a specific job
+func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the job
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		slog.Error("Failed to fetch job for cancellation", "job_id", jobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Can only cancel pending or processing jobs
+	if job.Status != "pending" && job.Status != "processing" {
+		http.Error(w, fmt.Sprintf("Cannot cancel job with status '%s'. Only pending or processing jobs can be cancelled.", job.Status), http.StatusBadRequest)
+		return
+	}
+
+	// Store previous status for logging
+	previousStatus := job.Status
+
+	// Update job status to cancelled (using failed with specific error message)
+	job.Status = "failed"
+	job.ErrorMessage = "Job cancelled by user"
+	if err := s.db.UpdateJob(job); err != nil {
+		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
+		http.Error(w, "Failed to cancel job", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Job cancelled via CLI", "job_id", jobID, "previous_status", previousStatus)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"job_id":  jobID,
+		"status":  "cancelled",
+		"message": "Job cancelled successfully",
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode cancel response", "error", err)
+		return
+	}
+}
+
+// ListWorkers handles listing all workers
+func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get query parameters
+	activeOnlyStr := r.URL.Query().Get("active_only")
+	activeOnly := activeOnlyStr == "true"
+
+	var workers []*models.WorkerHeartbeat
+	var err error
+
+	if activeOnly {
+		workers, err = s.db.GetActiveWorkers(120) // 2 minute threshold
+	} else {
+		workers, err = s.db.GetWorkers()
+	}
+
+	if err != nil {
+		slog.Error("Failed to list workers", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Get worker stats
+	workerStats, err := s.db.GetWorkerStats()
+	if err != nil {
+		slog.Warn("Failed to get worker stats", "error", err)
+		workerStats = make(map[string]any)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"workers": workers,
+		"count":   len(workers),
+		"stats":   workerStats,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode workers response", "error", err)
+		return
+	}
+}
+
+// ValidateConfig handles validating a configuration file
+func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	configType := r.URL.Query().Get("type")
+	if configType != "master" && configType != "worker" {
+		http.Error(w, "Invalid type parameter. Must be 'master' or 'worker'", http.StatusBadRequest)
+		return
+	}
+
+	// Read the config from request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	errors := validateConfigContent(configType, body)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"valid":  len(errors) == 0,
+		"errors": errors,
+		"type":   configType,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode validation response", "error", err)
+		return
+	}
+}
+
+// parseInt safely parses an integer from string
+func parseInt(s string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
+// validateConfigContent validates config YAML content
+func validateConfigContent(configType string, content []byte) []string {
+	var errors []string
+
+	// Basic YAML structure check
+	if len(content) == 0 {
+		return []string{"Empty configuration"}
+	}
+
+	// Type-specific validation
+	switch configType {
+	case "master":
+		var cfg models.MasterConfig
+		if err := yaml.Unmarshal(content, &cfg); err != nil {
+			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
+			return errors
+		}
+
+		// Validate required fields
+		if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
+			errors = append(errors, "Invalid server port (must be 1-65535)")
+		}
+		if cfg.Scanner.RootPath == "" {
+			errors = append(errors, "Scanner root_path is required")
+		}
+		if len(cfg.Scanner.VideoExtensions) == 0 {
+			errors = append(errors, "At least one video extension is required")
+		}
+		if cfg.Scanner.OutputBase == "" {
+			errors = append(errors, "Scanner output_base is required")
+		}
+		if cfg.Database.Path == "" {
+			errors = append(errors, "Database path is required")
+		}
+
+	case "worker":
+		var cfg models.WorkerConfig
+		if err := yaml.Unmarshal(content, &cfg); err != nil {
+			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
+			return errors
+		}
+
+		// Validate required fields
+		if cfg.Worker.ID == "" {
+			errors = append(errors, "Worker ID is required")
+		}
+		if cfg.Worker.MasterURL == "" {
+			errors = append(errors, "Worker master_url is required")
+		}
+		if cfg.Worker.Concurrency <= 0 {
+			errors = append(errors, "Worker concurrency must be positive")
+		}
+	}
+
+	return errors
 }
