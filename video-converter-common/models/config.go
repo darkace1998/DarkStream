@@ -5,9 +5,9 @@ import "time"
 
 // LoggingSettings defines logging configuration used by both Master and Worker
 type LoggingSettings struct {
-	Level      string `yaml:"level"`  // debug, info, warn, error
-	Format     string `yaml:"format"` // json, text
-	OutputPath string `yaml:"output_path"`
+	Level      string `json:"level"       yaml:"level"`  // debug, info, warn, error
+	Format     string `json:"format"      yaml:"format"` // json, text
+	OutputPath string `json:"output_path" yaml:"output_path"`
 }
 
 // ConversionSettings defines video conversion parameters used by both Master and Worker
