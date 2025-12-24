@@ -131,11 +131,8 @@ func (cm *CacheManager) Cleanup() error {
 			return entries[i].ModTime.Before(entries[j].ModTime)
 		})
 		
-		currentSize := int64(0)
-		for _, entry := range entries {
-			currentSize += entry.Size
-		}
-		
+		// Calculate current size and remove files in a single pass
+		currentSize := totalSize
 		for _, entry := range entries {
 			if currentSize <= cm.maxSize {
 				break

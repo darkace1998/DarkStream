@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -374,12 +375,13 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 	return nil
 }
 
-// ThrottledReader wraps an io.Reader with bandwidth throttling
+// ThrottledReader wraps an io.Reader with bandwidth throttling using token bucket algorithm
 type ThrottledReader struct {
 	reader        io.Reader
 	bytesPerSec   int64
-	bytesRead     int64
-	startTime     time.Time
+	tokens        int64     // Available tokens (bytes we can read)
+	lastRefill    time.Time
+	mu            sync.Mutex
 }
 
 // NewThrottledReader creates a new ThrottledReader
@@ -387,28 +389,60 @@ func NewThrottledReader(reader io.Reader, bytesPerSec int64) *ThrottledReader {
 	return &ThrottledReader{
 		reader:      reader,
 		bytesPerSec: bytesPerSec,
-		startTime:   time.Now(),
+		tokens:      bytesPerSec, // Start with 1 second worth of tokens
+		lastRefill:  time.Now(),
 	}
 }
 
-// Read implements io.Reader with bandwidth throttling
+// Read implements io.Reader with bandwidth throttling using token bucket
 func (tr *ThrottledReader) Read(p []byte) (int, error) {
-	// Calculate expected time for current bytes read
-	elapsed := time.Since(tr.startTime)
-	expectedDuration := time.Duration(float64(tr.bytesRead) / float64(tr.bytesPerSec) * float64(time.Second))
+	tr.mu.Lock()
 	
-	// Sleep if we're reading too fast
-	if expectedDuration > elapsed {
-		sleepDuration := expectedDuration - elapsed
-		// Cap sleep to prevent excessive delays
-		if sleepDuration > 100*time.Millisecond {
-			sleepDuration = 100 * time.Millisecond
+	// Refill tokens based on elapsed time
+	now := time.Now()
+	elapsed := now.Sub(tr.lastRefill)
+	tokensToAdd := int64(float64(tr.bytesPerSec) * elapsed.Seconds())
+	if tokensToAdd > 0 {
+		tr.tokens += tokensToAdd
+		// Cap tokens at 1 second worth (burst limit)
+		if tr.tokens > tr.bytesPerSec {
+			tr.tokens = tr.bytesPerSec
 		}
-		time.Sleep(sleepDuration)
+		tr.lastRefill = now
 	}
 	
-	n, err := tr.reader.Read(p)
-	tr.bytesRead += int64(n)
+	// If no tokens available, wait for minimum refill
+	if tr.tokens <= 0 {
+		// Calculate wait time to get at least some tokens
+		waitDuration := time.Duration(float64(time.Second) * float64(len(p)) / float64(tr.bytesPerSec))
+		if waitDuration > 100*time.Millisecond {
+			waitDuration = 100 * time.Millisecond // Cap wait time
+		}
+		tr.mu.Unlock()
+		time.Sleep(waitDuration)
+		tr.mu.Lock()
+		// Refill after waiting
+		tr.tokens += int64(float64(tr.bytesPerSec) * waitDuration.Seconds())
+		tr.lastRefill = time.Now()
+	}
+	
+	// Limit read size based on available tokens
+	maxRead := len(p)
+	if int64(maxRead) > tr.tokens {
+		maxRead = int(tr.tokens)
+	}
+	if maxRead <= 0 {
+		maxRead = 1 // Always read at least 1 byte to make progress
+	}
+	
+	tr.mu.Unlock()
+	
+	n, err := tr.reader.Read(p[:maxRead])
+	
+	tr.mu.Lock()
+	tr.tokens -= int64(n)
+	tr.mu.Unlock()
+	
 	return n, err
 }
 

@@ -514,16 +514,38 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// Handle Range header for resume support
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		// Parse Range header (format: bytes=start-end)
+		// Parse Range header - supports formats:
+		// bytes=start-end (e.g., bytes=0-499)
+		// bytes=start- (e.g., bytes=500-)
+		// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
 		var start, end int64
-		if _, err := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); err == nil {
+		var validRange bool
+		
+		// Try bytes=start-end format
+		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
+			validRange = true
+		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 {
+			// bytes=start- format
+			end = fileSize - 1
+			validRange = true
+		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
+			// bytes=-suffix format (last N bytes)
+			start = fileSize - end
+			end = fileSize - 1
+			if start < 0 {
+				start = 0
+			}
+			validRange = true
+		}
+		
+		if validRange {
 			// Validate range
-			if start < 0 || start >= fileSize {
+			if start < 0 || start >= fileSize || end < start || end >= fileSize {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
 				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
 				return
 			}
 			
-			end = fileSize - 1
 			contentLength := end - start + 1
 			
 			// Seek to the start position
@@ -550,6 +572,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
 			return
 		}
+		// Invalid range format - fall through to full download
+		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
 	}
 
 	// Full file download (no range or invalid range format)
