@@ -12,6 +12,10 @@ storage:
   upload_timeout: 30m
   cache_path: /tmp/converter-cache
   chunk_size: 10485760  # 10MB chunks (reserved for future chunked streaming; currently unused)
+  max_cache_size: 10737418240  # 10GB maximum cache size (0 = unlimited)
+  cache_cleanup_age: 24h  # Age after which cached files are cleaned up
+  bandwidth_limit: 0  # Bandwidth limit in bytes per second (0 = unlimited)
+  enable_resume_download: true  # Enable resume support for downloads
 
 ffmpeg:
   path: /usr/bin/ffmpeg

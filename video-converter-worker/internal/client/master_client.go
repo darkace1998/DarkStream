@@ -22,23 +22,27 @@ var ErrNoJobsAvailable = errors.New("no jobs available")
 
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
-	baseURL         string
-	workerID        string
-	client          *http.Client
-	gpuAvailable    bool
-	downloadTimeout time.Duration
-	uploadTimeout   time.Duration
+	baseURL            string
+	workerID           string
+	client             *http.Client
+	gpuAvailable       bool
+	downloadTimeout    time.Duration
+	uploadTimeout      time.Duration
+	bandwidthLimit     int64 // bytes per second (0 = unlimited)
+	enableResumeDownload bool
 }
 
 // New creates a new MasterClient instance
 func New(baseURL, workerID string, gpuAvailable bool) *MasterClient {
 	return &MasterClient{
-		baseURL:         baseURL,
-		workerID:        workerID,
-		client:          &http.Client{Timeout: 30 * time.Second},
-		gpuAvailable:    gpuAvailable,
-		downloadTimeout: 30 * time.Minute,
-		uploadTimeout:   30 * time.Minute,
+		baseURL:            baseURL,
+		workerID:           workerID,
+		client:             &http.Client{Timeout: 30 * time.Second},
+		gpuAvailable:       gpuAvailable,
+		downloadTimeout:    30 * time.Minute,
+		uploadTimeout:      30 * time.Minute,
+		bandwidthLimit:     0,
+		enableResumeDownload: false,
 	}
 }
 
@@ -46,6 +50,16 @@ func New(baseURL, workerID string, gpuAvailable bool) *MasterClient {
 func (mc *MasterClient) SetTransferTimeouts(downloadTimeout, uploadTimeout time.Duration) {
 	mc.downloadTimeout = downloadTimeout
 	mc.uploadTimeout = uploadTimeout
+}
+
+// SetBandwidthLimit sets the bandwidth limit in bytes per second (0 = unlimited)
+func (mc *MasterClient) SetBandwidthLimit(bytesPerSecond int64) {
+	mc.bandwidthLimit = bytesPerSecond
+}
+
+// SetEnableResumeDownload enables or disables resume support for downloads
+func (mc *MasterClient) SetEnableResumeDownload(enable bool) {
+	mc.enableResumeDownload = enable
 }
 
 // GetNextJob requests the next available job from the master
@@ -183,6 +197,38 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 	}
 }
 
+// ReportJobProgress reports job progress to the master
+func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
+	body, err := json.Marshal(progress)
+	if err != nil {
+		slog.Error("Failed to marshal job progress", "error", err)
+		return
+	}
+
+	resp, err := mc.client.Post(
+		fmt.Sprintf("%s/api/worker/job-progress", mc.baseURL),
+		"application/json",
+		bytes.NewReader(body),
+	)
+
+	if err != nil {
+		slog.Error("Failed to send job progress", "error", err)
+		return
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		slog.Warn("Job progress response status not OK",
+			"status", resp.StatusCode,
+			"body", string(body))
+	}
+}
+
 // DownloadSourceVideo downloads the source video file from the master
 func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	// Retry logic with exponential backoff
@@ -218,9 +264,34 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) error {
 	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
 
+	// Create output directory
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Check for existing partial download to resume
+	var startOffset int64
+	if mc.enableResumeDownload {
+		if info, err := os.Stat(outputPath); err == nil {
+			startOffset = info.Size()
+			slog.Info("Found partial download, attempting resume", "job_id", jobID, "offset", startOffset)
+		}
+	}
+
+	// Create HTTP request with Range header for resume
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	if startOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startOffset))
+	}
+
 	// Create a client with download timeout
 	client := &http.Client{Timeout: mc.downloadTimeout}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to request video download: %w", err)
 	}
@@ -230,30 +301,39 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK {
+	// Handle response status
+	var totalContentLength int64
+	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
+		// Resume successful
+		totalContentLength = startOffset + resp.ContentLength
+		slog.Info("Resuming download", "job_id", jobID, "offset", startOffset, "remaining", resp.ContentLength)
+	} else if resp.StatusCode == http.StatusOK {
+		// Full download (or resume not supported)
+		totalContentLength = resp.ContentLength
+		startOffset = 0 // Reset offset since we're starting fresh
+	} else {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	// Validate Content-Length header
-	contentLength := resp.ContentLength
-	if contentLength < 0 {
+	if totalContentLength <= 0 {
 		return fmt.Errorf("Content-Length header missing or invalid")
-	} else if contentLength == 0 {
-		return fmt.Errorf("Content-Length is zero, expected non-empty file")
 	}
 
-	// Create output directory
-	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0o750); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	// Open/create output file
+	var outFile *os.File
+	if startOffset > 0 {
+		// Append mode for resume
+		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
+		outFile, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	} else {
+		// Create new file
+		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
+		outFile, err = os.Create(outputPath)
 	}
-
-	// Create output file
-	// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
-	outFile, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
+		return fmt.Errorf("failed to open output file: %w", err)
 	}
 	defer func() {
 		if cerr := outFile.Close(); cerr != nil {
@@ -261,26 +341,75 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 		}
 	}()
 
+	// Create reader with optional bandwidth throttling
+	var reader io.Reader = resp.Body
+	if mc.bandwidthLimit > 0 {
+		reader = NewThrottledReader(resp.Body, mc.bandwidthLimit)
+	}
+
 	// Stream file to disk
-	bytesWritten, err := io.Copy(outFile, resp.Body)
+	bytesWritten, err := io.Copy(outFile, reader)
 	if err != nil {
-		// Clean up partial download
-		if rerr := os.Remove(outputPath); rerr != nil {
-			slog.Warn("Failed to remove partial download", "path", outputPath, "error", rerr)
+		// Don't clean up partial download if resume is enabled
+		if !mc.enableResumeDownload {
+			if rerr := os.Remove(outputPath); rerr != nil {
+				slog.Warn("Failed to remove partial download", "path", outputPath, "error", rerr)
+			}
 		}
 		return fmt.Errorf("failed to write video file: %w", err)
 	}
 
-	// Validate file size matches Content-Length
-	if bytesWritten != contentLength {
-		if rerr := os.Remove(outputPath); rerr != nil {
-			slog.Warn("Failed to remove invalid download", "path", outputPath, "error", rerr)
+	// Validate total file size
+	finalSize := startOffset + bytesWritten
+	if finalSize != totalContentLength {
+		if !mc.enableResumeDownload {
+			if rerr := os.Remove(outputPath); rerr != nil {
+				slog.Warn("Failed to remove invalid download", "path", outputPath, "error", rerr)
+			}
 		}
-		return fmt.Errorf("file size mismatch: expected %d, got %d", contentLength, bytesWritten)
+		return fmt.Errorf("file size mismatch: expected %d, got %d", totalContentLength, finalSize)
 	}
 
-	slog.Info("Video downloaded successfully", "job_id", jobID, "size", bytesWritten)
+	slog.Info("Video downloaded successfully", "job_id", jobID, "size", finalSize, "resumed", startOffset > 0)
 	return nil
+}
+
+// ThrottledReader wraps an io.Reader with bandwidth throttling
+type ThrottledReader struct {
+	reader        io.Reader
+	bytesPerSec   int64
+	bytesRead     int64
+	startTime     time.Time
+}
+
+// NewThrottledReader creates a new ThrottledReader
+func NewThrottledReader(reader io.Reader, bytesPerSec int64) *ThrottledReader {
+	return &ThrottledReader{
+		reader:      reader,
+		bytesPerSec: bytesPerSec,
+		startTime:   time.Now(),
+	}
+}
+
+// Read implements io.Reader with bandwidth throttling
+func (tr *ThrottledReader) Read(p []byte) (int, error) {
+	// Calculate expected time for current bytes read
+	elapsed := time.Since(tr.startTime)
+	expectedDuration := time.Duration(float64(tr.bytesRead) / float64(tr.bytesPerSec) * float64(time.Second))
+	
+	// Sleep if we're reading too fast
+	if expectedDuration > elapsed {
+		sleepDuration := expectedDuration - elapsed
+		// Cap sleep to prevent excessive delays
+		if sleepDuration > 100*time.Millisecond {
+			sleepDuration = 100 * time.Millisecond
+		}
+		time.Sleep(sleepDuration)
+	}
+	
+	n, err := tr.reader.Read(p)
+	tr.bytesRead += int64(n)
+	return n, err
 }
 
 // UploadConvertedVideo uploads the converted video file to the master

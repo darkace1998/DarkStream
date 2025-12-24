@@ -167,6 +167,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.WorkerHeartbeat))
 	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.DownloadVideo))
 	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.UploadVideo))
+	mux.HandleFunc("/api/worker/job-progress", s.rateLimitMiddleware(s.JobProgress))
 	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
 	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
 
@@ -508,10 +509,54 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set appropriate headers
+	fileSize := fileInfo.Size()
+
+	// Handle Range header for resume support
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		// Parse Range header (format: bytes=start-end)
+		var start, end int64
+		if _, err := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); err == nil {
+			// Validate range
+			if start < 0 || start >= fileSize {
+				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			
+			end = fileSize - 1
+			contentLength := end - start + 1
+			
+			// Seek to the start position
+			if _, err := file.Seek(start, 0); err != nil {
+				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
+				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
+				return
+			}
+			
+			// Set range response headers
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.WriteHeader(http.StatusPartialContent)
+			
+			// Stream the remaining file content
+			if _, err := io.CopyN(w, file, contentLength); err != nil {
+				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
+				return
+			}
+			
+			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+			return
+		}
+	}
+
+	// Full file download (no range or invalid range format)
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Stream the file
 	if _, err := io.Copy(w, file); err != nil {
@@ -519,7 +564,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Video file downloaded", "job_id", jobID, "size", fileInfo.Size())
+	slog.Info("Video file downloaded", "job_id", jobID, "size", fileSize)
 }
 
 // UploadVideo handles video file upload requests from workers
@@ -647,4 +692,45 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to encode upload response", "error", err)
 		return
 	}
+}
+
+// JobProgress handles job progress updates from workers
+func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var progress models.JobProgress
+	if err := json.NewDecoder(r.Body).Decode(&progress); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if progress.JobID == "" {
+		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
+		return
+	}
+	if progress.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
+		return
+	}
+
+	// Set the update time
+	progress.UpdatedAt = time.Now()
+
+	if err := s.db.UpdateJobProgress(&progress); err != nil {
+		slog.Error("Failed to update job progress", "job_id", progress.JobID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Debug("Job progress updated",
+		"job_id", progress.JobID,
+		"worker_id", progress.WorkerID,
+		"progress", progress.Progress,
+		"stage", progress.Stage,
+	)
+	w.WriteHeader(http.StatusOK)
 }

@@ -66,9 +66,20 @@ func (t *Tracker) initSchema() error {
 		memory_usage REAL
 	);
 
+	CREATE TABLE IF NOT EXISTS job_progress (
+		job_id TEXT PRIMARY KEY,
+		worker_id TEXT NOT NULL,
+		progress REAL DEFAULT 0,
+		fps REAL DEFAULT 0,
+		stage TEXT DEFAULT 'pending',
+		updated_at TIMESTAMP NOT NULL,
+		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
 	`
 
 	_, err := t.db.Exec(schema)
@@ -800,6 +811,48 @@ func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool) error {
 func (t *Tracker) Close() error {
 	if err := t.db.Close(); err != nil {
 		return fmt.Errorf("failed to close database: %w", err)
+	}
+	return nil
+}
+
+// UpdateJobProgress updates the progress of a job
+func (t *Tracker) UpdateJobProgress(progress *models.JobProgress) error {
+	_, err := t.db.Exec(`
+		INSERT INTO job_progress (job_id, worker_id, progress, fps, stage, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id) DO UPDATE SET
+			progress = excluded.progress,
+			fps = excluded.fps,
+			stage = excluded.stage,
+			updated_at = excluded.updated_at
+	`, progress.JobID, progress.WorkerID, progress.Progress, progress.FPS,
+		progress.Stage, progress.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to upsert job progress: %w", err)
+	}
+	return nil
+}
+
+// GetJobProgress retrieves the progress of a job
+func (t *Tracker) GetJobProgress(jobID string) (*models.JobProgress, error) {
+	var progress models.JobProgress
+	err := t.db.QueryRow(`
+		SELECT job_id, worker_id, progress, fps, stage, updated_at
+		FROM job_progress
+		WHERE job_id = ?
+	`, jobID).Scan(&progress.JobID, &progress.WorkerID, &progress.Progress,
+		&progress.FPS, &progress.Stage, &progress.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job progress: %w", err)
+	}
+	return &progress, nil
+}
+
+// DeleteJobProgress deletes the progress record for a job
+func (t *Tracker) DeleteJobProgress(jobID string) error {
+	_, err := t.db.Exec(`DELETE FROM job_progress WHERE job_id = ?`, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to delete job progress: %w", err)
 	}
 	return nil
 }

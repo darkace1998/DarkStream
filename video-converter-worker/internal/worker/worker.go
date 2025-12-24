@@ -2,12 +2,16 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -24,9 +28,14 @@ type Worker struct {
 	ffmpegConverter *converter.FFmpegConverter
 	vulkanDetector  *converter.VulkanDetector
 	validator       *converter.Validator
+	cacheManager    *CacheManager
 	concurrency     int
 	activeJobs      int32
 	vulkanCaps      *converter.VulkanCapabilities
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	shutdownOnce    sync.Once
 }
 
 // New creates a new Worker instance
@@ -50,8 +59,19 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 
 	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID, vulkanCaps != nil && vulkanCaps.Supported)
 	masterClient.SetTransferTimeouts(cfg.Storage.DownloadTimeout, cfg.Storage.UploadTimeout)
+	masterClient.SetBandwidthLimit(cfg.Storage.BandwidthLimit)
+	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
 	validator := converter.NewValidator()
+
+	// Initialize cache manager
+	cacheManager := NewCacheManager(
+		cfg.Storage.CachePath,
+		cfg.Storage.MaxCacheSize,
+		cfg.Storage.CacheCleanupAge,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Worker{
 		config:          cfg,
@@ -60,9 +80,12 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		ffmpegConverter: ffmpegConverter,
 		vulkanDetector:  vulkanDetector,
 		validator:       validator,
+		cacheManager:    cacheManager,
 		concurrency:     cfg.Worker.Concurrency,
 		activeJobs:      0,
 		vulkanCaps:      vulkanCaps,
+		ctx:             ctx,
+		cancel:          cancel,
 	}, nil
 }
 
@@ -101,21 +124,110 @@ func (w *Worker) Start() error {
 		)
 	}
 
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Start cache cleanup goroutine
+	w.wg.Add(1)
+	go w.runCacheCleanup()
+
 	// Start heartbeat goroutine
+	w.wg.Add(1)
 	go w.sendHeartbeats()
 
 	// Start job processing goroutine pool
 	for i := 0; i < w.concurrency; i++ {
+		w.wg.Add(1)
 		go w.processJobs(i)
 	}
 
-	// Keep worker running
-	select {}
+	// Wait for shutdown signal
+	<-sigChan
+	slog.Info("Received shutdown signal, initiating graceful shutdown...")
+	
+	return w.Shutdown()
+}
+
+// Shutdown gracefully shuts down the worker
+func (w *Worker) Shutdown() error {
+	var shutdownErr error
+	w.shutdownOnce.Do(func() {
+		slog.Info("Graceful shutdown initiated, waiting for active jobs to complete...")
+		
+		// Cancel context to stop all goroutines
+		w.cancel()
+		
+		// Wait for all goroutines to finish with a timeout
+		done := make(chan struct{})
+		go func() {
+			w.wg.Wait()
+			close(done)
+		}()
+		
+		// Wait up to 2 minutes for graceful shutdown
+		select {
+		case <-done:
+			slog.Info("All workers stopped gracefully")
+		case <-time.After(2 * time.Minute):
+			slog.Warn("Graceful shutdown timed out, some jobs may not have completed")
+			shutdownErr = errors.New("graceful shutdown timed out")
+		}
+		
+		// Stop cache manager
+		if w.cacheManager != nil {
+			w.cacheManager.Stop()
+		}
+		
+		slog.Info("Worker shutdown complete",
+			"active_jobs", atomic.LoadInt32(&w.activeJobs),
+		)
+	})
+	return shutdownErr
+}
+
+// runCacheCleanup runs periodic cache cleanup
+func (w *Worker) runCacheCleanup() {
+	defer w.wg.Done()
+	
+	if w.cacheManager == nil {
+		return
+	}
+	
+	// Run initial cleanup
+	if err := w.cacheManager.Cleanup(); err != nil {
+		slog.Warn("Initial cache cleanup failed", "error", err)
+	}
+	
+	ticker := time.NewTicker(10 * time.Minute) // Run cleanup every 10 minutes
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-w.ctx.Done():
+			slog.Info("Cache cleanup goroutine stopping")
+			return
+		case <-ticker.C:
+			if err := w.cacheManager.Cleanup(); err != nil {
+				slog.Warn("Cache cleanup failed", "error", err)
+			}
+		}
+	}
 }
 
 // processJobs continuously requests and processes jobs
 func (w *Worker) processJobs(workerIndex int) {
+	defer w.wg.Done()
+	
 	for {
+		// Check for shutdown
+		select {
+		case <-w.ctx.Done():
+			slog.Info("Job processing goroutine stopping", "worker_index", workerIndex)
+			return
+		default:
+		}
+		
 		slog.Debug("Requesting next job", "worker_index", workerIndex)
 
 		job, err := w.masterClient.GetNextJob()
@@ -125,7 +237,14 @@ func (w *Worker) processJobs(workerIndex int) {
 			} else {
 				slog.Error("Failed to get next job", "error", err)
 			}
-			time.Sleep(w.config.Worker.JobCheckInterval)
+			
+			// Use select with context to handle shutdown during wait
+			select {
+			case <-w.ctx.Done():
+				slog.Info("Job processing goroutine stopping during wait", "worker_index", workerIndex)
+				return
+			case <-time.After(w.config.Worker.JobCheckInterval):
+			}
 			continue
 		}
 
@@ -164,6 +283,9 @@ func (w *Worker) processJob(job *models.Job) {
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
 func (w *Worker) executeJob(job *models.Job) error {
+	// Report progress: starting
+	w.reportProgress(job.ID, 0, 0, "download")
+	
 	// Create job cache directory
 	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
 	if err := os.MkdirAll(jobCacheDir, 0o750); err != nil {
@@ -182,6 +304,9 @@ func (w *Worker) executeJob(job *models.Job) error {
 	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
+	
+	// Report progress: download complete, starting conversion
+	w.reportProgress(job.ID, 0, 0, "convert")
 
 	// Update job to use local source path
 	originalSourcePath := job.SourcePath
@@ -226,8 +351,11 @@ func (w *Worker) executeJob(job *models.Job) error {
 		"format", dynamicCfg.OutputFormat,
 	)
 
-	// Convert video
-	if err := w.ffmpegConverter.ConvertVideo(job, cfg); err != nil {
+	// Convert video with progress callback
+	progressCallback := func(progress float64, fps float64) {
+		w.reportProgress(job.ID, progress, fps, "convert")
+	}
+	if err := w.ffmpegConverter.ConvertVideoWithProgress(job, cfg, progressCallback); err != nil {
 		return fmt.Errorf("conversion failed: %w", err)
 	}
 
@@ -236,6 +364,9 @@ func (w *Worker) executeJob(job *models.Job) error {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
+	// Report progress: starting upload
+	w.reportProgress(job.ID, 100, 0, "upload")
+	
 	// Upload converted video to master
 	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
 	if err := w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath); err != nil {
@@ -249,32 +380,53 @@ func (w *Worker) executeJob(job *models.Job) error {
 	return nil
 }
 
+// reportProgress sends progress update to master
+func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) {
+	progress_report := &models.JobProgress{
+		JobID:     jobID,
+		WorkerID:  w.config.Worker.ID,
+		Progress:  progress,
+		FPS:       fps,
+		Stage:     stage,
+		UpdatedAt: time.Now(),
+	}
+	w.masterClient.ReportJobProgress(progress_report)
+}
+
 // sendHeartbeats periodically sends heartbeats to the master
 func (w *Worker) sendHeartbeats() {
+	defer w.wg.Done()
+	
 	ticker := time.NewTicker(w.config.Worker.HeartbeatInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		vulkanAvailable := false
-		gpuName := "CPU"
-		if w.vulkanCaps != nil && w.vulkanCaps.Supported {
-			vulkanAvailable = true
-			gpuName = w.vulkanCaps.Device.Name
-		}
+	for {
+		select {
+		case <-w.ctx.Done():
+			slog.Info("Heartbeat goroutine stopping")
+			return
+		case <-ticker.C:
+			vulkanAvailable := false
+			gpuName := "CPU"
+			if w.vulkanCaps != nil && w.vulkanCaps.Supported {
+				vulkanAvailable = true
+				gpuName = w.vulkanCaps.Device.Name
+			}
 
-		hb := &models.WorkerHeartbeat{
-			WorkerID:        w.config.Worker.ID,
-			Hostname:        getHostname(),
-			VulkanAvailable: vulkanAvailable,
-			ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
-			Status:          constants.WorkerStatusHealthy,
-			Timestamp:       time.Now(),
-			GPU:             gpuName,
-			CPUUsage:        0.0, // TODO: Get actual CPU usage
-			MemoryUsage:     0.0, // TODO: Get actual memory usage
-		}
+			hb := &models.WorkerHeartbeat{
+				WorkerID:        w.config.Worker.ID,
+				Hostname:        getHostname(),
+				VulkanAvailable: vulkanAvailable,
+				ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
+				Status:          constants.WorkerStatusHealthy,
+				Timestamp:       time.Now(),
+				GPU:             gpuName,
+				CPUUsage:        0.0, // TODO: Get actual CPU usage
+				MemoryUsage:     0.0, // TODO: Get actual memory usage
+			}
 
-		w.masterClient.SendHeartbeat(hb)
+			w.masterClient.SendHeartbeat(hb)
+		}
 	}
 }
 
