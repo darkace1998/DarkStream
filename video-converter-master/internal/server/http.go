@@ -168,6 +168,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.WorkerHeartbeat))
 	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.DownloadVideo))
 	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.UploadVideo))
+	mux.HandleFunc("/api/worker/job-progress", s.rateLimitMiddleware(s.JobProgress))
 	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
 	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
 
@@ -516,10 +517,78 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set appropriate headers
+	fileSize := fileInfo.Size()
+
+	// Handle Range header for resume support
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		// Parse Range header - supports formats:
+		// bytes=start-end (e.g., bytes=0-499)
+		// bytes=start- (e.g., bytes=500-)
+		// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
+		var start, end int64
+		var validRange bool
+		
+		// Try bytes=start-end format
+		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
+			validRange = true
+		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 {
+			// bytes=start- format
+			end = fileSize - 1
+			validRange = true
+		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
+			// bytes=-suffix format (last N bytes)
+			start = fileSize - end
+			end = fileSize - 1
+			if start < 0 {
+				start = 0
+			}
+			validRange = true
+		}
+		
+		if validRange {
+			// Validate range
+			if start < 0 || start >= fileSize || end < start || end >= fileSize {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
+				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			
+			contentLength := end - start + 1
+			
+			// Seek to the start position
+			if _, err := file.Seek(start, 0); err != nil {
+				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
+				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
+				return
+			}
+			
+			// Set range response headers
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.WriteHeader(http.StatusPartialContent)
+			
+			// Stream the remaining file content
+			if _, err := io.CopyN(w, file, contentLength); err != nil {
+				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
+				return
+			}
+			
+			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+			return
+		}
+		// Invalid range format - fall through to full download
+		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
+	}
+
+	// Full file download (no range or invalid range format)
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Stream the file
 	if _, err := io.Copy(w, file); err != nil {
@@ -527,7 +596,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Video file downloaded", "job_id", jobID, "size", fileInfo.Size())
+	slog.Info("Video file downloaded", "job_id", jobID, "size", fileSize)
 }
 
 // UploadVideo handles video file upload requests from workers
@@ -657,6 +726,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// JobProgress handles job progress updates from workers
+func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 // RetryFailedJobs handles retrying failed jobs via CLI
 func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -664,6 +735,27 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var progress models.JobProgress
+	if err := json.NewDecoder(r.Body).Decode(&progress); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if progress.JobID == "" {
+		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
+		return
+	}
+	if progress.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
+		return
+	}
+
+	// Set the update time
+	progress.UpdatedAt = time.Now()
+
+	if err := s.db.UpdateJobProgress(&progress); err != nil {
+		slog.Error("Failed to update job progress", "job_id", progress.JobID, "error", err)
 	// Get limit parameter (default 100)
 	limitStr := r.URL.Query().Get("limit")
 	limit := 100
@@ -855,6 +947,13 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Debug("Job progress updated",
+		"job_id", progress.JobID,
+		"worker_id", progress.WorkerID,
+		"progress", progress.Progress,
+		"stage", progress.Stage,
+	)
+	w.WriteHeader(http.StatusOK)
 	// Get worker stats
 	workerStats, err := s.db.GetWorkerStats()
 	if err != nil {

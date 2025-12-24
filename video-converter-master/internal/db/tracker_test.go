@@ -888,3 +888,106 @@ func TestResetJobToPending(t *testing.T) {
 		t.Errorf("Expected retry_count 0 (no increment), got %d", resetJob2.RetryCount)
 	}
 }
+
+func TestJobProgress(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	// First, create a job that the progress will reference
+	job := &models.Job{
+		ID:         "progress-test-job",
+		SourcePath: "/source/progress.mp4",
+		OutputPath: "/output/progress.mp4",
+		Status:     "processing",
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Create job progress
+	progress := &models.JobProgress{
+		JobID:     "progress-test-job",
+		WorkerID:  "worker-1",
+		Progress:  50.5,
+		FPS:       30.0,
+		Stage:     "convert",
+		UpdatedAt: time.Now(),
+	}
+
+	// Insert progress
+	if err := tracker.UpdateJobProgress(progress); err != nil {
+		t.Fatalf("Failed to insert job progress: %v", err)
+	}
+
+	// Get progress
+	retrievedProgress, err := tracker.GetJobProgress("progress-test-job")
+	if err != nil {
+		t.Fatalf("Failed to get job progress: %v", err)
+	}
+
+	if retrievedProgress.JobID != "progress-test-job" {
+		t.Errorf("Expected job_id 'progress-test-job', got '%s'", retrievedProgress.JobID)
+	}
+
+	if retrievedProgress.WorkerID != "worker-1" {
+		t.Errorf("Expected worker_id 'worker-1', got '%s'", retrievedProgress.WorkerID)
+	}
+
+	if retrievedProgress.Progress != 50.5 {
+		t.Errorf("Expected progress 50.5, got %f", retrievedProgress.Progress)
+	}
+
+	if retrievedProgress.FPS != 30.0 {
+		t.Errorf("Expected fps 30.0, got %f", retrievedProgress.FPS)
+	}
+
+	if retrievedProgress.Stage != "convert" {
+		t.Errorf("Expected stage 'convert', got '%s'", retrievedProgress.Stage)
+	}
+
+	// Update progress
+	progress.Progress = 75.0
+	progress.Stage = "upload"
+	progress.UpdatedAt = time.Now()
+	if err := tracker.UpdateJobProgress(progress); err != nil {
+		t.Fatalf("Failed to update job progress: %v", err)
+	}
+
+	// Verify update
+	updatedProgress, err := tracker.GetJobProgress("progress-test-job")
+	if err != nil {
+		t.Fatalf("Failed to get updated job progress: %v", err)
+	}
+
+	if updatedProgress.Progress != 75.0 {
+		t.Errorf("Expected progress 75.0 after update, got %f", updatedProgress.Progress)
+	}
+
+	if updatedProgress.Stage != "upload" {
+		t.Errorf("Expected stage 'upload' after update, got '%s'", updatedProgress.Stage)
+	}
+
+	// Delete progress
+	if err := tracker.DeleteJobProgress("progress-test-job"); err != nil {
+		t.Fatalf("Failed to delete job progress: %v", err)
+	}
+
+	// Verify deletion (should return error)
+	_, err = tracker.GetJobProgress("progress-test-job")
+	if err == nil {
+		t.Error("Expected error when getting deleted job progress, got nil")
+	}
+}

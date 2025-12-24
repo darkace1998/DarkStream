@@ -62,11 +62,15 @@ type WorkerConfig struct {
 	} `yaml:"worker"`
 
 	Storage struct {
-		MountPath       string        `yaml:"mount_path"`
-		DownloadTimeout time.Duration `yaml:"download_timeout"`
-		UploadTimeout   time.Duration `yaml:"upload_timeout"`
-		CachePath       string        `yaml:"cache_path"`
-		ChunkSize       int           `yaml:"chunk_size"` // Reserved for future chunked streaming; currently unused
+		MountPath         string        `yaml:"mount_path"`
+		DownloadTimeout   time.Duration `yaml:"download_timeout"`
+		UploadTimeout     time.Duration `yaml:"upload_timeout"`
+		CachePath         string        `yaml:"cache_path"`
+		ChunkSize         int           `yaml:"chunk_size"`          // Reserved for future chunked streaming; currently unused
+		MaxCacheSize      int64         `yaml:"max_cache_size"`      // Maximum cache size in bytes (0 = unlimited)
+		CacheCleanupAge   time.Duration `yaml:"cache_cleanup_age"`   // Age after which cached files are cleaned up
+		BandwidthLimit    int64         `yaml:"bandwidth_limit"`     // Bandwidth limit in bytes per second (0 = unlimited)
+		EnableResumeDownload bool       `yaml:"enable_resume_download"` // Enable resume support for downloads
 	} `yaml:"storage"`
 
 	FFmpeg struct {

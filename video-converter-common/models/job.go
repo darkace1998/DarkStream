@@ -53,3 +53,13 @@ type VulkanDevice struct {
 	DriverVersion string `json:"driver_version"`
 	Available     bool   `json:"available"`
 }
+
+// JobProgress represents progress information for a running job.
+type JobProgress struct {
+	JobID       string    `json:"job_id"`
+	WorkerID    string    `json:"worker_id"`
+	Progress    float64   `json:"progress"`    // 0-100 percentage
+	FPS         float64   `json:"fps"`         // Current encoding FPS
+	Stage       string    `json:"stage"`       // download, convert, upload
+	UpdatedAt   time.Time `json:"updated_at"`
+}
