@@ -35,7 +35,21 @@ type Coordinator struct {
 
 // New creates a new coordinator instance
 func New(cfg *models.MasterConfig) (*Coordinator, error) {
-	tracker, err := db.New(cfg.Database.Path)
+	// Create connection pool config from master config
+	poolConfig := db.ConnectionPoolConfig{
+		MaxOpenConnections: cfg.Database.MaxOpenConnections,
+		MaxIdleConnections: cfg.Database.MaxIdleConnections,
+		ConnMaxLifetime:    time.Duration(cfg.Database.ConnMaxLifetime) * time.Second,
+		ConnMaxIdleTime:    time.Duration(cfg.Database.ConnMaxIdleTime) * time.Second,
+	}
+	
+	// Use default config if not specified
+	if poolConfig.MaxOpenConnections == 0 {
+		defaultConfig := db.DefaultConnectionPoolConfig()
+		poolConfig = defaultConfig
+	}
+	
+	tracker, err := db.NewWithConfig(cfg.Database.Path, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database tracker: %w", err)
 	}
@@ -172,7 +186,14 @@ func (c *Coordinator) Start() error {
 // monitorWorkerHealth periodically checks worker health
 func (c *Coordinator) monitorWorkerHealth() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(30 * time.Second)
+	
+	// Use configured interval or default to 30 seconds
+	healthCheckInterval := c.config.Monitoring.WorkerHealthInterval
+	if healthCheckInterval == 0 {
+		healthCheckInterval = 30 * time.Second
+	}
+	
+	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
 
 	const heartbeatThreshold = 120 // 2 minutes in seconds
@@ -240,8 +261,14 @@ func (c *Coordinator) monitorWorkerHealth() {
 			}
 
 			// Check for stale jobs (stuck in processing for too long)
-			// Use 2 hour timeout (7200 seconds)
-			staleJobs, err := c.db.GetStaleProcessingJobs(7200)
+			// Use configured timeout or default to 2 hours (7200 seconds)
+			jobTimeout := c.config.Monitoring.JobTimeout
+			if jobTimeout == 0 {
+				jobTimeout = 2 * time.Hour
+			}
+			jobTimeoutSeconds := int(jobTimeout.Seconds())
+			
+			staleJobs, err := c.db.GetStaleProcessingJobs(jobTimeoutSeconds)
 			if err != nil {
 				slog.Error("Failed to get stale jobs", "error", err)
 				continue
@@ -251,16 +278,37 @@ func (c *Coordinator) monitorWorkerHealth() {
 				slog.Warn("Stale job detected",
 					"job_id", job.ID,
 					"worker_id", job.WorkerID,
-					"started_at", job.StartedAt)
+					"started_at", job.StartedAt,
+					"timeout", jobTimeout)
 
-				// Reset job to pending with retry count increment
-				if err := c.db.ResetJobToPending(job.ID, true); err != nil {
-					slog.Error("Failed to reset stale job",
-						"job_id", job.ID, "error", err)
+				// Check if job has exceeded max retries
+				if job.RetryCount >= job.MaxRetries {
+					// Mark job as failed permanently
+					job.Status = "failed"
+					job.ErrorMessage = fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)", 
+						jobTimeout, job.RetryCount, job.MaxRetries)
+					completedAt := time.Now()
+					job.CompletedAt = &completedAt
+					if err := c.db.UpdateJob(job); err != nil {
+						slog.Error("Failed to mark stale job as failed",
+							"job_id", job.ID, "error", err)
+					} else {
+						slog.Info("Marked stale job as permanently failed",
+							"job_id", job.ID,
+							"retry_count", job.RetryCount,
+							"max_retries", job.MaxRetries)
+					}
 				} else {
-					slog.Info("Reset stale job to pending",
-						"job_id", job.ID,
-						"retry_count", job.RetryCount+1)
+					// Reset job to pending with retry count increment
+					if err := c.db.ResetJobToPending(job.ID, true); err != nil {
+						slog.Error("Failed to reset stale job",
+							"job_id", job.ID, "error", err)
+					} else {
+						slog.Info("Reset stale job to pending for retry",
+							"job_id", job.ID,
+							"retry_count", job.RetryCount+1,
+							"max_retries", job.MaxRetries)
+					}
 				}
 			}
 		}
@@ -270,7 +318,14 @@ func (c *Coordinator) monitorWorkerHealth() {
 // monitorFailedJobs periodically checks for failed jobs that can be retried
 func (c *Coordinator) monitorFailedJobs() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(1 * time.Minute)
+	
+	// Use configured interval or default to 1 minute
+	retryCheckInterval := c.config.Monitoring.FailedJobRetryInterval
+	if retryCheckInterval == 0 {
+		retryCheckInterval = 1 * time.Minute
+	}
+	
+	ticker := time.NewTicker(retryCheckInterval)
 	defer ticker.Stop()
 
 	// Track retry attempts and last retry time for exponential backoff

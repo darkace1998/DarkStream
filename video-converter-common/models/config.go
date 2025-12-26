@@ -43,8 +43,18 @@ type MasterConfig struct {
 		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
 	} `yaml:"scanner"`
 
+	Monitoring struct {
+		JobTimeout            time.Duration `yaml:"job_timeout"`              // Maximum time a job can be in processing state (default: 2 hours)
+		WorkerHealthInterval  time.Duration `yaml:"worker_health_interval"`   // How often to check worker health (default: 30 seconds)
+		FailedJobRetryInterval time.Duration `yaml:"failed_job_retry_interval"` // How often to check for failed jobs to retry (default: 1 minute)
+	} `yaml:"monitoring"`
+
 	Database struct {
-		Path string `yaml:"path"`
+		Path               string `yaml:"path"`
+		MaxOpenConnections int    `yaml:"max_open_connections"` // Maximum number of open connections to the database
+		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
+		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
+		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
 	} `yaml:"database"`
 
 	Conversion ConversionSettings `yaml:"conversion"`

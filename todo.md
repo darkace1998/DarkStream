@@ -65,16 +65,24 @@ DarkStream is a distributed video converter system built with Go that:
   - Worker completes active jobs before shutdown (with 2-minute timeout)
   - Location: `video-converter-master/internal/coordinator/coordinator.go`, `video-converter-worker/internal/worker/worker.go`
 
-- [ ] **Add database connection pooling**
-  - Optimize SQLite connection management
-  - Add proper connection timeout handling
-  - Location: `video-converter-master/internal/db/tracker.go`
+- [x] **Add database connection pooling**
+  - Implemented connection pooling configuration in MasterConfig (max_open_connections, max_idle_connections, conn_max_lifetime, conn_max_idle_time)
+  - Added ConnectionPoolConfig struct with configurable pool settings
+  - Updated db.New() with NewWithConfig() to accept custom pool configuration
+  - Added default connection pool configuration (25 max open, 5 idle, 1 hour lifetime, 10 min idle time)
+  - Coordinator now configures connection pool from config or uses defaults
+  - Added comprehensive tests for connection pooling
+  - Location: `video-converter-common/models/config.go`, `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/coordinator/coordinator.go`
 
-- [ ] **Improve job timeout handling**
-  - Mark stale jobs (processing for too long) as failed
-  - Auto-retry timed-out jobs
-  - Add configurable job timeout
-  - Location: `video-converter-master/internal/coordinator/coordinator.go`
+- [x] **Improve job timeout handling**
+  - Added configurable job timeout in MasterConfig.Monitoring section (default: 2 hours)
+  - Added configurable worker health check interval (default: 30 seconds)
+  - Added configurable failed job retry check interval (default: 1 minute)
+  - Updated monitorWorkerHealth to use configurable timeout and check interval
+  - Enhanced stale job handling to mark jobs as permanently failed when max retries exceeded
+  - Jobs that timeout are now retried with exponential backoff until max retries reached
+  - Improved logging to include timeout duration in stale job warnings
+  - Location: `video-converter-common/models/config.go`, `video-converter-master/internal/coordinator/coordinator.go`
 
 - [ ] **Add worker deregistration**
   - Mark workers as offline when they stop sending heartbeats

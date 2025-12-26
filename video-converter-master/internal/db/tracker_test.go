@@ -991,3 +991,103 @@ func TestJobProgress(t *testing.T) {
 		t.Error("Expected error when getting deleted job progress, got nil")
 	}
 }
+
+func TestConnectionPoolConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// Test with custom connection pool config
+	poolConfig := ConnectionPoolConfig{
+		MaxOpenConnections: 10,
+		MaxIdleConnections: 2,
+		ConnMaxLifetime:    30 * time.Minute,
+		ConnMaxIdleTime:    5 * time.Minute,
+	}
+
+	tracker, err := NewWithConfig(dbPath, poolConfig)
+	if err != nil {
+		t.Fatalf("Failed to create tracker with custom pool config: %v", err)
+	}
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	// Verify database is working by creating a job
+	job := &models.Job{
+		ID:         "pool-test-job",
+		SourcePath: "/source/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job with pooled connection: %v", err)
+	}
+
+	// Retrieve job to verify connection pool is working
+	retrievedJob, err := tracker.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to get job: %v", err)
+	}
+
+	if retrievedJob.ID != job.ID {
+		t.Errorf("Expected ID %s, got %s", job.ID, retrievedJob.ID)
+	}
+}
+
+func TestDefaultConnectionPoolConfig(t *testing.T) {
+	// Test default config values
+	defaultConfig := DefaultConnectionPoolConfig()
+
+	if defaultConfig.MaxOpenConnections != 25 {
+		t.Errorf("Expected MaxOpenConnections 25, got %d", defaultConfig.MaxOpenConnections)
+	}
+
+	if defaultConfig.MaxIdleConnections != 5 {
+		t.Errorf("Expected MaxIdleConnections 5, got %d", defaultConfig.MaxIdleConnections)
+	}
+
+	if defaultConfig.ConnMaxLifetime != time.Hour {
+		t.Errorf("Expected ConnMaxLifetime 1 hour, got %v", defaultConfig.ConnMaxLifetime)
+	}
+
+	if defaultConfig.ConnMaxIdleTime != 10*time.Minute {
+		t.Errorf("Expected ConnMaxIdleTime 10 minutes, got %v", defaultConfig.ConnMaxIdleTime)
+	}
+}
+
+func TestNewUsesDefaultPoolConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// Test that New() uses default connection pool config
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker with default config: %v", err)
+	}
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	// Verify database is working
+	job := &models.Job{
+		ID:         "default-pool-test-job",
+		SourcePath: "/source/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job with default pooled connection: %v", err)
+	}
+}
