@@ -48,17 +48,22 @@ DarkStream is a distributed video converter system built with Go that:
   - Added checksum fields to Job model and database
   - Location: `video-converter-common/utils/checksum.go`, `video-converter-master/internal/server/http.go`, `video-converter-worker/internal/worker/worker.go`
 
-- [ ] **Secure file path handling**
-  - Add path traversal prevention
-  - Validate all file paths against allowed directories
-  - Location: `video-converter-master/internal/server/handlers.go`
+- [x] **Secure file path handling**
+  - Implemented path traversal prevention with `ValidatePathWithinBase` and `ValidatePathInAllowedDirs` utilities
+  - Added path validation in DownloadVideo and UploadVideo handlers against allowed directories (RootPath and OutputBase)
+  - Added validation in scanner to ensure generated paths are within allowed directories
+  - Added comprehensive test suite for path validation
+  - Location: `video-converter-common/utils/file.go`, `video-converter-master/internal/server/http.go`, `video-converter-master/internal/scanner/scanner.go`
 
 ### Reliability Improvements
-- [ ] **Implement graceful shutdown**
-  - Handle SIGTERM/SIGINT signals properly
-  - Complete in-progress jobs before shutdown
-  - Clean up resources on exit
-  - Location: `video-converter-master/main.go`, `video-converter-worker/main.go`
+- [x] **Implement graceful shutdown**
+  - Signal handling (SIGTERM/SIGINT) already implemented in both master and worker
+  - Context-based cancellation for coordinating goroutine shutdown
+  - WaitGroups to ensure all goroutines complete before exit
+  - HTTP server graceful shutdown with timeout
+  - Database cleanup on shutdown
+  - Worker completes active jobs before shutdown (with 2-minute timeout)
+  - Location: `video-converter-master/internal/coordinator/coordinator.go`, `video-converter-worker/internal/worker/worker.go`
 
 - [ ] **Add database connection pooling**
   - Optimize SQLite connection management

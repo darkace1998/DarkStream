@@ -115,17 +115,24 @@ func (rl *rateLimiter) stop() {
 
 // Server handles HTTP API requests
 type Server struct {
-	db          *db.Tracker
-	addr        string
-	server      *http.Server
-	configMgr   *config.Manager
-	rateLimiter *rateLimiter
-	apiKey      string
+	db            *db.Tracker
+	addr          string
+	server        *http.Server
+	configMgr     *config.Manager
+	rateLimiter   *rateLimiter
+	apiKey        string
+	allowedDirs   []string // Allowed directories for file operations (source and output)
 }
 
 // New creates a new HTTP server instance
 func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *models.MasterConfig) *Server {
 	apiKey := cfg.Server.APIKey
+	
+	// Configure allowed directories for path validation
+	allowedDirs := []string{
+		cfg.Scanner.RootPath,   // Source videos directory
+		cfg.Scanner.OutputBase, // Output/converted videos directory
+	}
 	
 	return &Server{
 		db:          tracker,
@@ -133,6 +140,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		configMgr:   configMgr,
 		rateLimiter: newRateLimiter(),
 		apiKey:      apiKey,
+		allowedDirs: allowedDirs,
 	}
 }
 
@@ -530,16 +538,34 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open the source file
-	file, err := os.Open(job.SourcePath)
+	// Validate source path to prevent path traversal attacks
+	// This is defense-in-depth: paths are validated during job creation,
+	// but we re-validate here to protect against database tampering
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
 	if err != nil {
-		slog.Error("Failed to open source file", "path", job.SourcePath, "error", err)
+		slog.Error("Path validation failed for source file",
+			"job_id", jobID,
+			"path", job.SourcePath,
+			"error", err)
+		http.Error(w, "Invalid file path", http.StatusForbidden)
+		return
+	}
+
+	// Open the source file using the validated path
+	file, err := os.Open(validatedPath)
+	if err != nil {
+		// Log both paths for debugging: database value and validated path
+		slog.Error("Failed to open source file",
+			"job_id", jobID,
+			"db_path", job.SourcePath,
+			"validated_path", validatedPath,
+			"error", err)
 		http.Error(w, "Source file not found", http.StatusNotFound)
 		return
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			slog.Warn("Failed to close source file", "path", job.SourcePath, "error", cerr)
+			slog.Warn("Failed to close source file", "path", validatedPath, "error", cerr)
 		}
 	}()
 
@@ -662,6 +688,32 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate output path to prevent path traversal attacks
+	// This is defense-in-depth: paths are validated during job creation,
+	// but we re-validate here to protect against database tampering
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
+	if err != nil {
+		slog.Error("Path validation failed for output file",
+			"job_id", jobID,
+			"path", job.OutputPath,
+			"error", err)
+		http.Error(w, "Invalid file path", http.StatusForbidden)
+		return
+	}
+
+	// Use validated path for all file operations
+	outputPath := validatedPath
+	
+	// If validated path differs from database path, update the job
+	// This can happen if path normalization occurred (e.g., /path//file -> /path/file)
+	if outputPath != job.OutputPath {
+		slog.Info("Output path normalized during validation",
+			"job_id", jobID,
+			"original", job.OutputPath,
+			"validated", outputPath)
+		job.OutputPath = outputPath
+	}
+
 	// Parse multipart form (32MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)
@@ -681,7 +733,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Create output directory if needed
-	outputDir := filepath.Dir(job.OutputPath)
+	outputDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
 		http.Error(w, "Failed to create output directory", http.StatusInternalServerError)
@@ -690,7 +742,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Create a temporary file first to ensure atomic write
 	// Use the same extension as the output file
-	ext := filepath.Ext(job.OutputPath)
+	ext := filepath.Ext(outputPath)
 	tempFile, err := os.CreateTemp(outputDir, ".upload-*"+ext+".tmp")
 	if err != nil {
 		slog.Error("Failed to create temp file", "error", err)
@@ -726,16 +778,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomically rename temp file to final location first
-	if err := os.Rename(tempPath, job.OutputPath); err != nil {
-		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", job.OutputPath, "error", err)
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", outputPath, "error", err)
 		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
 	}
 
 	// Calculate output file checksum for integrity validation
-	outputChecksum, err := utils.CalculateFileSHA256(job.OutputPath)
+	outputChecksum, err := utils.CalculateFileSHA256(outputPath)
 	if err != nil {
-		slog.Error("Failed to calculate output checksum", "path", job.OutputPath, "error", err)
+		slog.Error("Failed to calculate output checksum", "path", outputPath, "error", err)
 		// Don't fail the upload if checksum calculation fails - log and continue
 		outputChecksum = ""
 	}

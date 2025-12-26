@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // ScanOptions configures scanner behavior
@@ -174,6 +175,20 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 				continue
 			}
 			outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
+		}
+
+		// Validate paths before creating job
+		// This ensures no path traversal issues even if directory structure is compromised
+		// Use utils for consistent validation across the codebase
+		if _, err := utils.ValidatePathWithinBase(s.RootPath, fullPath); err != nil {
+			slog.Warn("Source path validation failed, skipping", "root", s.RootPath, "path", fullPath, "error", err)
+			continue
+		}
+		if !s.Options.ReplaceSource {
+			if _, err := utils.ValidatePathWithinBase(s.OutputBase, outputPath); err != nil {
+				slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
+				continue
+			}
 		}
 
 		// Calculate source file checksum for integrity validation
