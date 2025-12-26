@@ -67,7 +67,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := server.New(tracker, addr, configMgr)
+	srv := server.New(tracker, addr, configMgr, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

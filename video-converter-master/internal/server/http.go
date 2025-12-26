@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-common/utils"
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"gopkg.in/yaml.v3"
@@ -119,15 +120,19 @@ type Server struct {
 	server      *http.Server
 	configMgr   *config.Manager
 	rateLimiter *rateLimiter
+	apiKey      string
 }
 
 // New creates a new HTTP server instance
-func New(tracker *db.Tracker, addr string, configMgr *config.Manager) *Server {
+func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *models.MasterConfig) *Server {
+	apiKey := cfg.Server.APIKey
+	
 	return &Server{
 		db:          tracker,
 		addr:        addr,
 		configMgr:   configMgr,
 		rateLimiter: newRateLimiter(),
+		apiKey:      apiKey,
 	}
 }
 
@@ -151,6 +156,35 @@ func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// authMiddleware validates API key for worker endpoints
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Skip authentication if no API key is configured (backward compatibility)
+		if s.apiKey == "" {
+			next(w, r)
+			return
+		}
+		
+		// Extract Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			slog.Warn("Missing Authorization header", "path", r.URL.Path, "ip", r.RemoteAddr)
+			http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
+			return
+		}
+		
+		// Validate API key format: "Bearer <api_key>"
+		expectedHeader := "Bearer " + s.apiKey
+		if authHeader != expectedHeader {
+			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
+			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
+			return
+		}
+		
+		next(w, r)
+	}
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -161,14 +195,14 @@ func (s *Server) Start() error {
 	// Configuration API
 	mux.HandleFunc("/api/config", s.rateLimitMiddleware(s.handleConfig))
 
-	// Worker API - with rate limiting
-	mux.HandleFunc("/api/worker/next-job", s.rateLimitMiddleware(s.GetNextJob))
-	mux.HandleFunc("/api/worker/job-complete", s.rateLimitMiddleware(s.JobComplete))
-	mux.HandleFunc("/api/worker/job-failed", s.rateLimitMiddleware(s.JobFailed))
-	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.WorkerHeartbeat))
-	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.DownloadVideo))
-	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.UploadVideo))
-	mux.HandleFunc("/api/worker/job-progress", s.rateLimitMiddleware(s.JobProgress))
+	// Worker API - with rate limiting and authentication
+	mux.HandleFunc("/api/worker/next-job", s.rateLimitMiddleware(s.authMiddleware(s.GetNextJob)))
+	mux.HandleFunc("/api/worker/job-complete", s.rateLimitMiddleware(s.authMiddleware(s.JobComplete)))
+	mux.HandleFunc("/api/worker/job-failed", s.rateLimitMiddleware(s.authMiddleware(s.JobFailed)))
+	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.authMiddleware(s.WorkerHeartbeat)))
+	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo)))
+	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo)))
+	mux.HandleFunc("/api/worker/job-progress", s.rateLimitMiddleware(s.authMiddleware(s.JobProgress)))
 	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
 	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
 
@@ -698,11 +732,20 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Calculate output file checksum for integrity validation
+	outputChecksum, err := utils.CalculateFileSHA256(job.OutputPath)
+	if err != nil {
+		slog.Error("Failed to calculate output checksum", "path", job.OutputPath, "error", err)
+		// Don't fail the upload if checksum calculation fails - log and continue
+		outputChecksum = ""
+	}
+
 	// Update job status to completed (only after successful file write)
 	now := time.Now()
 	job.Status = "completed"
 	job.OutputSize = bytesWritten
 	job.CompletedAt = &now
+	job.OutputChecksum = outputChecksum
 
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to update job", "job_id", jobID, "error", err)
@@ -712,7 +755,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Video file uploaded", "job_id", jobID, "size", bytesWritten)
+	slog.Info("Video file uploaded", "job_id", jobID, "size", bytesWritten, "checksum", outputChecksum)
 
 	// Return success response with file size
 	w.Header().Set("Content-Type", "application/json")
@@ -728,8 +771,6 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 // JobProgress handles job progress updates from workers
 func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
-// RetryFailedJobs handles retrying failed jobs via CLI
-func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -756,6 +797,26 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.db.UpdateJobProgress(&progress); err != nil {
 		slog.Error("Failed to update job progress", "job_id", progress.JobID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Debug("Job progress updated",
+		"job_id", progress.JobID,
+		"worker_id", progress.WorkerID,
+		"progress", progress.Progress,
+		"stage", progress.Stage,
+	)
+	w.WriteHeader(http.StatusOK)
+}
+
+// RetryFailedJobs handles retrying failed jobs via CLI
+func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	// Get limit parameter (default 100)
 	limitStr := r.URL.Query().Get("limit")
 	limit := 100
@@ -947,13 +1008,6 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Debug("Job progress updated",
-		"job_id", progress.JobID,
-		"worker_id", progress.WorkerID,
-		"progress", progress.Progress,
-		"stage", progress.Stage,
-	)
-	w.WriteHeader(http.StatusOK)
 	// Get worker stats
 	workerStats, err := s.db.GetWorkerStats()
 	if err != nil {

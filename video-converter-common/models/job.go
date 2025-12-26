@@ -4,19 +4,21 @@ import "time"
 
 // Job represents a video conversion job with its lifecycle state and metadata.
 type Job struct {
-	ID             string     `json:"id"`
-	SourcePath     string     `json:"source_path"`
-	OutputPath     string     `json:"output_path"`
-	Status         string     `json:"status"` // see constants.JobStatus* constants
-	WorkerID       string     `json:"worker_id"`
-	StartedAt      *time.Time `json:"started_at"`
-	CompletedAt    *time.Time `json:"completed_at"`
-	ErrorMessage   string     `json:"error_message"`
-	RetryCount     int        `json:"retry_count"`
-	MaxRetries     int        `json:"max_retries"`
-	CreatedAt      time.Time  `json:"created_at"`
-	SourceDuration float64    `json:"source_duration"` // seconds
-	OutputSize     int64      `json:"output_size"`     // bytes
+	ID               string     `json:"id"`
+	SourcePath       string     `json:"source_path"`
+	OutputPath       string     `json:"output_path"`
+	Status           string     `json:"status"` // see constants.JobStatus* constants
+	WorkerID         string     `json:"worker_id"`
+	StartedAt        *time.Time `json:"started_at"`
+	CompletedAt      *time.Time `json:"completed_at"`
+	ErrorMessage     string     `json:"error_message"`
+	RetryCount       int        `json:"retry_count"`
+	MaxRetries       int        `json:"max_retries"`
+	CreatedAt        time.Time  `json:"created_at"`
+	SourceDuration   float64    `json:"source_duration"`    // seconds
+	OutputSize       int64      `json:"output_size"`        // bytes
+	SourceChecksum   string     `json:"source_checksum"`    // SHA256 checksum of source file
+	OutputChecksum   string     `json:"output_checksum"`    // SHA256 checksum of output file
 }
 
 // ConversionConfig defines the parameters for video conversion operations.

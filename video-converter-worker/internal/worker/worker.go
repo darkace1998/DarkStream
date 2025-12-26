@@ -61,6 +61,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	masterClient.SetTransferTimeouts(cfg.Storage.DownloadTimeout, cfg.Storage.UploadTimeout)
 	masterClient.SetBandwidthLimit(cfg.Storage.BandwidthLimit)
 	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
+	masterClient.SetAPIKey(cfg.Worker.APIKey)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
 	validator := converter.NewValidator()
 
@@ -303,6 +304,21 @@ func (w *Worker) executeJob(job *models.Job) error {
 	slog.Info("Downloading source video", "job_id", job.ID, "local_path", sourceLocalPath)
 	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
+	}
+	
+	// Validate source file checksum if available
+	if job.SourceChecksum != "" {
+		slog.Info("Validating source file checksum", "job_id", job.ID, "expected_checksum", job.SourceChecksum)
+		valid, err := w.validator.VerifyChecksum(sourceLocalPath, job.SourceChecksum)
+		if err != nil {
+			return fmt.Errorf("checksum validation error: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("checksum mismatch: downloaded file checksum does not match expected value")
+		}
+		slog.Info("Source file checksum validated successfully", "job_id", job.ID)
+	} else {
+		slog.Debug("No source checksum available for validation", "job_id", job.ID)
 	}
 	
 	// Report progress: download complete, starting conversion

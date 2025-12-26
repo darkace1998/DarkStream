@@ -37,6 +37,7 @@ type MasterClient struct {
 	uploadTimeout      time.Duration
 	bandwidthLimit     int64 // bytes per second (0 = unlimited)
 	enableResumeDownload bool
+	apiKey             string
 }
 
 // New creates a new MasterClient instance
@@ -50,7 +51,13 @@ func New(baseURL, workerID string, gpuAvailable bool) *MasterClient {
 		uploadTimeout:      30 * time.Minute,
 		bandwidthLimit:     0,
 		enableResumeDownload: false,
+		apiKey:             "",
 	}
+}
+
+// SetAPIKey sets the API key for authentication
+func (mc *MasterClient) SetAPIKey(apiKey string) {
+	mc.apiKey = apiKey
 }
 
 // SetTransferTimeouts sets the download and upload timeouts
@@ -69,12 +76,29 @@ func (mc *MasterClient) SetEnableResumeDownload(enable bool) {
 	mc.enableResumeDownload = enable
 }
 
+// addAuthHeader adds the Authorization header to a request if API key is set
+func (mc *MasterClient) addAuthHeader(req *http.Request) {
+	if mc.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	}
+}
+
 // GetNextJob requests the next available job from the master
 func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	url := fmt.Sprintf("%s/api/worker/next-job?worker_id=%s&gpu_available=%t",
 		mc.baseURL, mc.workerID, mc.gpuAvailable)
 
-	resp, err := mc.client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication header if API key is set
+	if mc.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	}
+
+	resp, err := mc.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to request job: %w", err)
 	}
@@ -115,11 +139,17 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	resp, err := mc.client.Post(
+	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/api/worker/job-complete", mc.baseURL),
-		"application/json",
-		bytes.NewReader(body),
-	)
+		bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	resp, err := mc.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to report job complete: %w", err)
 	}
@@ -150,12 +180,17 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	resp, err := mc.client.Post(
+	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/api/worker/job-failed", mc.baseURL),
-		"application/json",
-		bytes.NewReader(body),
-	)
+		bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
 
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	resp, err := mc.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to report job failed: %w", err)
 	}
@@ -180,12 +215,18 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 		return
 	}
 
-	resp, err := mc.client.Post(
+	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/api/worker/heartbeat", mc.baseURL),
-		"application/json",
-		bytes.NewReader(body),
-	)
+		bytes.NewReader(body))
+	if err != nil {
+		slog.Error("Failed to create heartbeat request", "error", err)
+		return
+	}
 
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	resp, err := mc.client.Do(req)
 	if err != nil {
 		slog.Error("Failed to send heartbeat", "error", err)
 		return
@@ -212,12 +253,18 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 		return
 	}
 
-	resp, err := mc.client.Post(
+	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/api/worker/job-progress", mc.baseURL),
-		"application/json",
-		bytes.NewReader(body),
-	)
+		bytes.NewReader(body))
+	if err != nil {
+		slog.Error("Failed to create job progress request", "error", err)
+		return
+	}
 
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	resp, err := mc.client.Do(req)
 	if err != nil {
 		slog.Error("Failed to send job progress", "error", err)
 		return
@@ -295,6 +342,9 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 	if startOffset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startOffset))
 	}
+
+	// Add authentication header
+	mc.addAuthHeader(req)
 
 	// Create a client with download timeout
 	client := &http.Client{Timeout: mc.downloadTimeout}
@@ -545,6 +595,9 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 	}
 
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	
+	// Add authentication header
+	mc.addAuthHeader(req)
 
 	// Create a client with upload timeout
 	client := &http.Client{Timeout: mc.uploadTimeout}

@@ -176,18 +176,27 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 			outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
 		}
 
+		// Calculate source file checksum for integrity validation
+		sourceChecksum, err := computeFileHash(fullPath)
+		if err != nil {
+			slog.Warn("Failed to compute source checksum", "path", fullPath, "error", err)
+			// Continue without checksum - it will be empty string
+			sourceChecksum = ""
+		}
+
 		job := &models.Job{
-			ID:         generateJobID(fullPath),
-			SourcePath: fullPath,
-			OutputPath: outputPath,
-			Status:     "pending",
-			CreatedAt:  time.Now(),
-			RetryCount: 0,
-			MaxRetries: 3,
+			ID:             generateJobID(fullPath),
+			SourcePath:     fullPath,
+			OutputPath:     outputPath,
+			Status:         "pending",
+			CreatedAt:      time.Now(),
+			RetryCount:     0,
+			MaxRetries:     3,
+			SourceChecksum: sourceChecksum,
 		}
 
 		*jobs = append(*jobs, job)
-		slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize)
+		slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
 	}
 
 	return nil
