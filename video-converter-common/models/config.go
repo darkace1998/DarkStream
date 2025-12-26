@@ -64,13 +64,16 @@ type MasterConfig struct {
 // WorkerConfig holds the configuration for worker processes.
 type WorkerConfig struct {
 	Worker struct {
-		ID                string        `yaml:"id"`
-		Concurrency       int           `yaml:"concurrency"`
-		MasterURL         string        `yaml:"master_url"`
-		APIKey            string        `yaml:"api_key"` // API key for authenticating with master
-		HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
-		JobCheckInterval  time.Duration `yaml:"job_check_interval"`
-		JobTimeout        time.Duration `yaml:"job_timeout"`
+		ID                   string        `yaml:"id"`
+		Concurrency          int           `yaml:"concurrency"`
+		MasterURL            string        `yaml:"master_url"`
+		APIKey               string        `yaml:"api_key"` // API key for authenticating with master
+		HeartbeatInterval    time.Duration `yaml:"heartbeat_interval"`
+		JobCheckInterval     time.Duration `yaml:"job_check_interval"`
+		JobTimeout           time.Duration `yaml:"job_timeout"`
+		MaxAPIRequestsPerMin int           `yaml:"max_api_requests_per_min"` // Rate limit for API calls (0 = unlimited)
+		MaxBackoffInterval   time.Duration `yaml:"max_backoff_interval"`     // Maximum backoff when no jobs available
+		InitialBackoffInterval time.Duration `yaml:"initial_backoff_interval"` // Initial backoff when no jobs available
 	} `yaml:"worker"`
 
 	Storage struct {
