@@ -639,3 +639,345 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 
 	return nil
 }
+
+// ProgressCallback is a function type for reporting progress
+type ProgressCallback func(bytesTransferred, totalBytes int64)
+
+// ProgressReader wraps an io.Reader and reports progress via a callback
+type ProgressReader struct {
+	reader            io.Reader
+	totalBytes        int64
+	bytesTransferred  int64
+	callback          ProgressCallback
+	lastReportTime    time.Time
+	reportInterval    time.Duration
+	mu                sync.Mutex
+}
+
+// NewProgressReader creates a new ProgressReader with progress reporting
+func NewProgressReader(reader io.Reader, totalBytes int64, callback ProgressCallback) *ProgressReader {
+	return &ProgressReader{
+		reader:         reader,
+		totalBytes:     totalBytes,
+		callback:       callback,
+		lastReportTime: time.Now(),
+		reportInterval: 1 * time.Second, // Report progress every second
+	}
+}
+
+// Read implements io.Reader with progress tracking
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	
+	pr.mu.Lock()
+	pr.bytesTransferred += int64(n)
+	
+	// Report progress at intervals to avoid excessive callbacks
+	now := time.Now()
+	if now.Sub(pr.lastReportTime) >= pr.reportInterval || err == io.EOF {
+		if pr.callback != nil {
+			pr.callback(pr.bytesTransferred, pr.totalBytes)
+		}
+		pr.lastReportTime = now
+	}
+	pr.mu.Unlock()
+	
+	return n, err
+}
+
+// DownloadSourceVideoWithProgress downloads the source video file from the master with progress tracking
+func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string, progressCallback ProgressCallback) error {
+	// Retry logic with exponential backoff
+	maxRetries := 3
+	baseDelay := 2 * time.Second
+
+	for attempt := range make([]struct{}, maxRetries) {
+		if attempt > 0 {
+			// Safe bit shift with bounded attempt value (0-2 range)
+			shiftAmount := attempt - 1
+			delay := baseDelay * time.Duration(1<<shiftAmount)
+			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			time.Sleep(delay)
+		}
+
+		err := mc.downloadSourceVideoAttemptWithProgress(jobID, outputPath, progressCallback)
+		if err == nil {
+			return nil
+		}
+
+		slog.Error("Download attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		if attempt == maxRetries-1 {
+			return fmt.Errorf("failed to download video after %d attempts: %w", maxRetries, err)
+		}
+	}
+
+	return errors.New("unexpected error: failed to download video after retries")
+}
+
+// downloadSourceVideoAttemptWithProgress performs a single download attempt with progress tracking
+func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath string, progressCallback ProgressCallback) error {
+	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
+
+	// Create output directory
+	outputDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Check for existing partial download to resume
+	var startOffset int64
+	if mc.enableResumeDownload {
+		if info, err := os.Stat(outputPath); err == nil {
+			startOffset = info.Size()
+			slog.Info("Found partial download, attempting resume", "job_id", jobID, "offset", startOffset)
+		}
+	}
+
+	// Create HTTP request with Range header for resume
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	if startOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startOffset))
+	}
+
+	// Add authentication header
+	mc.addAuthHeader(req)
+
+	// Create a client with download timeout
+	client := &http.Client{Timeout: mc.downloadTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to request video download: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+	}()
+
+	// Handle response status
+	var totalContentLength int64
+	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
+		// Resume successful
+		totalContentLength = startOffset + resp.ContentLength
+		slog.Info("Resuming download", "job_id", jobID, "offset", startOffset, "remaining", resp.ContentLength)
+	} else if resp.StatusCode == http.StatusOK {
+		// Full download (or resume not supported)
+		totalContentLength = resp.ContentLength
+		startOffset = 0
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Validate Content-Length header
+	if totalContentLength <= 0 {
+		return fmt.Errorf("Content-Length header missing or invalid")
+	}
+
+	// Open/create output file
+	var outFile *os.File
+	if startOffset > 0 {
+		// Append mode for resume
+		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
+		outFile, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	} else {
+		// Create new file
+		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
+		outFile, err = os.Create(outputPath)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to open output file: %w", err)
+	}
+	defer func() {
+		if cerr := outFile.Close(); cerr != nil {
+			slog.Warn("Failed to close output file", "path", outputPath, "error", cerr)
+		}
+	}()
+
+	// Create reader with optional bandwidth throttling and progress tracking
+	var reader io.Reader = resp.Body
+	if mc.bandwidthLimit > 0 {
+		reader = NewThrottledReader(reader, mc.bandwidthLimit)
+	}
+	if progressCallback != nil {
+		// Wrap with progress reader, adjusting for already-transferred bytes
+		progressReader := NewProgressReader(reader, totalContentLength, func(bytesTransferred, totalBytes int64) {
+			// Add startOffset to bytesTransferred since we're resuming
+			progressCallback(startOffset+bytesTransferred, totalBytes)
+		})
+		reader = progressReader
+	}
+
+	// Stream file to disk
+	bytesWritten, err := io.Copy(outFile, reader)
+	if err != nil {
+		// Don't clean up partial download if resume is enabled
+		if !mc.enableResumeDownload {
+			if rerr := os.Remove(outputPath); rerr != nil {
+				slog.Warn("Failed to remove partial download", "path", outputPath, "error", rerr)
+			}
+		}
+		return fmt.Errorf("failed to write video file: %w", err)
+	}
+
+	// Validate total file size
+	finalSize := startOffset + bytesWritten
+	if finalSize != totalContentLength {
+		if !mc.enableResumeDownload {
+			if rerr := os.Remove(outputPath); rerr != nil {
+				slog.Warn("Failed to remove invalid download", "path", outputPath, "error", rerr)
+			}
+		}
+		return fmt.Errorf("file size mismatch: expected %d, got %d", totalContentLength, finalSize)
+	}
+
+	slog.Info("Video downloaded successfully", "job_id", jobID, "size", finalSize, "resumed", startOffset > 0)
+	return nil
+}
+
+// UploadConvertedVideoWithProgress uploads the converted video file to the master with progress tracking
+func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string, progressCallback ProgressCallback) error {
+	// Retry logic with exponential backoff
+	maxRetries := 3
+	baseDelay := 2 * time.Second
+
+	for attempt := range make([]struct{}, maxRetries) {
+		if attempt > 0 {
+			// Safe bit shift with bounded attempt value (0-2 range)
+			shiftAmount := attempt - 1
+			delay := baseDelay * time.Duration(1<<shiftAmount)
+			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			time.Sleep(delay)
+		}
+
+		err := mc.uploadConvertedVideoAttemptWithProgress(jobID, filePath, progressCallback)
+		if err == nil {
+			return nil
+		}
+
+		slog.Error("Upload attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		if attempt == maxRetries-1 {
+			return fmt.Errorf("failed to upload video after %d attempts: %w", maxRetries, err)
+		}
+	}
+
+	return errors.New("unexpected error: failed to upload video after retries")
+}
+
+// uploadConvertedVideoAttemptWithProgress performs a single upload attempt with progress tracking
+func (mc *MasterClient) uploadConvertedVideoAttemptWithProgress(jobID, filePath string, progressCallback ProgressCallback) error {
+	// Open the file
+	// filePath is derived from job metadata, not untrusted user input
+	// #nosec G304: filePath comes from job metadata
+	//nolint:gosec // G304: filePath comes from job metadata
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open video file: %w", err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			slog.Warn("Failed to close video file", "path", filePath, "error", cerr)
+		}
+	}()
+
+	// Get file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat video file: %w", err)
+	}
+	fileSize := fileInfo.Size()
+
+	// Create multipart form
+	pipeReader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+
+	// Start goroutine to write multipart data
+	errChan := make(chan error, 1)
+	go func() {
+		defer func() {
+			if cerr := multipartWriter.Close(); cerr != nil {
+				slog.Warn("Failed to close multipart writer", "error", cerr)
+			}
+		}()
+		defer func() {
+			if cerr := pipeWriter.Close(); cerr != nil {
+				slog.Warn("Failed to close pipe writer", "error", cerr)
+			}
+		}()
+
+		part, err := multipartWriter.CreateFormFile("video", filepath.Base(filePath))
+		if err != nil {
+			errChan <- fmt.Errorf("failed to create form file: %w", err)
+			return
+		}
+
+		// Wrap file reader with progress tracking
+		var reader io.Reader = file
+		if progressCallback != nil {
+			reader = NewProgressReader(file, fileSize, progressCallback)
+		}
+
+		if _, err := io.Copy(part, reader); err != nil {
+			errChan <- fmt.Errorf("failed to copy file to multipart: %w", err)
+			return
+		}
+
+		errChan <- nil
+	}()
+
+	// Create HTTP request
+	url := fmt.Sprintf("%s/api/worker/upload-video?job_id=%s", mc.baseURL, jobID)
+	req, err := http.NewRequest(http.MethodPost, url, pipeReader)
+	if err != nil {
+		return fmt.Errorf("failed to create upload request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	
+	// Add authentication header
+	mc.addAuthHeader(req)
+
+	// Create a client with upload timeout
+	client := &http.Client{Timeout: mc.uploadTimeout}
+
+	// Send request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to upload video: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+	}()
+
+	// Check for errors from multipart writer goroutine
+	if err := <-errChan; err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var uploadResp struct {
+		FileSize int64  `json:"file_size"`
+		Status   string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
+		return fmt.Errorf("failed to decode upload response: %w", err)
+	}
+
+	slog.Info("Video uploaded successfully",
+		"job_id", jobID,
+		"size", uploadResp.FileSize,
+		"expected_size", fileSize)
+
+	return nil
+}

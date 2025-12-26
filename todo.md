@@ -98,9 +98,14 @@ DarkStream is a distributed video converter system built with Go that:
 ## 🚀 Medium Priority TODOs
 
 ### Performance Optimizations
-- [ ] **Add chunked/streaming file transfer**
+- [x] **Add chunked/streaming file transfer**
   - Implement progress tracking for large files
   - Resume interrupted downloads/uploads
+  - Implemented `ProgressReader` for tracking file transfer progress
+  - Added `DownloadSourceVideoWithProgress()` and `UploadConvertedVideoWithProgress()` methods
+  - Progress callback interface allows reporting bytes transferred
+  - Download resume support already implemented (via Range headers)
+  - Bandwidth throttling already implemented via `ThrottledReader`
   - Location: `video-converter-worker/internal/client/master_client.go`
 
 - [ ] **Implement parallel job processing**
@@ -313,7 +318,7 @@ DarkStream/
 - [ ] Real-time progress tracking
 
 ### v1.3 - Performance Release
-- [ ] Chunked file transfer
+- [x] Chunked file transfer
 - [ ] Job priority system
 - [ ] Parallel processing improvements
 
