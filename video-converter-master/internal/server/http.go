@@ -539,6 +539,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate source path to prevent path traversal attacks
+	// This is defense-in-depth: paths are validated during job creation,
+	// but we re-validate here to protect against database tampering
 	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file",
@@ -552,13 +554,18 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// Open the source file using the validated path
 	file, err := os.Open(validatedPath)
 	if err != nil {
-		slog.Error("Failed to open source file", "path", job.SourcePath, "error", err)
+		// Log both paths for debugging: database value and validated path
+		slog.Error("Failed to open source file",
+			"job_id", jobID,
+			"db_path", job.SourcePath,
+			"validated_path", validatedPath,
+			"error", err)
 		http.Error(w, "Source file not found", http.StatusNotFound)
 		return
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			slog.Warn("Failed to close source file", "path", job.SourcePath, "error", cerr)
+			slog.Warn("Failed to close source file", "path", validatedPath, "error", cerr)
 		}
 	}()
 
@@ -682,6 +689,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate output path to prevent path traversal attacks
+	// This is defense-in-depth: paths are validated during job creation,
+	// but we re-validate here to protect against database tampering
 	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
 	if err != nil {
 		slog.Error("Path validation failed for output file",
@@ -692,8 +701,18 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use validated path for all file operations (don't modify job structure)
+	// Use validated path for all file operations
 	outputPath := validatedPath
+	
+	// If validated path differs from database path, update the job
+	// This can happen if path normalization occurred (e.g., /path//file -> /path/file)
+	if outputPath != job.OutputPath {
+		slog.Info("Output path normalized during validation",
+			"job_id", jobID,
+			"original", job.OutputPath,
+			"validated", outputPath)
+		job.OutputPath = outputPath
+	}
 
 	// Parse multipart form (32MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {

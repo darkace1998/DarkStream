@@ -90,6 +90,7 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	// Early detection: Check for explicit ".." components in the original input
 	// This catches obvious path traversal attempts before processing
 	// Note: This is defense in depth - the final validation is done after cleaning
+	// URL encoding is not a concern here as these are file system paths, not URLs
 	pathComponents := strings.Split(filepath.ToSlash(targetPath), "/")
 	for _, component := range pathComponents {
 		if component == ".." {
