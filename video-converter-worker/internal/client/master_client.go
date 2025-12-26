@@ -811,7 +811,8 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 	}
 	if progressCallback != nil {
 		// Wrap with progress reader
-		// Pass resp.ContentLength (remaining bytes) to ProgressReader, not totalContentLength
+		// ProgressReader tracks remaining bytes (resp.ContentLength)
+		// The callback then adds startOffset to report total file progress
 		progressReader := NewProgressReader(reader, resp.ContentLength, func(bytesTransferred, totalBytes int64) {
 			// Report total progress including already-downloaded bytes
 			progressCallback(startOffset+bytesTransferred, totalContentLength)
