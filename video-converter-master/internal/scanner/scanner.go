@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // ScanOptions configures scanner behavior
@@ -178,13 +179,16 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 
 		// Validate paths before creating job
 		// This ensures no path traversal issues even if directory structure is compromised
-		if !isPathWithinBase(s.RootPath, fullPath) {
-			slog.Warn("Source path is outside root directory, skipping", "root", s.RootPath, "path", fullPath)
+		// Use utils for consistent validation across the codebase
+		if _, err := utils.ValidatePathWithinBase(s.RootPath, fullPath); err != nil {
+			slog.Warn("Source path validation failed, skipping", "root", s.RootPath, "path", fullPath, "error", err)
 			continue
 		}
-		if !s.Options.ReplaceSource && !isPathWithinBase(s.OutputBase, outputPath) {
-			slog.Warn("Output path is outside output directory, skipping", "output_base", s.OutputBase, "path", outputPath)
-			continue
+		if !s.Options.ReplaceSource {
+			if _, err := utils.ValidatePathWithinBase(s.OutputBase, outputPath); err != nil {
+				slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
+				continue
+			}
 		}
 
 		// Calculate source file checksum for integrity validation
@@ -248,32 +252,4 @@ func generateJobID(path string) string {
 	// Use SHA256 hash of the path to create a stable, unique ID
 	hash := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(hash[:])[:16]
-}
-
-// isPathWithinBase checks if a path is within a base directory
-// This is a simple check for scanner validation - for security-critical
-// operations, use utils.ValidatePathWithinBase instead
-func isPathWithinBase(basePath, targetPath string) bool {
-	// Convert to absolute paths
-	absBase, err := filepath.Abs(basePath)
-	if err != nil {
-		return false
-	}
-	absTarget, err := filepath.Abs(targetPath)
-	if err != nil {
-		return false
-	}
-
-	// Clean paths
-	absBase = filepath.Clean(absBase)
-	absTarget = filepath.Clean(absTarget)
-
-	// Check if target starts with base
-	relPath, err := filepath.Rel(absBase, absTarget)
-	if err != nil {
-		return false
-	}
-
-	// If relative path starts with "..", target is outside base
-	return !strings.HasPrefix(relPath, "..")
 }

@@ -692,8 +692,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update job with validated path for consistency
-	job.OutputPath = validatedPath
+	// Use validated path for all file operations (don't modify job structure)
+	outputPath := validatedPath
 
 	// Parse multipart form (32MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -714,7 +714,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Create output directory if needed
-	outputDir := filepath.Dir(job.OutputPath)
+	outputDir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
 		http.Error(w, "Failed to create output directory", http.StatusInternalServerError)
@@ -723,7 +723,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Create a temporary file first to ensure atomic write
 	// Use the same extension as the output file
-	ext := filepath.Ext(job.OutputPath)
+	ext := filepath.Ext(outputPath)
 	tempFile, err := os.CreateTemp(outputDir, ".upload-*"+ext+".tmp")
 	if err != nil {
 		slog.Error("Failed to create temp file", "error", err)
@@ -759,16 +759,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomically rename temp file to final location first
-	if err := os.Rename(tempPath, job.OutputPath); err != nil {
-		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", job.OutputPath, "error", err)
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", outputPath, "error", err)
 		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
 	}
 
 	// Calculate output file checksum for integrity validation
-	outputChecksum, err := utils.CalculateFileSHA256(job.OutputPath)
+	outputChecksum, err := utils.CalculateFileSHA256(outputPath)
 	if err != nil {
-		slog.Error("Failed to calculate output checksum", "path", job.OutputPath, "error", err)
+		slog.Error("Failed to calculate output checksum", "path", outputPath, "error", err)
 		// Don't fail the upload if checksum calculation fails - log and continue
 		outputChecksum = ""
 	}

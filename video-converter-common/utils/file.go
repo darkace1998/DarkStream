@@ -87,9 +87,9 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	// Clean the target path to resolve .., ., and duplicate separators
 	absTarget = filepath.Clean(absTarget)
 
-	// Check for suspicious patterns that might indicate traversal attempts
-	// Look for ".." as a path component, not just in the string
-	// Split by separator and check each component
+	// Early detection: Check for explicit ".." components in the original input
+	// This catches obvious path traversal attempts before processing
+	// Note: This is defense in depth - the final validation is done after cleaning
 	pathComponents := strings.Split(filepath.ToSlash(targetPath), "/")
 	for _, component := range pathComponents {
 		if component == ".." {
@@ -97,8 +97,8 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 		}
 	}
 
-	// Ensure the resolved path is within the base directory
-	// Use filepath.Rel to check if target is within base
+	// Authoritative validation: Ensure the cleaned, resolved path is within the base directory
+	// Use filepath.Rel to check if target is within base after all path manipulation
 	relPath, err := filepath.Rel(absBase, absTarget)
 	if err != nil {
 		return "", fmt.Errorf("failed to compute relative path: %w", err)
