@@ -84,10 +84,14 @@ DarkStream is a distributed video converter system built with Go that:
   - Improved logging to include timeout duration in stale job warnings
   - Location: `video-converter-common/models/config.go`, `video-converter-master/internal/coordinator/coordinator.go`
 
-- [ ] **Add worker deregistration**
+- [x] **Add worker deregistration**
   - Mark workers as offline when they stop sending heartbeats
   - Reassign jobs from dead workers
-  - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/coordinator/coordinator.go`
+  - Added `status` field to workers table with migration support
+  - Implemented `MarkWorkerOffline()` database method
+  - Updated `monitorWorkerHealth()` to mark offline workers in database
+  - Updated worker to send `WorkerStatusOnline` in heartbeats
+  - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/coordinator/coordinator.go`, `video-converter-worker/internal/worker/worker.go`, `video-converter-common/constants/constants.go`
 
 ---
 

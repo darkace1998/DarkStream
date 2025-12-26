@@ -114,7 +114,8 @@ func (t *Tracker) initSchema() error {
 		active_jobs INTEGER DEFAULT 0,
 		gpu_name TEXT,
 		cpu_usage REAL,
-		memory_usage REAL
+		memory_usage REAL,
+		status TEXT DEFAULT 'online'
 	);
 
 	CREATE TABLE IF NOT EXISTS job_progress (
@@ -141,6 +142,11 @@ func (t *Tracker) initSchema() error {
 	// Add checksum columns if they don't exist (migration)
 	if err := t.migrateChecksumColumns(); err != nil {
 		return fmt.Errorf("failed to migrate checksum columns: %w", err)
+	}
+	
+	// Add worker status column if it doesn't exist (migration)
+	if err := t.migrateWorkerStatusColumn(); err != nil {
+		return fmt.Errorf("failed to migrate worker status column: %w", err)
 	}
 	
 	return nil
@@ -178,6 +184,28 @@ func (t *Tracker) migrateChecksumColumns() error {
 		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN output_checksum TEXT`)
 		if err != nil {
 			return fmt.Errorf("failed to add output_checksum column: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migrateWorkerStatusColumn adds status column to workers table if it doesn't exist
+func (t *Tracker) migrateWorkerStatusColumn() error {
+	// Check if status column exists in workers table
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('workers') WHERE name='status'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for status column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding status column to workers table")
+		_, err := t.db.Exec(`ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'online'`)
+		if err != nil {
+			return fmt.Errorf("failed to add status column: %w", err)
 		}
 	}
 
@@ -300,15 +328,16 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 	_, err := t.db.Exec(`
 		INSERT INTO workers (
 			id, hostname, last_heartbeat, vulkan_available,
-			active_jobs, gpu_name, cpu_usage, memory_usage
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			active_jobs, gpu_name, cpu_usage, memory_usage, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			last_heartbeat = excluded.last_heartbeat,
 			active_jobs = excluded.active_jobs,
 			cpu_usage = excluded.cpu_usage,
-			memory_usage = excluded.memory_usage
+			memory_usage = excluded.memory_usage,
+			status = excluded.status
 	`, hb.WorkerID, hb.Hostname, hb.Timestamp, hb.VulkanAvailable,
-		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage)
+		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage, hb.Status)
 	if err != nil {
 		return fmt.Errorf("failed to upsert worker heartbeat: %w", err)
 	}
@@ -354,7 +383,8 @@ func (t *Tracker) GetJobStats() (map[string]any, error) {
 func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	rows, err := t.db.Query(`
 		SELECT id, hostname, last_heartbeat, vulkan_available,
-			active_jobs, gpu_name, cpu_usage, memory_usage
+			active_jobs, gpu_name, cpu_usage, memory_usage,
+			COALESCE(status, 'online') as status
 		FROM workers
 		ORDER BY last_heartbeat DESC
 	`)
@@ -373,7 +403,7 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 		var lastHeartbeat sql.NullTime
 		if err := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
-			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage,
+			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
 		); err != nil {
 			slog.Warn("Failed to scan worker row", "error", err)
 			continue
@@ -619,7 +649,8 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.WorkerHeartbeat, error) {
 	query := `
 		SELECT id, hostname, last_heartbeat, vulkan_available,
-			active_jobs, gpu_name, cpu_usage, memory_usage
+			active_jobs, gpu_name, cpu_usage, memory_usage,
+			COALESCE(status, 'online') as status
 		FROM workers
 		WHERE last_heartbeat >= datetime('now', '-' || ? || ' seconds')
 		ORDER BY last_heartbeat DESC
@@ -641,7 +672,7 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 		var lastHeartbeat sql.NullTime
 		if err := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
-			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage,
+			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
 		); err != nil {
 			slog.Warn("Failed to scan worker row", "error", err)
 			continue
@@ -657,6 +688,19 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	}
 
 	return workers, nil
+}
+
+// MarkWorkerOffline marks a worker as offline in the database
+func (t *Tracker) MarkWorkerOffline(workerID string) error {
+	_, err := t.db.Exec(`
+		UPDATE workers
+		SET status = 'offline'
+		WHERE id = ?
+	`, workerID)
+	if err != nil {
+		return fmt.Errorf("failed to mark worker offline: %w", err)
+	}
+	return nil
 }
 
 // GetWorkerStats returns aggregated statistics for workers

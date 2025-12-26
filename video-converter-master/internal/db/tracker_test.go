@@ -1091,3 +1091,112 @@ func TestNewUsesDefaultPoolConfig(t *testing.T) {
 		t.Fatalf("Failed to create job with default pooled connection: %v", err)
 	}
 }
+
+func TestMarkWorkerOffline(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	// Create a worker heartbeat
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        "worker-1",
+		Hostname:        "test-host",
+		VulkanAvailable: true,
+		ActiveJobs:      2,
+		Status:          "online",
+		Timestamp:       time.Now(),
+		GPU:             "Test GPU",
+		CPUUsage:        0.5,
+		MemoryUsage:     0.6,
+	}
+
+	// Insert worker
+	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+		t.Fatalf("Failed to update worker heartbeat: %v", err)
+	}
+
+	// Get worker and verify status is online
+	workers, err := tracker.GetWorkers()
+	if err != nil {
+		t.Fatalf("Failed to get workers: %v", err)
+	}
+	if len(workers) != 1 {
+		t.Fatalf("Expected 1 worker, got %d", len(workers))
+	}
+	if workers[0].Status != "online" {
+		t.Errorf("Expected status 'online', got '%s'", workers[0].Status)
+	}
+
+	// Mark worker as offline
+	if err := tracker.MarkWorkerOffline("worker-1"); err != nil {
+		t.Fatalf("Failed to mark worker offline: %v", err)
+	}
+
+	// Get worker again and verify status is offline
+	workers, err = tracker.GetWorkers()
+	if err != nil {
+		t.Fatalf("Failed to get workers after marking offline: %v", err)
+	}
+	if len(workers) != 1 {
+		t.Fatalf("Expected 1 worker, got %d", len(workers))
+	}
+	if workers[0].Status != "offline" {
+		t.Errorf("Expected status 'offline', got '%s'", workers[0].Status)
+	}
+}
+
+func TestWorkerStatusMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		if err := tracker.Close(); err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	// Create a worker heartbeat
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        "worker-migration-test",
+		Hostname:        "test-host",
+		VulkanAvailable: false,
+		ActiveJobs:      0,
+		Status:          "online",
+		Timestamp:       time.Now(),
+		GPU:             "",
+		CPUUsage:        0.0,
+		MemoryUsage:     0.0,
+	}
+
+	// Insert worker
+	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+		t.Fatalf("Failed to update worker heartbeat: %v", err)
+	}
+
+	// Get workers and verify status field exists and has default value
+	workers, err := tracker.GetWorkers()
+	if err != nil {
+		t.Fatalf("Failed to get workers: %v", err)
+	}
+	if len(workers) == 0 {
+		t.Fatal("Expected at least 1 worker")
+	}
+
+	// Verify status field is populated
+	if workers[0].Status == "" {
+		t.Error("Expected status field to be populated")
+	}
+}
