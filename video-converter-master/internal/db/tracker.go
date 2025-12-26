@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 	// SQLite driver for database/sql
@@ -16,11 +17,59 @@ type Tracker struct {
 	db *sql.DB
 }
 
-// New creates a new database tracker instance
+// ConnectionPoolConfig holds configuration for database connection pooling
+type ConnectionPoolConfig struct {
+	MaxOpenConnections int           // Maximum number of open connections to the database
+	MaxIdleConnections int           // Maximum number of idle connections in the pool
+	ConnMaxLifetime    time.Duration // Maximum lifetime of a connection (0 = unlimited)
+	ConnMaxIdleTime    time.Duration // Maximum idle time of a connection (0 = unlimited)
+}
+
+// DefaultConnectionPoolConfig returns default connection pool configuration
+func DefaultConnectionPoolConfig() ConnectionPoolConfig {
+	return ConnectionPoolConfig{
+		MaxOpenConnections: 25,                 // SQLite typically works well with 25 connections
+		MaxIdleConnections: 5,                  // Keep 5 idle connections ready
+		ConnMaxLifetime:    time.Hour,          // Recycle connections after 1 hour
+		ConnMaxIdleTime:    10 * time.Minute,   // Close idle connections after 10 minutes
+	}
+}
+
+// New creates a new database tracker instance with default connection pool configuration
 func New(dbPath string) (*Tracker, error) {
+	return NewWithConfig(dbPath, DefaultConnectionPoolConfig())
+}
+
+// NewWithConfig creates a new database tracker instance with custom connection pool configuration
+func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, error) {
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Configure connection pool
+	if poolConfig.MaxOpenConnections > 0 {
+		db.SetMaxOpenConns(poolConfig.MaxOpenConnections)
+		slog.Info("Database connection pool configured",
+			"max_open_connections", poolConfig.MaxOpenConnections)
+	}
+	
+	if poolConfig.MaxIdleConnections > 0 {
+		db.SetMaxIdleConns(poolConfig.MaxIdleConnections)
+		slog.Info("Database idle connections configured",
+			"max_idle_connections", poolConfig.MaxIdleConnections)
+	}
+	
+	if poolConfig.ConnMaxLifetime > 0 {
+		db.SetConnMaxLifetime(poolConfig.ConnMaxLifetime)
+		slog.Info("Database connection max lifetime configured",
+			"conn_max_lifetime", poolConfig.ConnMaxLifetime)
+	}
+	
+	if poolConfig.ConnMaxIdleTime > 0 {
+		db.SetConnMaxIdleTime(poolConfig.ConnMaxIdleTime)
+		slog.Info("Database connection max idle time configured",
+			"conn_max_idle_time", poolConfig.ConnMaxIdleTime)
 	}
 
 	if err := db.Ping(); err != nil {
