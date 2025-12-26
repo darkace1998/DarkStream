@@ -24,8 +24,9 @@ type ConversionSettings struct {
 // MasterConfig holds the configuration for the master coordinator service.
 type MasterConfig struct {
 	Server struct {
-		Port int    `yaml:"port"`
-		Host string `yaml:"host"`
+		Port   int    `yaml:"port"`
+		Host   string `yaml:"host"`
+		APIKey string `yaml:"api_key"` // API key for worker authentication
 	} `yaml:"server"`
 
 	Scanner struct {
@@ -56,6 +57,7 @@ type WorkerConfig struct {
 		ID                string        `yaml:"id"`
 		Concurrency       int           `yaml:"concurrency"`
 		MasterURL         string        `yaml:"master_url"`
+		APIKey            string        `yaml:"api_key"` // API key for authenticating with master
 		HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 		JobCheckInterval  time.Duration `yaml:"job_check_interval"`
 		JobTimeout        time.Duration `yaml:"job_timeout"`

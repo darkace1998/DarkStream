@@ -36,16 +36,17 @@ DarkStream is a distributed video converter system built with Go that:
 ## 🔧 High Priority TODOs
 
 ### Security Enhancements
-- [ ] **Add authentication for worker-to-master communication**
-  - Implement JWT or API key-based authentication
-  - Add `Authorization` header validation in master endpoints
-  - Store worker credentials securely
-  - Location: `video-converter-master/internal/server/handlers.go`, `video-converter-worker/internal/client/master_client.go`
+- [x] **Add authentication for worker-to-master communication**
+  - Implemented API key-based authentication
+  - Added `Authorization` header validation in master endpoints
+  - Updated worker client to send authentication credentials
+  - Location: `video-converter-master/internal/server/http.go`, `video-converter-worker/internal/client/master_client.go`
 
-- [ ] **Add file checksum validation**
-  - Implement MD5/SHA256 checksums for video uploads/downloads
-  - Validate file integrity after transfer
-  - Location: `video-converter-master/internal/server/handlers.go`
+- [x] **Add file checksum validation**
+  - Implemented SHA256 checksums for video uploads/downloads
+  - Added checksum validation after file transfer
+  - Added checksum fields to Job model and database
+  - Location: `video-converter-common/utils/checksum.go`, `video-converter-master/internal/server/http.go`, `video-converter-worker/internal/worker/worker.go`
 
 - [ ] **Secure file path handling**
   - Add path traversal prevention

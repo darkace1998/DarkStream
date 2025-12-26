@@ -52,7 +52,9 @@ func (t *Tracker) initSchema() error {
 		max_retries INTEGER DEFAULT 3,
 		source_duration REAL,
 		output_size INTEGER,
-		created_at TIMESTAMP NOT NULL
+		created_at TIMESTAMP NOT NULL,
+		source_checksum TEXT,
+		output_checksum TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS workers (
@@ -86,6 +88,50 @@ func (t *Tracker) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
+	
+	// Add checksum columns if they don't exist (migration)
+	if err := t.migrateChecksumColumns(); err != nil {
+		return fmt.Errorf("failed to migrate checksum columns: %w", err)
+	}
+	
+	return nil
+}
+
+// migrateChecksumColumns adds checksum columns if they don't exist
+func (t *Tracker) migrateChecksumColumns() error {
+	// Check if source_checksum column exists
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='source_checksum'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for source_checksum column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding source_checksum column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN source_checksum TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add source_checksum column: %w", err)
+		}
+	}
+
+	// Check if output_checksum column exists
+	err = t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='output_checksum'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for output_checksum column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding output_checksum column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN output_checksum TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add output_checksum column: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -95,10 +141,10 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 	result, err := t.db.Exec(`
 		INSERT OR IGNORE INTO jobs (
 			id, source_path, output_path, status, retry_count,
-			max_retries, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+			max_retries, created_at, source_checksum
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.SourcePath, job.OutputPath, job.Status,
-		job.RetryCount, job.MaxRetries, job.CreatedAt)
+		job.RetryCount, job.MaxRetries, job.CreatedAt, job.SourceChecksum)
 	if err != nil {
 		return fmt.Errorf("failed to execute insert: %w", err)
 	}
@@ -126,12 +172,14 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-		COALESCE(source_duration, 0), COALESCE(output_size, 0)
+		COALESCE(source_duration, 0), COALESCE(output_size, 0),
+		COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 	FROM jobs WHERE id = ?
 `, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
-		&job.SourceDuration, &job.OutputSize)
+		&job.SourceDuration, &job.OutputSize,
+		&job.SourceChecksum, &job.OutputChecksum)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan job row: %w", err)
@@ -156,13 +204,15 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs WHERE status = 'pending'
 		ORDER BY created_at ASC LIMIT 1
 	`).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
-		&job.SourceDuration, &job.OutputSize)
+		&job.SourceDuration, &job.OutputSize,
+		&job.SourceChecksum, &job.OutputChecksum)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan job row: %w", err)
@@ -184,11 +234,12 @@ func (t *Tracker) UpdateJob(job *models.Job) error {
 		UPDATE jobs SET
 			status = ?, worker_id = ?, started_at = ?,
 			completed_at = ?, error_message = ?, retry_count = ?,
-			source_duration = ?, output_size = ?
+			source_duration = ?, output_size = ?,
+			source_checksum = ?, output_checksum = ?
 		WHERE id = ?
 	`, job.Status, job.WorkerID, job.StartedAt, job.CompletedAt,
 		job.ErrorMessage, job.RetryCount, job.SourceDuration,
-		job.OutputSize, job.ID)
+		job.OutputSize, job.SourceChecksum, job.OutputChecksum, job.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update job: %w", err)
 	}
@@ -302,7 +353,8 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs WHERE status = ?
 		ORDER BY created_at DESC
 	`
@@ -330,6 +382,7 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
 		); err != nil {
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
@@ -363,7 +416,8 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs
 		WHERE created_at BETWEEN ? AND ?
 		ORDER BY created_at DESC
@@ -392,6 +446,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
 		); err != nil {
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
@@ -628,7 +683,8 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs
 		WHERE status = 'processing'
 		AND started_at IS NOT NULL
@@ -655,6 +711,7 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
 		); err != nil {
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
@@ -683,7 +740,8 @@ func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs
 		WHERE status = 'failed'
 		AND retry_count < max_retries
@@ -709,6 +767,7 @@ func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
 		); err != nil {
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
@@ -737,7 +796,8 @@ func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 		SELECT id, source_path, output_path, status, created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-			COALESCE(source_duration, 0), COALESCE(output_size, 0)
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs
 		WHERE worker_id = ? AND status = 'processing'
 		ORDER BY started_at ASC
@@ -762,6 +822,7 @@ func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
 		); err != nil {
 			slog.Warn("Failed to scan job row", "error", err)
 			continue

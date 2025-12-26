@@ -3,6 +3,8 @@ package converter
 import (
 	"fmt"
 	"os"
+
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Validator handles validation of converted video files
@@ -41,4 +43,9 @@ func (v *Validator) GetFileSize(path string) (int64, error) {
 		return 0, fmt.Errorf("failed to stat file: %w", err)
 	}
 	return info.Size(), nil
+}
+
+// VerifyChecksum verifies that a file's SHA256 checksum matches the expected value
+func (v *Validator) VerifyChecksum(filePath, expectedChecksum string) (bool, error) {
+	return utils.VerifyFileSHA256(filePath, expectedChecksum)
 }
