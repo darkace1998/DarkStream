@@ -204,6 +204,7 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 			SourcePath:     fullPath,
 			OutputPath:     outputPath,
 			Status:         "pending",
+			Priority:       5, // Default priority (normal)
 			CreatedAt:      time.Now(),
 			RetryCount:     0,
 			MaxRetries:     3,
