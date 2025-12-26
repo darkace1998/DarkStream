@@ -33,6 +33,13 @@ const (
 	DefaultJobCheckSeconds  = 5
 )
 
+// Job priorities
+const (
+	JobPriorityLow    = 0
+	JobPriorityNormal = 5
+	JobPriorityHigh   = 10
+)
+
 // Video codecs
 const (
 	CodecH264 = "h264"

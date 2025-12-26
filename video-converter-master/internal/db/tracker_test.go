@@ -30,6 +30,7 @@ func TestTrackerCreateAndGetJob(t *testing.T) {
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
 		Status:     "pending",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -78,6 +79,7 @@ func TestTrackerUpdateJob(t *testing.T) {
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
 		Status:     "pending",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -189,6 +191,7 @@ func TestGetJobByID(t *testing.T) {
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
 		Status:     "pending",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -245,6 +248,7 @@ func TestGetJobsByStatus(t *testing.T) {
 			SourcePath: "/source/video1.mp4",
 			OutputPath: "/output/video1.mp4",
 			Status:     "pending",
+			Priority:   5,
 			CreatedAt:  time.Now(),
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -254,6 +258,7 @@ func TestGetJobsByStatus(t *testing.T) {
 			SourcePath: "/source/video2.mp4",
 			OutputPath: "/output/video2.mp4",
 			Status:     "pending",
+			Priority:   5,
 			CreatedAt:  time.Now(),
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -263,6 +268,7 @@ func TestGetJobsByStatus(t *testing.T) {
 			SourcePath: "/source/video3.mp4",
 			OutputPath: "/output/video3.mp4",
 			Status:     "completed",
+			Priority:   5,
 			CreatedAt:  time.Now(),
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -321,6 +327,7 @@ func TestGetJobMetrics(t *testing.T) {
 		SourcePath:  "/source/video.mp4",
 		OutputPath:  "/output/video.mp4",
 		Status:      "completed",
+		Priority:   5,
 		CreatedAt:   now.Add(-2 * time.Hour),
 		StartedAt:   &startTime,
 		CompletedAt: &completedTime,
@@ -540,6 +547,7 @@ func TestGetJobHistory(t *testing.T) {
 			SourcePath: "/source/old.mp4",
 			OutputPath: "/output/old.mp4",
 			Status:     "completed",
+			Priority:   5,
 			CreatedAt:  now.Add(-2 * time.Hour),
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -549,6 +557,7 @@ func TestGetJobHistory(t *testing.T) {
 			SourcePath: "/source/recent.mp4",
 			OutputPath: "/output/recent.mp4",
 			Status:     "completed",
+			Priority:   5,
 			CreatedAt:  now.Add(-30 * time.Minute),
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -909,6 +918,7 @@ func TestJobProgress(t *testing.T) {
 		SourcePath: "/source/progress.mp4",
 		OutputPath: "/output/progress.mp4",
 		Status:     "processing",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -1020,6 +1030,7 @@ func TestConnectionPoolConfig(t *testing.T) {
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
 		Status:     "pending",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -1082,6 +1093,7 @@ func TestNewUsesDefaultPoolConfig(t *testing.T) {
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
 		Status:     "pending",
+		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
 		MaxRetries: 3,
@@ -1199,4 +1211,102 @@ func TestWorkerStatusMigration(t *testing.T) {
 	if workers[0].Status == "" {
 		t.Error("Expected status field to be populated")
 	}
+}
+
+// TestJobPriority tests that jobs are retrieved in priority order
+func TestJobPriority(t *testing.T) {
+tmpDir := t.TempDir()
+dbPath := filepath.Join(tmpDir, "test.db")
+
+tracker, err := New(dbPath)
+if err != nil {
+t.Fatalf("Failed to create tracker: %v", err)
+}
+defer func() {
+if err := tracker.Close(); err != nil {
+t.Logf("Failed to close tracker: %v", err)
+}
+}()
+
+// Create jobs with different priorities
+jobs := []*models.Job{
+{
+ID:         "job-low-1",
+SourcePath: "/source/video1.mp4",
+OutputPath: "/output/video1.mp4",
+Status:     "pending",
+Priority:   0, // Low priority
+CreatedAt:  time.Now(),
+RetryCount: 0,
+MaxRetries: 3,
+},
+{
+ID:         "job-normal-1",
+SourcePath: "/source/video2.mp4",
+OutputPath: "/output/video2.mp4",
+Status:     "pending",
+Priority:   5, // Normal priority
+CreatedAt:  time.Now().Add(1 * time.Second), // Created after low priority
+RetryCount: 0,
+MaxRetries: 3,
+},
+{
+ID:         "job-high-1",
+SourcePath: "/source/video3.mp4",
+OutputPath: "/output/video3.mp4",
+Status:     "pending",
+Priority:   10, // High priority
+CreatedAt:  time.Now().Add(2 * time.Second), // Created after others
+RetryCount: 0,
+MaxRetries: 3,
+},
+}
+
+for _, job := range jobs {
+if err := tracker.CreateJob(job); err != nil {
+t.Fatalf("Failed to create job: %v", err)
+}
+}
+
+// Get next pending job - should be high priority even though it was created last
+job1, err := tracker.GetNextPendingJob()
+if err != nil {
+t.Fatalf("Failed to get next pending job: %v", err)
+}
+if job1.Priority != 10 {
+t.Errorf("Expected first job to have priority 10, got %d", job1.Priority)
+}
+if job1.ID != "job-high-1" {
+t.Errorf("Expected first job to be job-high-1, got %s", job1.ID)
+}
+
+// Mark it as processing
+job1.Status = "processing"
+if err := tracker.UpdateJob(job1); err != nil {
+t.Fatalf("Failed to update job: %v", err)
+}
+
+// Get next pending job - should be normal priority
+job2, err := tracker.GetNextPendingJob()
+if err != nil {
+t.Fatalf("Failed to get next pending job: %v", err)
+}
+if job2.Priority != 5 {
+t.Errorf("Expected second job to have priority 5, got %d", job2.Priority)
+}
+
+// Mark it as processing
+job2.Status = "processing"
+if err := tracker.UpdateJob(job2); err != nil {
+t.Fatalf("Failed to update job: %v", err)
+}
+
+// Get next pending job - should be low priority
+job3, err := tracker.GetNextPendingJob()
+if err != nil {
+t.Fatalf("Failed to get next pending job: %v", err)
+}
+if job3.Priority != 0 {
+t.Errorf("Expected third job to have priority 0, got %d", job3.Priority)
+}
 }

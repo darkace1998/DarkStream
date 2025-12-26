@@ -93,6 +93,7 @@ func (t *Tracker) initSchema() error {
 		source_path TEXT NOT NULL,
 		output_path TEXT NOT NULL,
 		status TEXT NOT NULL,
+		priority INTEGER DEFAULT 5,
 		worker_id TEXT,
 		started_at TIMESTAMP,
 		completed_at TIMESTAMP,
@@ -131,6 +132,7 @@ func (t *Tracker) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
 	`
 
@@ -147,6 +149,11 @@ func (t *Tracker) initSchema() error {
 	// Add worker status column if it doesn't exist (migration)
 	if err := t.migrateWorkerStatusColumn(); err != nil {
 		return fmt.Errorf("failed to migrate worker status column: %w", err)
+	}
+	
+	// Add priority column if it doesn't exist (migration)
+	if err := t.migratePriorityColumn(); err != nil {
+		return fmt.Errorf("failed to migrate priority column: %w", err)
 	}
 	
 	return nil
@@ -212,15 +219,44 @@ func (t *Tracker) migrateWorkerStatusColumn() error {
 	return nil
 }
 
+// migratePriorityColumn adds priority column to jobs table if it doesn't exist
+func (t *Tracker) migratePriorityColumn() error {
+	// Check if priority column exists in jobs table
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='priority'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for priority column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding priority column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN priority INTEGER DEFAULT 5`)
+		if err != nil {
+			return fmt.Errorf("failed to add priority column: %w", err)
+		}
+		
+		// Create index on priority for efficient sorting
+		slog.Info("Creating index on priority column")
+		_, err = t.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)`)
+		if err != nil {
+			return fmt.Errorf("failed to create priority index: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // CreateJob inserts a new job into the database
 // Returns error if insertion failed, nil if successful or if job already exists
 func (t *Tracker) CreateJob(job *models.Job) error {
 	result, err := t.db.Exec(`
 		INSERT OR IGNORE INTO jobs (
-			id, source_path, output_path, status, retry_count,
+			id, source_path, output_path, status, priority, retry_count,
 			max_retries, created_at, source_checksum
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.SourcePath, job.OutputPath, job.Status,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, job.ID, job.SourcePath, job.OutputPath, job.Status, job.Priority,
 		job.RetryCount, job.MaxRetries, job.CreatedAt, job.SourceChecksum)
 	if err != nil {
 		return fmt.Errorf("failed to execute insert: %w", err)
@@ -246,13 +282,13 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 	var startedAt, completedAt sql.NullTime
 
 	err := t.db.QueryRow(`
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 		COALESCE(source_duration, 0), COALESCE(output_size, 0),
 		COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 	FROM jobs WHERE id = ?
-`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize,
@@ -278,14 +314,14 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 	var startedAt, completedAt sql.NullTime
 
 	err := t.db.QueryRow(`
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
 			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs WHERE status = 'pending'
-		ORDER BY created_at ASC LIMIT 1
-	`).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+		ORDER BY priority DESC, created_at ASC LIMIT 1
+	`).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize,
@@ -309,12 +345,12 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 func (t *Tracker) UpdateJob(job *models.Job) error {
 	_, err := t.db.Exec(`
 		UPDATE jobs SET
-			status = ?, worker_id = ?, started_at = ?,
+			status = ?, priority = ?, worker_id = ?, started_at = ?,
 			completed_at = ?, error_message = ?, retry_count = ?,
 			source_duration = ?, output_size = ?,
 			source_checksum = ?, output_checksum = ?
 		WHERE id = ?
-	`, job.Status, job.WorkerID, job.StartedAt, job.CompletedAt,
+	`, job.Status, job.Priority, job.WorkerID, job.StartedAt, job.CompletedAt,
 		job.ErrorMessage, job.RetryCount, job.SourceDuration,
 		job.OutputSize, job.SourceChecksum, job.OutputChecksum, job.ID)
 	if err != nil {
@@ -429,7 +465,7 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 	}
 
 	query := `
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
@@ -492,7 +528,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 	}
 
 	query := `
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
@@ -773,7 +809,7 @@ func (t *Tracker) GetWorkerStats() (map[string]any, error) {
 // GetStaleProcessingJobs returns jobs stuck in processing state longer than timeout
 func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, error) {
 	query := `
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
@@ -830,7 +866,7 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 // GetRetryableFailedJobs returns failed jobs that can be retried
 func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
 	query := `
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
@@ -886,7 +922,7 @@ func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
 // GetJobsForWorker returns all jobs assigned to a worker
 func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 	query := `
-		SELECT id, source_path, output_path, status, created_at,
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),

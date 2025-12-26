@@ -8,6 +8,7 @@ type Job struct {
 	SourcePath       string     `json:"source_path"`
 	OutputPath       string     `json:"output_path"`
 	Status           string     `json:"status"` // see constants.JobStatus* constants
+	Priority         int        `json:"priority"` // see constants.JobPriority* constants (0=low, 5=normal, 10=high)
 	WorkerID         string     `json:"worker_id"`
 	StartedAt        *time.Time `json:"started_at"`
 	CompletedAt      *time.Time `json:"completed_at"`
