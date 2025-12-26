@@ -434,7 +434,7 @@ func (w *Worker) sendHeartbeats() {
 				Hostname:        getHostname(),
 				VulkanAvailable: vulkanAvailable,
 				ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
-				Status:          constants.WorkerStatusHealthy,
+				Status:          constants.WorkerStatusOnline,
 				Timestamp:       time.Now(),
 				GPU:             gpuName,
 				CPUUsage:        0.0, // TODO: Get actual CPU usage

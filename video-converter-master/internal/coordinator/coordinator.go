@@ -235,6 +235,12 @@ func (c *Coordinator) monitorWorkerHealth() {
 						"worker_id", worker.WorkerID,
 						"hostname", worker.Hostname,
 						"last_heartbeat", worker.Timestamp)
+					
+					// Mark worker as offline in database
+					if err := c.db.MarkWorkerOffline(worker.WorkerID); err != nil {
+						slog.Error("Failed to mark worker as offline",
+							"worker_id", worker.WorkerID, "error", err)
+					}
 				}
 			}
 

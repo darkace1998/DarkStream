@@ -84,19 +84,28 @@ DarkStream is a distributed video converter system built with Go that:
   - Improved logging to include timeout duration in stale job warnings
   - Location: `video-converter-common/models/config.go`, `video-converter-master/internal/coordinator/coordinator.go`
 
-- [ ] **Add worker deregistration**
+- [x] **Add worker deregistration**
   - Mark workers as offline when they stop sending heartbeats
   - Reassign jobs from dead workers
-  - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/coordinator/coordinator.go`
+  - Added `status` field to workers table with migration support
+  - Implemented `MarkWorkerOffline()` database method
+  - Updated `monitorWorkerHealth()` to mark offline workers in database
+  - Updated worker to send `WorkerStatusOnline` in heartbeats
+  - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/coordinator/coordinator.go`, `video-converter-worker/internal/worker/worker.go`, `video-converter-common/constants/constants.go`
 
 ---
 
 ## 🚀 Medium Priority TODOs
 
 ### Performance Optimizations
-- [ ] **Add chunked/streaming file transfer**
+- [x] **Add chunked/streaming file transfer**
   - Implement progress tracking for large files
   - Resume interrupted downloads/uploads
+  - Implemented `ProgressReader` for tracking file transfer progress
+  - Added `DownloadSourceVideoWithProgress()` and `UploadConvertedVideoWithProgress()` methods
+  - Progress callback interface allows reporting bytes transferred
+  - Download resume support already implemented (via Range headers)
+  - Bandwidth throttling already implemented via `ThrottledReader`
   - Location: `video-converter-worker/internal/client/master_client.go`
 
 - [ ] **Implement parallel job processing**
@@ -309,7 +318,7 @@ DarkStream/
 - [ ] Real-time progress tracking
 
 ### v1.3 - Performance Release
-- [ ] Chunked file transfer
+- [x] Chunked file transfer
 - [ ] Job priority system
 - [ ] Parallel processing improvements
 
