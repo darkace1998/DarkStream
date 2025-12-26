@@ -22,20 +22,23 @@ import (
 
 // Worker manages job processing and communication with the master
 type Worker struct {
-	config          *models.WorkerConfig
-	masterClient    *client.MasterClient
-	configFetcher   *client.ConfigFetcher
-	ffmpegConverter *converter.FFmpegConverter
-	vulkanDetector  *converter.VulkanDetector
-	validator       *converter.Validator
-	cacheManager    *CacheManager
-	concurrency     int
-	activeJobs      int32
-	vulkanCaps      *converter.VulkanCapabilities
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	shutdownOnce    sync.Once
+	config              *models.WorkerConfig
+	masterClient        *client.MasterClient
+	configFetcher       *client.ConfigFetcher
+	ffmpegConverter     *converter.FFmpegConverter
+	vulkanDetector      *converter.VulkanDetector
+	validator           *converter.Validator
+	cacheManager        *CacheManager
+	concurrency         int
+	activeJobs          int32
+	jobSemaphore        chan struct{} // Semaphore to limit concurrent jobs
+	rateLimiter         *time.Ticker  // Rate limiter for API calls
+	currentBackoff      time.Duration // Current backoff interval when no jobs available
+	vulkanCaps          *converter.VulkanCapabilities
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	shutdownOnce        sync.Once
 }
 
 // New creates a new Worker instance
