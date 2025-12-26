@@ -671,16 +671,22 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	
 	pr.mu.Lock()
 	pr.bytesTransferred += int64(n)
+	bytesTransferred := pr.bytesTransferred
+	totalBytes := pr.totalBytes
 	
-	// Report progress at intervals to avoid excessive callbacks
+	// Check if we should report progress
 	now := time.Now()
-	if now.Sub(pr.lastReportTime) >= pr.reportInterval || err == io.EOF {
-		if pr.callback != nil {
-			pr.callback(pr.bytesTransferred, pr.totalBytes)
-		}
+	shouldReport := now.Sub(pr.lastReportTime) >= pr.reportInterval || err == io.EOF
+	if shouldReport {
 		pr.lastReportTime = now
 	}
+	callback := pr.callback
 	pr.mu.Unlock()
+	
+	// Call callback outside the mutex to avoid deadlocks
+	if shouldReport && callback != nil {
+		callback(bytesTransferred, totalBytes)
+	}
 	
 	return n, err
 }
@@ -804,10 +810,11 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 		reader = NewThrottledReader(reader, mc.bandwidthLimit)
 	}
 	if progressCallback != nil {
-		// Wrap with progress reader, adjusting for already-transferred bytes
-		progressReader := NewProgressReader(reader, totalContentLength, func(bytesTransferred, totalBytes int64) {
-			// Add startOffset to bytesTransferred since we're resuming
-			progressCallback(startOffset+bytesTransferred, totalBytes)
+		// Wrap with progress reader
+		// Pass resp.ContentLength (remaining bytes) to ProgressReader, not totalContentLength
+		progressReader := NewProgressReader(reader, resp.ContentLength, func(bytesTransferred, totalBytes int64) {
+			// Report total progress including already-downloaded bytes
+			progressCallback(startOffset+bytesTransferred, totalContentLength)
 		})
 		reader = progressReader
 	}
