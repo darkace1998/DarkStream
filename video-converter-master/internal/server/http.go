@@ -115,17 +115,24 @@ func (rl *rateLimiter) stop() {
 
 // Server handles HTTP API requests
 type Server struct {
-	db          *db.Tracker
-	addr        string
-	server      *http.Server
-	configMgr   *config.Manager
-	rateLimiter *rateLimiter
-	apiKey      string
+	db            *db.Tracker
+	addr          string
+	server        *http.Server
+	configMgr     *config.Manager
+	rateLimiter   *rateLimiter
+	apiKey        string
+	allowedDirs   []string // Allowed directories for file operations (source and output)
 }
 
 // New creates a new HTTP server instance
 func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *models.MasterConfig) *Server {
 	apiKey := cfg.Server.APIKey
+	
+	// Configure allowed directories for path validation
+	allowedDirs := []string{
+		cfg.Scanner.RootPath,   // Source videos directory
+		cfg.Scanner.OutputBase, // Output/converted videos directory
+	}
 	
 	return &Server{
 		db:          tracker,
@@ -133,6 +140,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		configMgr:   configMgr,
 		rateLimiter: newRateLimiter(),
 		apiKey:      apiKey,
+		allowedDirs: allowedDirs,
 	}
 }
 
@@ -530,8 +538,19 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open the source file
-	file, err := os.Open(job.SourcePath)
+	// Validate source path to prevent path traversal attacks
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
+	if err != nil {
+		slog.Error("Path validation failed for source file",
+			"job_id", jobID,
+			"path", job.SourcePath,
+			"error", err)
+		http.Error(w, "Invalid file path", http.StatusForbidden)
+		return
+	}
+
+	// Open the source file using the validated path
+	file, err := os.Open(validatedPath)
 	if err != nil {
 		slog.Error("Failed to open source file", "path", job.SourcePath, "error", err)
 		http.Error(w, "Source file not found", http.StatusNotFound)
@@ -661,6 +680,20 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job is not in processing status", http.StatusBadRequest)
 		return
 	}
+
+	// Validate output path to prevent path traversal attacks
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
+	if err != nil {
+		slog.Error("Path validation failed for output file",
+			"job_id", jobID,
+			"path", job.OutputPath,
+			"error", err)
+		http.Error(w, "Invalid file path", http.StatusForbidden)
+		return
+	}
+
+	// Update job with validated path for consistency
+	job.OutputPath = validatedPath
 
 	// Parse multipart form (32MB max memory)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
