@@ -115,10 +115,13 @@ DarkStream is a distributed video converter system built with Go that:
   - Added `max_backoff_interval` and `initial_backoff_interval` configuration options
   - Location: `video-converter-worker/internal/worker/worker.go`
 
-- [ ] **Add job priority system**
-  - Allow high-priority jobs to be processed first
-  - Add priority field to Job model
-  - Location: `video-converter-common/models/job.go`, `video-converter-master/internal/db/tracker.go`
+- [x] **Add job priority system**
+  - Priority field already exists in Job model with levels: 0=low, 5=normal, 10=high
+  - Priority constants defined: `JobPriorityLow`, `JobPriorityNormal`, `JobPriorityHigh`
+  - Database schema includes priority column with index for efficient sorting
+  - `GetNextPendingJob()` orders by `priority DESC, created_at ASC` - high-priority jobs are processed first
+  - Migration support for adding priority to existing databases
+  - Location: `video-converter-common/models/job.go`, `video-converter-common/constants/constants.go`, `video-converter-master/internal/db/tracker.go`
 
 - [ ] **Implement job batching**
   - Fetch multiple jobs at once to reduce API calls
