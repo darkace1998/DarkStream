@@ -187,11 +187,23 @@ DarkStream is a distributed video converter system built with Go that:
   - Email/webhook notifications on job completion/failure
   - Location: Create `video-converter-master/internal/notifications/` package
 
-- [ ] **Enhance job cancellation**
-  - Add server-side endpoint `/api/job/cancel` if not implemented
-  - Support cancelling in-progress jobs (currently only queued)
-  - Add batch cancellation support
-  - Location: `video-converter-cli/commands/cancel.go` (CLI implemented), `video-converter-master/internal/server/handlers.go` (server endpoint needed)
+- [x] **Enhance job cancellation**
+  - `/api/job/cancel` endpoint already implemented for single job cancellation
+  - Added `/api/jobs/cancel` endpoint for batch cancellation
+  - Supports cancelling both pending and processing jobs
+  - Batch cancellation by status filter (pending, processing, or all)
+  - Location: `video-converter-master/internal/server/http.go`
+
+- [x] **Add web dashboard**
+  - Enhanced dashboard with tabbed interface (Queue, Processing, History, Workers, Config)
+  - Real-time stats overview (pending, processing, completed, failed, workers)
+  - Job queue view with cancel buttons
+  - Processing jobs view
+  - Recent jobs history (last 50)
+  - Workers list with online status
+  - Configuration editing
+  - Auto-refresh every 30 seconds
+  - Location: `video-converter-master/internal/server/webui.go`
 
 ---
 

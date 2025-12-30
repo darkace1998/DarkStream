@@ -261,6 +261,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.RetryFailedJobs)))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.ListJobs)))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
+	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
 	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.ListWorkers)))
 	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.ValidateConfig)))
 
@@ -1652,6 +1653,106 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode cancel response", "error", err)
+		return
+	}
+}
+
+// CancelJobs handles batch cancellation of jobs by status
+func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status := r.URL.Query().Get("status")
+	if status != "pending" && status != "processing" && status != "all" {
+		http.Error(w, "Invalid status parameter. Must be 'pending', 'processing', or 'all'", http.StatusBadRequest)
+		return
+	}
+
+	// Get limit parameter (default 100)
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		parsedLimit, err := parseInt(limitStr)
+		if err != nil || parsedLimit <= 0 {
+			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+			return
+		}
+		if parsedLimit > 1000 {
+			limit = 1000 // Cap at 1000
+		} else {
+			limit = parsedLimit
+		}
+	}
+
+	// Get jobs to cancel based on status filter
+	var jobsToCancel []*models.Job
+	var listErrors []error
+
+	if status == "all" || status == "pending" {
+		pendingJobs, listErr := s.db.GetJobsByStatus("pending", limit)
+		if listErr != nil {
+			slog.Error("Failed to list pending jobs for cancellation", "error", listErr)
+			listErrors = append(listErrors, listErr)
+		} else {
+			jobsToCancel = append(jobsToCancel, pendingJobs...)
+		}
+	}
+
+	if status == "all" || status == "processing" {
+		processingJobs, listErr := s.db.GetJobsByStatus("processing", limit)
+		if listErr != nil {
+			slog.Error("Failed to list processing jobs for cancellation", "error", listErr)
+			listErrors = append(listErrors, listErr)
+		} else {
+			jobsToCancel = append(jobsToCancel, processingJobs...)
+		}
+	}
+
+	// If all list operations failed, return error
+	if len(listErrors) > 0 && len(jobsToCancel) == 0 {
+		http.Error(w, "Failed to list jobs for cancellation", http.StatusInternalServerError)
+		return
+	}
+
+	// Cancel the jobs
+	cancelledCount := 0
+	failedCount := 0
+	cancelledIDs := make([]string, 0)
+
+	for _, job := range jobsToCancel {
+		if cancelledCount >= limit {
+			break
+		}
+
+		job.Status = "failed"
+		job.ErrorMessage = "Job cancelled by user (batch cancellation)"
+		if err := s.db.UpdateJob(job); err != nil {
+			slog.Error("Failed to cancel job", "job_id", job.ID, "error", err)
+			failedCount++
+			continue
+		}
+		cancelledCount++
+		cancelledIDs = append(cancelledIDs, job.ID)
+	}
+
+	slog.Info("Batch job cancellation completed",
+		"status_filter", status,
+		"cancelled_count", cancelledCount,
+		"failed_count", failedCount,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"cancelled_count": cancelledCount,
+		"failed_count":    failedCount,
+		"cancelled_ids":   cancelledIDs,
+		"status_filter":   status,
+		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode batch cancel response", "error", err)
 		return
 	}
 }
