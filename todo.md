@@ -108,9 +108,11 @@ DarkStream is a distributed video converter system built with Go that:
   - Bandwidth throttling already implemented via `ThrottledReader`
   - Location: `video-converter-worker/internal/client/master_client.go`
 
-- [ ] **Implement parallel job processing**
-  - Better concurrency control in worker pool
-  - Rate limiting to prevent overwhelming master
+- [x] **Implement parallel job processing**
+  - Implemented job semaphore for proper concurrency control
+  - Implemented rate limiting for API calls (configurable via `max_api_requests_per_min`)
+  - Implemented adaptive backoff with exponential increase when no jobs available
+  - Added `max_backoff_interval` and `initial_backoff_interval` configuration options
   - Location: `video-converter-worker/internal/worker/worker.go`
 
 - [ ] **Add job priority system**

@@ -5,6 +5,9 @@ worker:
   heartbeat_interval: 30s
   job_check_interval: 5s
   job_timeout: 2h
+  max_api_requests_per_min: 60  # Rate limit for API calls to master (0 = default 60/min)
+  max_backoff_interval: 30s     # Maximum backoff when no jobs available
+  initial_backoff_interval: 1s  # Initial backoff when no jobs available
 
 storage:
   mount_path: /mnt/storage
