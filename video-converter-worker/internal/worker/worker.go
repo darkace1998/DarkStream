@@ -326,7 +326,10 @@ func (w *Worker) processJobs(workerIndex int) {
 		// Reset backoff on successful job fetch
 		w.getAndUpdateBackoff(false)
 
-		// Process job in a goroutine and release semaphore when done
+		// Process job in a goroutine and release semaphore when done.
+		// Note: Concurrency is bounded by jobSemaphore - we only reach here after
+		// successfully acquiring a semaphore slot (line 279). The goroutine releases
+		// the slot when done, ensuring at most 'concurrency' jobs process concurrently.
 		go func(job *models.Job) {
 			defer func() { <-w.jobSemaphore }()
 			w.processJob(job)
