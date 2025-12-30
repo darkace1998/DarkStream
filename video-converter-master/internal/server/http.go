@@ -229,6 +229,11 @@ func (s *Server) Start() error {
 	// Web UI
 	mux.HandleFunc("/", s.ServeWebUI)
 
+	// Health check endpoints (no rate limiting or correlation for probes)
+	mux.HandleFunc("/healthz", s.HealthzLive)
+	mux.HandleFunc("/readyz", s.HealthzReady)
+	mux.HandleFunc("/api/health", s.correlationMiddleware(s.HealthCheck))
+
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", metrics.Handler())
 
@@ -262,7 +267,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics")
+	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics", "health_endpoints", "/healthz, /readyz, /api/health")
 	if err := s.server.ListenAndServe(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
@@ -737,6 +742,219 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Error("Failed to encode stats response", "error", err)
 		return
+	}
+}
+
+// HealthStatus represents the health status of a component
+type HealthStatus struct {
+	Status  string `json:"status"` // "healthy", "degraded", "unhealthy"
+	Message string `json:"message,omitempty"`
+}
+
+// HealthCheckResponse represents the detailed health check response
+type HealthCheckResponse struct {
+	Status    string                  `json:"status"`    // Overall status
+	Timestamp time.Time               `json:"timestamp"` // Check timestamp
+	Checks    map[string]HealthStatus `json:"checks"`    // Individual component checks
+}
+
+// HealthzLive handles the liveness probe endpoint (/healthz)
+// Returns 200 if the server is alive
+func (s *Server) HealthzLive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"status":    "alive",
+		"timestamp": time.Now(),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode healthz response", "error", err)
+	}
+}
+
+// HealthzReady handles the readiness probe endpoint (/readyz)
+// Returns 200 if the server is ready to accept traffic
+func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check database connectivity
+	_, err := s.db.GetJobStats()
+	if err != nil {
+		slog.Warn("Readiness check failed: database unavailable", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		response := map[string]any{
+			"status":    "not_ready",
+			"timestamp": time.Now(),
+			"reason":    "database unavailable",
+		}
+		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+			slog.Error("Failed to encode readyz response", "error", encErr)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"status":    "ready",
+		"timestamp": time.Now(),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode readyz response", "error", err)
+	}
+}
+
+// HealthCheck handles the detailed health check endpoint (/api/health)
+// Returns comprehensive health status of all components
+func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	checks := make(map[string]HealthStatus)
+	overallStatus := "healthy"
+
+	// Check database
+	dbStatus := HealthStatus{Status: "healthy"}
+	jobStats, err := s.db.GetJobStats()
+	if err != nil {
+		dbStatus.Status = "unhealthy"
+		dbStatus.Message = err.Error()
+		overallStatus = "unhealthy"
+	} else {
+		dbStatus.Message = "Connected and responsive"
+	}
+	checks["database"] = dbStatus
+
+	// Check queue depth
+	queueStatus := HealthStatus{Status: "healthy"}
+	pendingCount, err := s.db.CountPendingJobs()
+	if err != nil {
+		queueStatus.Status = "unhealthy"
+		queueStatus.Message = err.Error()
+		if overallStatus == "healthy" {
+			overallStatus = "degraded"
+		}
+	} else {
+		queueStatus.Message = fmt.Sprintf("%d jobs pending", pendingCount)
+		// Warn if queue is very large
+		if pendingCount > 1000 {
+			queueStatus.Status = "degraded"
+			queueStatus.Message = fmt.Sprintf("%d jobs pending (high backlog)", pendingCount)
+			if overallStatus == "healthy" {
+				overallStatus = "degraded"
+			}
+		}
+	}
+	checks["queue"] = queueStatus
+
+	// Check workers
+	workerStatus := HealthStatus{Status: "healthy"}
+	activeWorkers, err := s.db.GetActiveWorkers(120) // 2 minute threshold
+	if err != nil {
+		workerStatus.Status = "unhealthy"
+		workerStatus.Message = err.Error()
+		if overallStatus == "healthy" {
+			overallStatus = "degraded"
+		}
+	} else {
+		workerCount := len(activeWorkers)
+		workerStatus.Message = fmt.Sprintf("%d active workers", workerCount)
+		if workerCount == 0 {
+			workerStatus.Status = "degraded"
+			workerStatus.Message = "No active workers available"
+			if overallStatus == "healthy" {
+				overallStatus = "degraded"
+			}
+		}
+	}
+	checks["workers"] = workerStatus
+
+	// Check for stale jobs (jobs stuck in processing)
+	staleJobStatus := HealthStatus{Status: "healthy"}
+	staleJobs, err := s.db.GetStaleProcessingJobs(7200) // Jobs processing > 2 hours
+	if err != nil {
+		staleJobStatus.Status = "degraded"
+		staleJobStatus.Message = err.Error()
+	} else {
+		staleCount := len(staleJobs)
+		if staleCount > 0 {
+			staleJobStatus.Status = "degraded"
+			staleJobStatus.Message = fmt.Sprintf("%d jobs stuck in processing", staleCount)
+			if overallStatus == "healthy" {
+				overallStatus = "degraded"
+			}
+		} else {
+			staleJobStatus.Message = "No stale jobs"
+		}
+	}
+	checks["stale_jobs"] = staleJobStatus
+
+	// Build response
+	response := HealthCheckResponse{
+		Status:    overallStatus,
+		Timestamp: time.Now(),
+		Checks:    checks,
+	}
+
+	// Add job statistics with validation
+	if jobStats != nil {
+		jobStatsStatus := HealthStatus{Status: "healthy"}
+
+		// Count jobs by status
+		var completed, failed, processing int
+		if v, ok := jobStats["completed"].(int); ok {
+			completed = v
+		}
+		if v, ok := jobStats["failed"].(int); ok {
+			failed = v
+		}
+		if v, ok := jobStats["processing"].(int); ok {
+			processing = v
+		}
+
+		// Build summary message
+		jobStatsStatus.Message = fmt.Sprintf("completed: %d, failed: %d, processing: %d",
+			completed, failed, processing)
+
+		// Check for high failure rate
+		total := completed + failed
+		if total > 10 && failed > 0 {
+			failureRate := float64(failed) / float64(total) * 100
+			if failureRate > 50 {
+				jobStatsStatus.Status = "degraded"
+				jobStatsStatus.Message = fmt.Sprintf("high failure rate: %.1f%% (%d/%d jobs failed)",
+					failureRate, failed, total)
+				if overallStatus == "healthy" {
+					overallStatus = "degraded"
+					response.Status = overallStatus
+				}
+			}
+		}
+
+		response.Checks["job_stats"] = jobStatsStatus
+	}
+
+	// Set appropriate HTTP status based on health
+	httpStatus := http.StatusOK
+	if overallStatus == "unhealthy" {
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpStatus)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode health check response", "error", err)
 	}
 }
 

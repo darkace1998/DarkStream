@@ -149,10 +149,16 @@ DarkStream is a distributed video converter system built with Go that:
   - All logs include `component` and `correlation_id` fields when available
   - Location: `video-converter-common/utils/logging.go`, `video-converter-master/internal/server/http.go`
 
-- [ ] **Implement health check endpoint improvements**
-  - Add detailed health status (database, workers, queue)
-  - Ready vs alive checks
-  - Location: `video-converter-master/internal/server/handlers.go`
+- [x] **Implement health check endpoint improvements**
+  - **Liveness probe**: `/healthz` - returns 200 if server is alive
+  - **Readiness probe**: `/readyz` - returns 200 if server can accept traffic (checks database connectivity)
+  - **Detailed health**: `/api/health` - comprehensive health status with:
+    - Database connectivity and responsiveness
+    - Queue depth and backlog warnings (>1000 jobs = degraded)
+    - Active worker count (0 workers = degraded)
+    - Stale jobs detection (processing > 2 hours = degraded)
+  - Returns `healthy`, `degraded`, or `unhealthy` status with per-component details
+  - Location: `video-converter-master/internal/server/http.go`
 
 - [ ] **Add real-time progress tracking**
   - FFmpeg progress parsing
