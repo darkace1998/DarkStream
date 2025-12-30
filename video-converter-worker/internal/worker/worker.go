@@ -22,23 +22,25 @@ import (
 
 // Worker manages job processing and communication with the master
 type Worker struct {
-	config              *models.WorkerConfig
-	masterClient        *client.MasterClient
-	configFetcher       *client.ConfigFetcher
-	ffmpegConverter     *converter.FFmpegConverter
-	vulkanDetector      *converter.VulkanDetector
-	validator           *converter.Validator
-	cacheManager        *CacheManager
-	concurrency         int
-	activeJobs          int32
-	jobSemaphore        chan struct{} // Semaphore to limit concurrent jobs
-	rateLimiter         *time.Ticker  // Rate limiter for API calls
-	currentBackoff      time.Duration // Current backoff interval when no jobs available
-	vulkanCaps          *converter.VulkanCapabilities
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	wg                  sync.WaitGroup
-	shutdownOnce        sync.Once
+	config            *models.WorkerConfig
+	masterClient      *client.MasterClient
+	configFetcher     *client.ConfigFetcher
+	ffmpegConverter   *converter.FFmpegConverter
+	vulkanDetector    *converter.VulkanDetector
+	validator         *converter.Validator
+	cacheManager      *CacheManager
+	concurrency       int
+	activeJobs        int32
+	jobSemaphore      chan struct{}    // Semaphore to limit concurrent jobs
+	rateLimiter       <-chan time.Time // Rate limiter channel for API calls
+	rateLimiterTicker *time.Ticker     // Rate limiter ticker (kept for cleanup)
+	currentBackoff    time.Duration    // Current backoff interval when no jobs available
+	backoffMu         sync.Mutex       // Mutex for backoff state
+	vulkanCaps        *converter.VulkanCapabilities
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	shutdownOnce      sync.Once
 }
 
 // New creates a new Worker instance
@@ -77,28 +79,58 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize job semaphore for concurrency control
+	jobSemaphore := make(chan struct{}, cfg.Worker.Concurrency)
+
+	// Initialize rate limiter for API calls
+	// Default: 60 requests per minute if not configured
+	maxAPIRequestsPerMin := cfg.Worker.MaxAPIRequestsPerMin
+	if maxAPIRequestsPerMin <= 0 {
+		maxAPIRequestsPerMin = 60 // Default: 1 request per second
+	}
+	rateLimiterInterval := time.Minute / time.Duration(maxAPIRequestsPerMin)
+	rateLimiterTicker := time.NewTicker(rateLimiterInterval)
+
+	// Initialize backoff interval
+	// Default values if not configured
+	initialBackoff := cfg.Worker.InitialBackoffInterval
+	if initialBackoff <= 0 {
+		initialBackoff = 1 * time.Second
+	}
+
 	return &Worker{
-		config:          cfg,
-		masterClient:    masterClient,
-		configFetcher:   configFetcher,
-		ffmpegConverter: ffmpegConverter,
-		vulkanDetector:  vulkanDetector,
-		validator:       validator,
-		cacheManager:    cacheManager,
-		concurrency:     cfg.Worker.Concurrency,
-		activeJobs:      0,
-		vulkanCaps:      vulkanCaps,
-		ctx:             ctx,
-		cancel:          cancel,
+		config:            cfg,
+		masterClient:      masterClient,
+		configFetcher:     configFetcher,
+		ffmpegConverter:   ffmpegConverter,
+		vulkanDetector:    vulkanDetector,
+		validator:         validator,
+		cacheManager:      cacheManager,
+		concurrency:       cfg.Worker.Concurrency,
+		activeJobs:        0,
+		jobSemaphore:      jobSemaphore,
+		rateLimiter:       rateLimiterTicker.C,
+		rateLimiterTicker: rateLimiterTicker,
+		currentBackoff:    initialBackoff,
+		vulkanCaps:        vulkanCaps,
+		ctx:               ctx,
+		cancel:            cancel,
 	}, nil
 }
 
 // Start starts the worker process
 func (w *Worker) Start() error {
+	// Calculate rate limit for logging
+	maxAPIRequestsPerMin := w.config.Worker.MaxAPIRequestsPerMin
+	if maxAPIRequestsPerMin <= 0 {
+		maxAPIRequestsPerMin = 60 // Default
+	}
+
 	slog.Info("Worker starting",
 		"id", w.config.Worker.ID,
 		"concurrency", w.concurrency,
 		"master_url", w.config.Worker.MasterURL,
+		"rate_limit_per_min", maxAPIRequestsPerMin,
 	)
 
 	// Vulkan capabilities already detected in New()
@@ -149,7 +181,7 @@ func (w *Worker) Start() error {
 	// Wait for shutdown signal
 	<-sigChan
 	slog.Info("Received shutdown signal, initiating graceful shutdown...")
-	
+
 	return w.Shutdown()
 }
 
@@ -158,17 +190,22 @@ func (w *Worker) Shutdown() error {
 	var shutdownErr error
 	w.shutdownOnce.Do(func() {
 		slog.Info("Graceful shutdown initiated, waiting for active jobs to complete...")
-		
+
 		// Cancel context to stop all goroutines
 		w.cancel()
-		
+
+		// Stop rate limiter ticker
+		if w.rateLimiterTicker != nil {
+			w.rateLimiterTicker.Stop()
+		}
+
 		// Wait for all goroutines to finish with a timeout
 		done := make(chan struct{})
 		go func() {
 			w.wg.Wait()
 			close(done)
 		}()
-		
+
 		// Wait up to 2 minutes for graceful shutdown
 		select {
 		case <-done:
@@ -177,12 +214,12 @@ func (w *Worker) Shutdown() error {
 			slog.Warn("Graceful shutdown timed out, some jobs may not have completed")
 			shutdownErr = errors.New("graceful shutdown timed out")
 		}
-		
+
 		// Stop cache manager
 		if w.cacheManager != nil {
 			w.cacheManager.Stop()
 		}
-		
+
 		slog.Info("Worker shutdown complete",
 			"active_jobs", atomic.LoadInt32(&w.activeJobs),
 		)
@@ -193,19 +230,19 @@ func (w *Worker) Shutdown() error {
 // runCacheCleanup runs periodic cache cleanup
 func (w *Worker) runCacheCleanup() {
 	defer w.wg.Done()
-	
+
 	if w.cacheManager == nil {
 		return
 	}
-	
+
 	// Run initial cleanup
 	if err := w.cacheManager.Cleanup(); err != nil {
 		slog.Warn("Initial cache cleanup failed", "error", err)
 	}
-	
+
 	ticker := time.NewTicker(10 * time.Minute) // Run cleanup every 10 minutes
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -220,9 +257,10 @@ func (w *Worker) runCacheCleanup() {
 }
 
 // processJobs continuously requests and processes jobs
+// This function implements rate limiting for API calls and adaptive backoff when no jobs are available
 func (w *Worker) processJobs(workerIndex int) {
 	defer w.wg.Done()
-	
+
 	for {
 		// Check for shutdown
 		select {
@@ -231,29 +269,105 @@ func (w *Worker) processJobs(workerIndex int) {
 			return
 		default:
 		}
-		
+
+		// Acquire semaphore slot before requesting a job
+		// This ensures we don't request more jobs than we can process
+		select {
+		case <-w.ctx.Done():
+			slog.Info("Job processing goroutine stopping while waiting for semaphore", "worker_index", workerIndex)
+			return
+		case w.jobSemaphore <- struct{}{}:
+			// Acquired semaphore slot
+		}
+
+		// Apply rate limiting before making API call
+		select {
+		case <-w.ctx.Done():
+			// Release semaphore before returning
+			<-w.jobSemaphore
+			slog.Info("Job processing goroutine stopping while waiting for rate limiter", "worker_index", workerIndex)
+			return
+		case <-w.rateLimiter:
+			// Rate limit passed, proceed with API call
+		}
+
 		slog.Debug("Requesting next job", "worker_index", workerIndex)
 
 		job, err := w.masterClient.GetNextJob()
 		if err != nil {
+			// Release semaphore since we didn't get a job
+			<-w.jobSemaphore
+
 			if errors.Is(err, client.ErrNoJobsAvailable) {
-				slog.Debug("No jobs available, waiting")
+				// Apply adaptive backoff when no jobs are available
+				backoff := w.getAndUpdateBackoff(true)
+				slog.Debug("No jobs available, waiting with backoff", "backoff", backoff)
+
+				select {
+				case <-w.ctx.Done():
+					slog.Info("Job processing goroutine stopping during backoff", "worker_index", workerIndex)
+					return
+				case <-time.After(backoff):
+				}
 			} else {
 				slog.Error("Failed to get next job", "error", err)
-			}
-			
-			// Use select with context to handle shutdown during wait
-			select {
-			case <-w.ctx.Done():
-				slog.Info("Job processing goroutine stopping during wait", "worker_index", workerIndex)
-				return
-			case <-time.After(w.config.Worker.JobCheckInterval):
+
+				// Use select with context to handle shutdown during wait
+				select {
+				case <-w.ctx.Done():
+					slog.Info("Job processing goroutine stopping during wait", "worker_index", workerIndex)
+					return
+				case <-time.After(w.config.Worker.JobCheckInterval):
+				}
 			}
 			continue
 		}
 
-		w.processJob(job)
+		// Reset backoff on successful job fetch
+		w.getAndUpdateBackoff(false)
+
+		// Process job in a goroutine and release semaphore when done
+		go func(job *models.Job) {
+			defer func() { <-w.jobSemaphore }()
+			w.processJob(job)
+		}(job)
 	}
+}
+
+// getAndUpdateBackoff manages adaptive backoff for job polling.
+// If increaseBackoff is true, it doubles the current backoff up to the max limit.
+// If increaseBackoff is false, it resets the backoff to the initial value.
+// Returns the current backoff interval to use.
+func (w *Worker) getAndUpdateBackoff(increaseBackoff bool) time.Duration {
+	w.backoffMu.Lock()
+	defer w.backoffMu.Unlock()
+
+	// Get configuration values with defaults
+	initialBackoff := w.config.Worker.InitialBackoffInterval
+	if initialBackoff <= 0 {
+		initialBackoff = 1 * time.Second
+	}
+	maxBackoff := w.config.Worker.MaxBackoffInterval
+	if maxBackoff <= 0 {
+		maxBackoff = 30 * time.Second
+	}
+
+	if increaseBackoff {
+		// Return current backoff, then increase for next time
+		currentBackoff := w.currentBackoff
+
+		// Double the backoff for next time, up to max
+		w.currentBackoff *= 2
+		if w.currentBackoff > maxBackoff {
+			w.currentBackoff = maxBackoff
+		}
+
+		return currentBackoff
+	}
+
+	// Reset backoff on success
+	w.currentBackoff = initialBackoff
+	return initialBackoff
 }
 
 // processJob wraps a single job execution with proper resource management
@@ -289,7 +403,7 @@ func (w *Worker) processJob(job *models.Job) {
 func (w *Worker) executeJob(job *models.Job) error {
 	// Report progress: starting
 	w.reportProgress(job.ID, 0, 0, "download")
-	
+
 	// Create job cache directory
 	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
 	if err := os.MkdirAll(jobCacheDir, 0o750); err != nil {
@@ -308,7 +422,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	
+
 	// Validate source file checksum if available
 	if job.SourceChecksum != "" {
 		slog.Info("Validating source file checksum", "job_id", job.ID, "expected_checksum", job.SourceChecksum)
@@ -323,7 +437,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 	} else {
 		slog.Debug("No source checksum available for validation", "job_id", job.ID)
 	}
-	
+
 	// Report progress: download complete, starting conversion
 	w.reportProgress(job.ID, 0, 0, "convert")
 
@@ -385,7 +499,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Report progress: starting upload
 	w.reportProgress(job.ID, 100, 0, "upload")
-	
+
 	// Upload converted video to master
 	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
 	if err := w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath); err != nil {
@@ -415,7 +529,7 @@ func (w *Worker) reportProgress(jobID string, progress float64, fps float64, sta
 // sendHeartbeats periodically sends heartbeats to the master
 func (w *Worker) sendHeartbeats() {
 	defer w.wg.Done()
-	
+
 	ticker := time.NewTicker(w.config.Worker.HeartbeatInterval)
 	defer ticker.Stop()
 
