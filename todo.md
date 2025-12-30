@@ -141,10 +141,13 @@ DarkStream is a distributed video converter system built with Go that:
   - Endpoint: `/metrics`
   - Location: `video-converter-master/internal/metrics/metrics.go`, `video-converter-master/internal/server/http.go`
 
-- [ ] **Add structured logging improvements**
-  - Correlation IDs for request tracing
-  - Log levels per component
-  - Location: `video-converter-common/utils/logging.go`
+- [x] **Add structured logging improvements**
+  - **Correlation IDs**: `GenerateCorrelationID()`, `ContextWithCorrelationID()`, `CorrelationIDFromContext()`
+  - **Component Logger**: `NewComponentLogger(component)` with `WithCorrelationID()`, `WithContext()`, `With()`
+  - **Per-Component Log Levels**: `SetComponentLogLevel(component, level)`, `GetComponentLogLevel(component)`
+  - **HTTP Middleware**: `correlationMiddleware` adds `X-Correlation-ID` header to all API requests/responses
+  - All logs include `component` and `correlation_id` fields when available
+  - Location: `video-converter-common/utils/logging.go`, `video-converter-master/internal/server/http.go`
 
 - [ ] **Implement health check endpoint improvements**
   - Add detailed health status (database, workers, queue)
