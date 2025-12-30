@@ -156,6 +156,11 @@ func (t *Tracker) initSchema() error {
 		return fmt.Errorf("failed to migrate priority column: %w", err)
 	}
 
+	// Add video metadata columns if they don't exist (migration)
+	if err := t.migrateVideoMetadataColumns(); err != nil {
+		return fmt.Errorf("failed to migrate video metadata columns: %w", err)
+	}
+
 	return nil
 }
 
@@ -248,6 +253,42 @@ func (t *Tracker) migratePriorityColumn() error {
 	return nil
 }
 
+// migrateVideoMetadataColumns adds video metadata columns to jobs table if they don't exist
+func (t *Tracker) migrateVideoMetadataColumns() error {
+	// List of columns to add with their types
+	columns := []struct {
+		name     string
+		dataType string
+	}{
+		{"source_width", "INTEGER"},
+		{"source_height", "INTEGER"},
+		{"source_video_codec", "TEXT"},
+		{"source_audio_codec", "TEXT"},
+		{"source_bitrate", "INTEGER"},
+		{"source_file_size", "INTEGER"},
+	}
+
+	for _, col := range columns {
+		var columnExists int
+		err := t.db.QueryRow(`
+			SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name=?
+		`, col.name).Scan(&columnExists)
+		if err != nil {
+			return fmt.Errorf("failed to check for %s column: %w", col.name, err)
+		}
+
+		if columnExists == 0 {
+			slog.Info("Adding column to jobs table", "column", col.name)
+			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %s %s`, col.name, col.dataType)
+			if _, err := t.db.Exec(query); err != nil {
+				return fmt.Errorf("failed to add %s column: %w", col.name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // CreateJob inserts a new job into the database
 // Returns error if insertion failed, nil if successful or if job already exists
 func (t *Tracker) CreateJob(job *models.Job) error {
@@ -285,14 +326,20 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
-		COALESCE(source_duration, 0), COALESCE(output_size, 0),
-		COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
-	FROM jobs WHERE id = ?
-`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(source_width, 0), COALESCE(source_height, 0),
+			COALESCE(source_video_codec, ''), COALESCE(source_audio_codec, ''),
+			COALESCE(source_bitrate, 0), COALESCE(source_file_size, 0)
+		FROM jobs WHERE id = ?
+	`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize,
-		&job.SourceChecksum, &job.OutputChecksum)
+		&job.SourceChecksum, &job.OutputChecksum,
+		&job.SourceWidth, &job.SourceHeight,
+		&job.SourceVideoCodec, &job.SourceAudioCodec,
+		&job.SourceBitrate, &job.SourceFileSize)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan job row: %w", err)
@@ -422,11 +469,17 @@ func (t *Tracker) UpdateJob(job *models.Job) error {
 			status = ?, priority = ?, worker_id = ?, started_at = ?,
 			completed_at = ?, error_message = ?, retry_count = ?,
 			source_duration = ?, output_size = ?,
-			source_checksum = ?, output_checksum = ?
+			source_checksum = ?, output_checksum = ?,
+			source_width = ?, source_height = ?,
+			source_video_codec = ?, source_audio_codec = ?,
+			source_bitrate = ?, source_file_size = ?
 		WHERE id = ?
 	`, job.Status, job.Priority, job.WorkerID, job.StartedAt, job.CompletedAt,
 		job.ErrorMessage, job.RetryCount, job.SourceDuration,
-		job.OutputSize, job.SourceChecksum, job.OutputChecksum, job.ID)
+		job.OutputSize, job.SourceChecksum, job.OutputChecksum,
+		job.SourceWidth, job.SourceHeight,
+		job.SourceVideoCodec, job.SourceAudioCodec,
+		job.SourceBitrate, job.SourceFileSize, job.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update job: %w", err)
 	}
