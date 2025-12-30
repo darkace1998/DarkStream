@@ -18,7 +18,7 @@ func TestGetAndUpdateBackoff(t *testing.T) {
 	w := &Worker{
 		config:         cfg,
 		currentBackoff: 1 * time.Second,
-		backoffMu:      sync.Mutex{},
+		// backoffMu uses zero value which is valid for sync.Mutex
 	}
 
 	// Test initial backoff
@@ -66,7 +66,7 @@ func TestGetAndUpdateBackoffDefaults(t *testing.T) {
 	w := &Worker{
 		config:         cfg,
 		currentBackoff: 0, // Will be set to default
-		backoffMu:      sync.Mutex{},
+		// backoffMu uses zero value which is valid for sync.Mutex
 	}
 
 	// First call should use default initial backoff (1s)
@@ -95,7 +95,7 @@ func TestGetAndUpdateBackoffConcurrency(t *testing.T) {
 	w := &Worker{
 		config:         cfg,
 		currentBackoff: 1 * time.Second,
-		backoffMu:      sync.Mutex{},
+		// backoffMu uses zero value which is valid for sync.Mutex
 	}
 
 	var wg sync.WaitGroup
