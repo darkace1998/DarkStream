@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/darkace1998/video-converter-common/utils"
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
+	"github.com/darkace1998/video-converter-master/internal/metrics"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +34,11 @@ func validateJobID(jobID string) bool {
 		return false
 	}
 	return jobIDPattern.MatchString(jobID)
+}
+
+// contains checks if substr is in s (case-insensitive)
+func contains(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
 // rateLimiter implements simple token bucket rate limiting per IP
@@ -122,6 +129,7 @@ type Server struct {
 	rateLimiter *rateLimiter
 	apiKey      string
 	allowedDirs []string // Allowed directories for file operations (source and output)
+	metrics     *metrics.Metrics
 }
 
 // New creates a new HTTP server instance
@@ -141,6 +149,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		rateLimiter: newRateLimiter(),
 		apiKey:      apiKey,
 		allowedDirs: allowedDirs,
+		metrics:     metrics.New(),
 	}
 }
 
@@ -200,6 +209,9 @@ func (s *Server) Start() error {
 	// Web UI
 	mux.HandleFunc("/", s.ServeWebUI)
 
+	// Prometheus metrics endpoint
+	mux.Handle("/metrics", metrics.Handler())
+
 	// Configuration API
 	mux.HandleFunc("/api/config", s.rateLimitMiddleware(s.handleConfig))
 
@@ -230,7 +242,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	slog.Info("HTTP server starting", "addr", s.addr)
+	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics")
 	if err := s.server.ListenAndServe(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
@@ -262,6 +274,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.UpdateConfig(w, r)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// updateQueueDepthMetric updates the queue depth metric
+func (s *Server) updateQueueDepthMetric() {
+	count, err := s.db.CountPendingJobs()
+	if err == nil {
+		s.metrics.SetQueueDepth(float64(count))
 	}
 }
 
@@ -324,6 +344,12 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// Record job started metric
+	s.metrics.RecordJobStarted()
+
+	// Update queue depth
+	s.updateQueueDepthMetric()
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(job); err != nil {
@@ -455,6 +481,12 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	// Record metrics for batch jobs
+	if len(assignedJobs) > 0 {
+		s.metrics.RecordJobsStarted(len(assignedJobs))
+	}
+	s.updateQueueDepthMetric()
+
 	slog.Info("Batch job assignment",
 		"worker_id", workerID,
 		"requested", limit,
@@ -521,6 +553,13 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record metrics
+	if job.StartedAt != nil {
+		duration := now.Sub(*job.StartedAt).Seconds()
+		s.metrics.RecordJobCompleted(duration)
+	}
+	s.metrics.RecordJobFinished()
+
 	slog.Info("Job completed", "job_id", req.JobID, "worker_id", req.WorkerID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -572,6 +611,26 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record metrics - classify error type
+	errorType := "unknown"
+	if req.ErrorMessage != "" {
+		if contains(req.ErrorMessage, "download") {
+			errorType = "download"
+		} else if contains(req.ErrorMessage, "upload") {
+			errorType = "upload"
+		} else if contains(req.ErrorMessage, "conversion") || contains(req.ErrorMessage, "ffmpeg") {
+			errorType = "conversion"
+		} else if contains(req.ErrorMessage, "timeout") {
+			errorType = "timeout"
+		}
+	}
+	var duration float64
+	if job.StartedAt != nil {
+		duration = time.Since(*job.StartedAt).Seconds()
+	}
+	s.metrics.RecordJobFailed(duration, errorType)
+	s.metrics.RecordJobFinished()
+
 	slog.Warn("Job failed", "job_id", req.JobID, "worker_id", req.WorkerID, "error", req.ErrorMessage)
 	w.WriteHeader(http.StatusOK)
 }
@@ -598,6 +657,16 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to update worker heartbeat", "worker_id", hb.WorkerID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// Record worker heartbeat metric
+	s.metrics.RecordWorkerHeartbeat(hb.WorkerID, hb.Hostname)
+
+	// Update worker counts
+	workers, err := s.db.GetWorkers()
+	if err == nil {
+		activeWorkers, _ := s.db.GetActiveWorkers(120)
+		s.metrics.SetWorkerCounts(len(workers), len(activeWorkers))
 	}
 
 	slog.Debug("Worker heartbeat received", "worker_id", hb.WorkerID)
