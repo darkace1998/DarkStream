@@ -170,10 +170,13 @@ DarkStream is a distributed video converter system built with Go that:
   - Location: `video-converter-worker/internal/converter/ffmpeg.go`, `video-converter-master/internal/server/http.go`
 
 ### Feature Additions
-- [ ] **Add video metadata extraction**
-  - Use FFprobe to get video info before conversion
-  - Store duration, resolution, codec in job record
-  - Location: `video-converter-worker/internal/converter/`
+- [x] **Add video metadata extraction**
+  - Created `MetadataExtractor` struct using FFprobe to get video info
+  - Added `VideoMetadata` struct to models with: duration, width, height, video_codec, audio_codec, bitrate, file_size
+  - Added metadata fields to `Job` model: source_width, source_height, source_video_codec, source_audio_codec, source_bitrate, source_file_size
+  - Database migration adds new columns to jobs table
+  - Worker extracts metadata after downloading source file, before conversion
+  - Location: `video-converter-worker/internal/converter/metadata.go`, `video-converter-common/models/job.go`, `video-converter-master/internal/db/tracker.go`
 
 - [ ] **Implement custom conversion profiles**
   - Predefined profiles (web, mobile, archive)

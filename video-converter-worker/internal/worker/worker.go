@@ -26,6 +26,7 @@ type Worker struct {
 	masterClient      *client.MasterClient
 	configFetcher     *client.ConfigFetcher
 	ffmpegConverter   *converter.FFmpegConverter
+	metadataExtractor *converter.MetadataExtractor
 	vulkanDetector    *converter.VulkanDetector
 	validator         *converter.Validator
 	cacheManager      *CacheManager
@@ -52,6 +53,9 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		vulkanDetector,
 		cfg.FFmpeg.Timeout,
 	)
+
+	// Create metadata extractor
+	metadataExtractor := converter.NewMetadataExtractor(cfg.FFmpeg.Path)
 
 	// Detect Vulkan capabilities early
 	var vulkanCaps *converter.VulkanCapabilities
@@ -103,6 +107,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		masterClient:      masterClient,
 		configFetcher:     configFetcher,
 		ffmpegConverter:   ffmpegConverter,
+		metadataExtractor: metadataExtractor,
 		vulkanDetector:    vulkanDetector,
 		validator:         validator,
 		cacheManager:      cacheManager,
@@ -439,6 +444,25 @@ func (w *Worker) executeJob(job *models.Job) error {
 		slog.Info("Source file checksum validated successfully", "job_id", job.ID)
 	} else {
 		slog.Debug("No source checksum available for validation", "job_id", job.ID)
+	}
+
+	// Extract video metadata using FFprobe
+	metadata, err := w.metadataExtractor.GetVideoMetadata(sourceLocalPath)
+	if err != nil {
+		slog.Warn("Failed to extract video metadata", "job_id", job.ID, "error", err)
+		// Continue without metadata - don't fail the job
+	} else {
+		// Apply metadata to job for later storage
+		converter.ApplyMetadataToJob(job, metadata)
+		slog.Info("Extracted video metadata",
+			"job_id", job.ID,
+			"duration", metadata.Duration,
+			"resolution", fmt.Sprintf("%dx%d", metadata.Width, metadata.Height),
+			"video_codec", metadata.VideoCodec,
+			"audio_codec", metadata.AudioCodec,
+			"bitrate", metadata.Bitrate,
+			"file_size", metadata.FileSize,
+		)
 	}
 
 	// Report progress: download complete, starting conversion
