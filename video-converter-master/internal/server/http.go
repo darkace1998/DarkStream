@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
 	"github.com/darkace1998/video-converter-master/internal/config"
@@ -251,6 +252,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
+
+	// Progress tracking endpoints
+	mux.HandleFunc("/api/job/progress", s.correlationMiddleware(s.rateLimitMiddleware(s.GetJobProgress)))
+	mux.HandleFunc("/api/job/progress/stream", s.correlationMiddleware(s.StreamJobProgress)) // SSE endpoint (no rate limit)
 
 	// CLI API endpoints - with correlation ID
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.RetryFailedJobs)))
@@ -1308,6 +1313,175 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 		"stage", progress.Stage,
 	)
 	w.WriteHeader(http.StatusOK)
+}
+
+// GetJobProgress returns the current progress of a specific job
+func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	progress, err := s.db.GetJobProgress(jobID)
+	if err != nil {
+		// Try to get job status instead (might not have progress yet)
+		job, jobErr := s.db.GetJobByID(jobID)
+		if jobErr != nil {
+			http.Error(w, "Job not found", http.StatusNotFound)
+			return
+		}
+
+		// Return job status without detailed progress
+		response := map[string]any{
+			"job_id":     jobID,
+			"status":     job.Status,
+			"progress":   0.0,
+			"stage":      job.Status,
+			"updated_at": job.CreatedAt,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+			slog.Error("Failed to encode job progress response", "error", encErr)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(progress); err != nil {
+		slog.Error("Failed to encode job progress response", "error", err)
+	}
+}
+
+// StreamJobProgress provides Server-Sent Events (SSE) for real-time progress updates
+func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Verify job exists
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Get flusher for SSE
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial event with job status
+	initialEvent := map[string]any{
+		"job_id":   jobID,
+		"status":   job.Status,
+		"progress": 0.0,
+		"stage":    job.Status,
+	}
+	if progress, progressErr := s.db.GetJobProgress(jobID); progressErr == nil {
+		initialEvent["progress"] = progress.Progress
+		initialEvent["fps"] = progress.FPS
+		initialEvent["stage"] = progress.Stage
+		initialEvent["updated_at"] = progress.UpdatedAt
+	}
+
+	eventData, err := json.Marshal(initialEvent)
+	if err != nil {
+		slog.Error("Failed to marshal initial event", "error", err)
+		return
+	}
+	fmt.Fprintf(w, "event: progress\ndata: %s\n\n", eventData)
+	flusher.Flush()
+
+	// Poll for updates (2 second interval to reduce database load)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+	lastProgress := 0.0
+	lastStage := ""
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Client disconnected
+			return
+		case <-ticker.C:
+			// Check if job is still processing
+			currentJob, jobErr := s.db.GetJobByID(jobID)
+			if jobErr != nil {
+				// Job deleted, send close event
+				fmt.Fprintf(w, "event: error\ndata: {\"error\": \"job not found\"}\n\n")
+				flusher.Flush()
+				return
+			}
+
+			// Get current progress
+			progress, progressErr := s.db.GetJobProgress(jobID)
+
+			// Build event data
+			progressEvent := map[string]any{
+				"job_id": jobID,
+				"status": currentJob.Status,
+			}
+
+			if progressErr == nil {
+				progressEvent["progress"] = progress.Progress
+				progressEvent["fps"] = progress.FPS
+				progressEvent["stage"] = progress.Stage
+				progressEvent["updated_at"] = progress.UpdatedAt
+
+				// Only send if there's a change
+				if progress.Progress != lastProgress || progress.Stage != lastStage {
+					lastProgress = progress.Progress
+					lastStage = progress.Stage
+
+					data, marshalErr := json.Marshal(progressEvent)
+					if marshalErr != nil {
+						slog.Error("Failed to marshal progress event", "error", marshalErr)
+						continue
+					}
+					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+					flusher.Flush()
+				}
+			}
+
+			// Check if job completed or failed
+			if currentJob.Status == constants.JobStatusCompleted || currentJob.Status == constants.JobStatusFailed {
+				progressEvent["progress"] = 100.0
+				if currentJob.Status == constants.JobStatusFailed {
+					progressEvent["error"] = currentJob.ErrorMessage
+				}
+				data, marshalErr := json.Marshal(progressEvent)
+				if marshalErr != nil {
+					slog.Error("Failed to marshal complete event", "error", marshalErr)
+					return
+				}
+				fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
+				flusher.Flush()
+				return
+			}
+		}
+	}
 }
 
 // RetryFailedJobs handles retrying failed jobs via CLI

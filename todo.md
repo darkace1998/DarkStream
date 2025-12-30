@@ -160,10 +160,14 @@ DarkStream is a distributed video converter system built with Go that:
   - Returns `healthy`, `degraded`, or `unhealthy` status with per-component details
   - Location: `video-converter-master/internal/server/http.go`
 
-- [ ] **Add real-time progress tracking**
-  - FFmpeg progress parsing
-  - WebSocket or SSE for live updates
-  - Location: `video-converter-worker/internal/converter/ffmpeg.go`
+- [x] **Add real-time progress tracking**
+  - FFmpeg progress parsing already implemented in `video-converter-worker/internal/converter/ffmpeg.go`
+  - Worker reports progress to master via `/api/worker/job-progress`
+  - Added `GET /api/job/progress?job_id=X` - fetch current job progress
+  - Added `GET /api/job/progress/stream?job_id=X` - Server-Sent Events (SSE) for live updates
+  - SSE streams progress, fps, stage updates in real-time (1s polling)
+  - Automatically sends "complete" event when job finishes
+  - Location: `video-converter-worker/internal/converter/ffmpeg.go`, `video-converter-master/internal/server/http.go`
 
 ### Feature Additions
 - [ ] **Add video metadata extraction**
