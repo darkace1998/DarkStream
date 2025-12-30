@@ -51,10 +51,10 @@ func newRateLimiter() *rateLimiter {
 		requestCounts: make(map[string]*bucketState),
 		cleanupTicker: time.NewTicker(5 * time.Minute),
 	}
-	
+
 	// Start cleanup goroutine
 	go rl.cleanup()
-	
+
 	return rl
 }
 
@@ -78,7 +78,7 @@ func (rl *rateLimiter) allow(ip string, maxTokens int, refillRate time.Duration)
 
 	now := time.Now()
 	state, exists := rl.requestCounts[ip]
-	
+
 	if !exists {
 		state = &bucketState{
 			tokens:     maxTokens - 1,
@@ -91,7 +91,7 @@ func (rl *rateLimiter) allow(ip string, maxTokens int, refillRate time.Duration)
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(state.lastRefill)
 	tokensToAdd := int(elapsed / refillRate)
-	
+
 	if tokensToAdd > 0 {
 		state.tokens += tokensToAdd
 		if state.tokens > maxTokens {
@@ -115,25 +115,25 @@ func (rl *rateLimiter) stop() {
 
 // Server handles HTTP API requests
 type Server struct {
-	db            *db.Tracker
-	addr          string
-	server        *http.Server
-	configMgr     *config.Manager
-	rateLimiter   *rateLimiter
-	apiKey        string
-	allowedDirs   []string // Allowed directories for file operations (source and output)
+	db          *db.Tracker
+	addr        string
+	server      *http.Server
+	configMgr   *config.Manager
+	rateLimiter *rateLimiter
+	apiKey      string
+	allowedDirs []string // Allowed directories for file operations (source and output)
 }
 
 // New creates a new HTTP server instance
 func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *models.MasterConfig) *Server {
 	apiKey := cfg.Server.APIKey
-	
+
 	// Configure allowed directories for path validation
 	allowedDirs := []string{
 		cfg.Scanner.RootPath,   // Source videos directory
 		cfg.Scanner.OutputBase, // Output/converted videos directory
 	}
-	
+
 	return &Server{
 		db:          tracker,
 		addr:        addr,
@@ -152,14 +152,14 @@ func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 			ip = forwarded
 		}
-		
+
 		// Apply rate limit: 100 requests per minute per IP
 		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
 			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
-		
+
 		next(w, r)
 	}
 }
@@ -172,7 +172,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		
+
 		// Extract Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -180,7 +180,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
 			return
 		}
-		
+
 		// Validate API key format: "Bearer <api_key>"
 		expectedHeader := "Bearer " + s.apiKey
 		if authHeader != expectedHeader {
@@ -188,7 +188,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
 			return
 		}
-		
+
 		next(w, r)
 	}
 }
@@ -205,6 +205,7 @@ func (s *Server) Start() error {
 
 	// Worker API - with rate limiting and authentication
 	mux.HandleFunc("/api/worker/next-job", s.rateLimitMiddleware(s.authMiddleware(s.GetNextJob)))
+	mux.HandleFunc("/api/worker/next-jobs", s.rateLimitMiddleware(s.authMiddleware(s.GetNextJobs)))
 	mux.HandleFunc("/api/worker/job-complete", s.rateLimitMiddleware(s.authMiddleware(s.JobComplete)))
 	mux.HandleFunc("/api/worker/job-failed", s.rateLimitMiddleware(s.authMiddleware(s.JobFailed)))
 	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.authMiddleware(s.WorkerHeartbeat)))
@@ -241,10 +242,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.server == nil {
 		return nil
 	}
-	
+
 	// Stop rate limiter cleanup
 	s.rateLimiter.stop()
-	
+
 	slog.Info("Shutting down HTTP server")
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)
@@ -277,7 +278,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Optional: get worker's GPU availability for future prioritization
 	gpuAvailable := r.URL.Query().Get("gpu_available") == "true"
 	_ = gpuAvailable // Reserved for future GPU-specific job routing
@@ -327,6 +328,146 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(job); err != nil {
 		slog.Error("Failed to encode job as JSON", "error", err)
+		return
+	}
+}
+
+// GetNextJobs handles batch requests for multiple pending jobs
+// This reduces API calls by allowing workers to fetch multiple jobs at once
+func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Validate worker_id parameter
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse limit parameter (default 5, max 20)
+	limitStr := r.URL.Query().Get("limit")
+	limit := 5
+	if limitStr != "" {
+		parsedLimit, err := parseInt(limitStr)
+		if err != nil || parsedLimit <= 0 {
+			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+			return
+		}
+		limit = parsedLimit
+	}
+	if limit > 20 {
+		limit = 20 // Cap batch size to prevent overloading workers
+	}
+
+	// Check worker's current load before assigning more jobs
+	var availableSlots int
+	workers, err := s.db.GetActiveWorkers(120) // 2 minute threshold
+	if err != nil {
+		slog.Error("Failed to get active workers for load balancing", "error", err)
+		availableSlots = limit // Continue anyway with requested limit
+	} else {
+		// Find the requesting worker's current load
+		availableSlots = limit
+		for _, worker := range workers {
+			if worker.WorkerID == workerID {
+				const maxJobsPerWorker = 5
+				availableSlots = maxJobsPerWorker - worker.ActiveJobs
+				if availableSlots <= 0 {
+					slog.Info("Worker at capacity, not assigning new jobs",
+						"worker_id", workerID,
+						"active_jobs", worker.ActiveJobs,
+						"max_jobs", maxJobsPerWorker)
+					w.Header().Set("Content-Type", "application/json")
+					response := map[string]any{
+						"jobs":  []*models.Job{},
+						"count": 0,
+					}
+					if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+						slog.Error("Failed to encode response", "error", encErr)
+					}
+					return
+				}
+				if availableSlots > limit {
+					availableSlots = limit
+				}
+				break
+			}
+		}
+	}
+
+	// Fetch batch of pending jobs
+	pendingJobs, err := s.db.GetNextPendingJobs(availableSlots)
+	if err != nil {
+		slog.Error("Failed to get pending jobs", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]any{
+			"jobs":  []*models.Job{},
+			"count": 0,
+		}
+		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+			slog.Error("Failed to encode response", "error", encErr)
+		}
+		return
+	}
+
+	if len(pendingJobs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]any{
+			"jobs":  []*models.Job{},
+			"count": 0,
+		}
+		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+			slog.Error("Failed to encode response", "error", encErr)
+		}
+		return
+	}
+
+	// Assign all fetched jobs to the worker
+	// Note: Each job is assigned individually. If an assignment fails,
+	// that job remains in pending state and can be picked up later.
+	// Only successfully assigned jobs are returned to the worker.
+	now := time.Now()
+	assignedJobs := make([]*models.Job, 0, len(pendingJobs))
+	failedAssignments := 0
+
+	for _, job := range pendingJobs {
+		job.Status = statusProcessing
+		job.WorkerID = workerID
+		job.StartedAt = &now
+
+		if err := s.db.UpdateJob(job); err != nil {
+			slog.Error("Failed to update job for batch assignment", "job_id", job.ID, "error", err)
+			failedAssignments++
+			continue
+		}
+		assignedJobs = append(assignedJobs, job)
+	}
+
+	if failedAssignments > 0 {
+		slog.Warn("Some jobs failed to assign in batch",
+			"worker_id", workerID,
+			"requested", len(pendingJobs),
+			"assigned", len(assignedJobs),
+			"failed", failedAssignments,
+		)
+	}
+
+	slog.Info("Batch job assignment",
+		"worker_id", workerID,
+		"requested", limit,
+		"assigned", len(assignedJobs),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"jobs":  assignedJobs,
+		"count": len(assignedJobs),
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode batch jobs response", "error", err)
 		return
 	}
 }
@@ -588,7 +729,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
 		var start, end int64
 		var validRange bool
-		
+
 		// Try bytes=start-end format
 		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
 			validRange = true
@@ -605,7 +746,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			}
 			validRange = true
 		}
-		
+
 		if validRange {
 			// Validate range
 			if start < 0 || start >= fileSize || end < start || end >= fileSize {
@@ -613,16 +754,16 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
 				return
 			}
-			
+
 			contentLength := end - start + 1
-			
+
 			// Seek to the start position
 			if _, err := file.Seek(start, 0); err != nil {
 				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
 				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
 				return
 			}
-			
+
 			// Set range response headers
 			w.Header().Set("Content-Type", "video/mp4")
 			w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
@@ -630,13 +771,13 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
 			w.Header().Set("Accept-Ranges", "bytes")
 			w.WriteHeader(http.StatusPartialContent)
-			
+
 			// Stream the remaining file content
 			if _, err := io.CopyN(w, file, contentLength); err != nil {
 				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
 				return
 			}
-			
+
 			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
 			return
 		}
@@ -703,7 +844,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Use validated path for all file operations
 	outputPath := validatedPath
-	
+
 	// If validated path differs from database path, update the job
 	// This can happen if path normalization occurred (e.g., /path//file -> /path/file)
 	if outputPath != job.OutputPath {

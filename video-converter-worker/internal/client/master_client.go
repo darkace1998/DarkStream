@@ -29,29 +29,29 @@ const (
 
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
-	baseURL            string
-	workerID           string
-	client             *http.Client
-	gpuAvailable       bool
-	downloadTimeout    time.Duration
-	uploadTimeout      time.Duration
-	bandwidthLimit     int64 // bytes per second (0 = unlimited)
+	baseURL              string
+	workerID             string
+	client               *http.Client
+	gpuAvailable         bool
+	downloadTimeout      time.Duration
+	uploadTimeout        time.Duration
+	bandwidthLimit       int64 // bytes per second (0 = unlimited)
 	enableResumeDownload bool
-	apiKey             string
+	apiKey               string
 }
 
 // New creates a new MasterClient instance
 func New(baseURL, workerID string, gpuAvailable bool) *MasterClient {
 	return &MasterClient{
-		baseURL:            baseURL,
-		workerID:           workerID,
-		client:             &http.Client{Timeout: 30 * time.Second},
-		gpuAvailable:       gpuAvailable,
-		downloadTimeout:    30 * time.Minute,
-		uploadTimeout:      30 * time.Minute,
-		bandwidthLimit:     0,
+		baseURL:              baseURL,
+		workerID:             workerID,
+		client:               &http.Client{Timeout: 30 * time.Second},
+		gpuAvailable:         gpuAvailable,
+		downloadTimeout:      30 * time.Minute,
+		uploadTimeout:        30 * time.Minute,
+		bandwidthLimit:       0,
 		enableResumeDownload: false,
-		apiKey:             "",
+		apiKey:               "",
 	}
 }
 
@@ -124,6 +124,60 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	}
 
 	return &job, nil
+}
+
+// GetNextJobs requests multiple available jobs from the master for batch processing
+// Returns up to 'limit' jobs at once to reduce API calls
+func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	url := fmt.Sprintf("%s/api/worker/next-jobs?worker_id=%s&gpu_available=%t&limit=%d",
+		mc.baseURL, mc.workerID, mc.gpuAvailable, limit)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication header if API key is set
+	if mc.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	}
+
+	resp, err := mc.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to request jobs: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s",
+			resp.StatusCode, string(body))
+	}
+
+	var response struct {
+		Jobs  []*models.Job `json:"jobs"`
+		Count int           `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode jobs response: %w", err)
+	}
+
+	if len(response.Jobs) == 0 {
+		return nil, ErrNoJobsAvailable
+	}
+
+	return response.Jobs, nil
 }
 
 // ReportJobComplete reports successful job completion to the master
@@ -433,11 +487,11 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 
 // ThrottledReader wraps an io.Reader with bandwidth throttling using token bucket algorithm
 type ThrottledReader struct {
-	reader        io.Reader
-	bytesPerSec   int64
-	tokens        int64     // Available tokens (bytes we can read)
-	lastRefill    time.Time
-	mu            sync.Mutex
+	reader      io.Reader
+	bytesPerSec int64
+	tokens      int64 // Available tokens (bytes we can read)
+	lastRefill  time.Time
+	mu          sync.Mutex
 }
 
 // NewThrottledReader creates a new ThrottledReader
@@ -453,7 +507,7 @@ func NewThrottledReader(reader io.Reader, bytesPerSec int64) *ThrottledReader {
 // Read implements io.Reader with bandwidth throttling using token bucket
 func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	tr.mu.Lock()
-	
+
 	// Refill tokens based on elapsed time
 	now := time.Now()
 	elapsed := now.Sub(tr.lastRefill)
@@ -466,7 +520,7 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 		}
 		tr.lastRefill = now
 	}
-	
+
 	// If no tokens available, wait for minimum refill
 	if tr.tokens <= 0 {
 		// Calculate wait time to get at least some tokens
@@ -481,7 +535,7 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 		tr.tokens += int64(float64(tr.bytesPerSec) * waitDuration.Seconds())
 		tr.lastRefill = time.Now()
 	}
-	
+
 	// Limit read size based on available tokens
 	maxRead := len(p)
 	if int64(maxRead) > tr.tokens {
@@ -490,15 +544,15 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	if maxRead <= 0 {
 		maxRead = 1 // Always read at least 1 byte to make progress
 	}
-	
+
 	tr.mu.Unlock()
-	
+
 	n, err := tr.reader.Read(p[:maxRead])
-	
+
 	tr.mu.Lock()
 	tr.tokens -= int64(n)
 	tr.mu.Unlock()
-	
+
 	return n, err
 }
 
@@ -595,7 +649,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 	}
 
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
-	
+
 	// Add authentication header
 	mc.addAuthHeader(req)
 
@@ -645,13 +699,13 @@ type ProgressCallback func(bytesTransferred, totalBytes int64)
 
 // ProgressReader wraps an io.Reader and reports progress via a callback
 type ProgressReader struct {
-	reader            io.Reader
-	totalBytes        int64
-	bytesTransferred  int64
-	callback          ProgressCallback
-	lastReportTime    time.Time
-	reportInterval    time.Duration
-	mu                sync.Mutex
+	reader           io.Reader
+	totalBytes       int64
+	bytesTransferred int64
+	callback         ProgressCallback
+	lastReportTime   time.Time
+	reportInterval   time.Duration
+	mu               sync.Mutex
 }
 
 // NewProgressReader creates a new ProgressReader with progress reporting
@@ -668,12 +722,12 @@ func NewProgressReader(reader io.Reader, totalBytes int64, callback ProgressCall
 // Read implements io.Reader with progress tracking
 func (pr *ProgressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
-	
+
 	pr.mu.Lock()
 	pr.bytesTransferred += int64(n)
 	bytesTransferred := pr.bytesTransferred
 	totalBytes := pr.totalBytes
-	
+
 	// Check if we should report progress
 	now := time.Now()
 	shouldReport := now.Sub(pr.lastReportTime) >= pr.reportInterval || err == io.EOF
@@ -682,12 +736,12 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	}
 	callback := pr.callback
 	pr.mu.Unlock()
-	
+
 	// Call callback outside the mutex to avoid deadlocks
 	if shouldReport && callback != nil {
 		callback(bytesTransferred, totalBytes)
 	}
-	
+
 	return n, err
 }
 
@@ -945,7 +999,7 @@ func (mc *MasterClient) uploadConvertedVideoAttemptWithProgress(jobID, filePath 
 	}
 
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
-	
+
 	// Add authentication header
 	mc.addAuthHeader(req)
 
