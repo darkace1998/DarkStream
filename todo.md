@@ -132,11 +132,14 @@ DarkStream is a distributed video converter system built with Go that:
   - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/server/http.go`, `video-converter-worker/internal/client/master_client.go`
 
 ### Monitoring & Observability
-- [ ] **Add Prometheus metrics**
-  - Export job counts, processing times, error rates
-  - Worker health metrics
-  - Queue depth metrics
-  - Location: Create `video-converter-master/internal/metrics/` package
+- [x] **Add Prometheus metrics**
+  - Created `video-converter-master/internal/metrics/` package
+  - Job metrics: `darkstream_jobs_total`, `darkstream_jobs_in_progress`, `darkstream_jobs_duration_seconds`, `darkstream_jobs_queue_depth`, `darkstream_jobs_errors_total`, `darkstream_jobs_retries_total`
+  - Worker metrics: `darkstream_workers_total`, `darkstream_workers_active`, `darkstream_workers_last_heartbeat_timestamp`
+  - API metrics: `darkstream_api_requests_total`, `darkstream_api_latency_seconds`
+  - Transfer metrics: `darkstream_transfer_bytes_downloaded_total`, `darkstream_transfer_bytes_uploaded_total`
+  - Endpoint: `/metrics`
+  - Location: `video-converter-master/internal/metrics/metrics.go`, `video-converter-master/internal/server/http.go`
 
 - [ ] **Add structured logging improvements**
   - Correlation IDs for request tracing

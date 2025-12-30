@@ -405,6 +405,16 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 	return jobs, nil
 }
 
+// CountPendingJobs returns the number of jobs with pending status
+func (t *Tracker) CountPendingJobs() (int, error) {
+	var count int
+	err := t.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status = 'pending'`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count pending jobs: %w", err)
+	}
+	return count, nil
+}
+
 // UpdateJob updates an existing job in the database
 func (t *Tracker) UpdateJob(job *models.Job) error {
 	_, err := t.db.Exec(`
