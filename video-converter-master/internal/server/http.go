@@ -202,6 +202,26 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// correlationMiddleware adds a correlation ID to each request for tracing
+func (s *Server) correlationMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check if correlation ID is already in the request header
+		correlationID := r.Header.Get("X-Correlation-ID")
+		if correlationID == "" {
+			correlationID = utils.GenerateCorrelationID()
+		}
+
+		// Add correlation ID to response header
+		w.Header().Set("X-Correlation-ID", correlationID)
+
+		// Add correlation ID to request context
+		ctx := utils.ContextWithCorrelationID(r.Context(), correlationID)
+		r = r.WithContext(ctx)
+
+		next(w, r)
+	}
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -212,27 +232,27 @@ func (s *Server) Start() error {
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", metrics.Handler())
 
-	// Configuration API
-	mux.HandleFunc("/api/config", s.rateLimitMiddleware(s.handleConfig))
+	// Configuration API - with correlation ID
+	mux.HandleFunc("/api/config", s.correlationMiddleware(s.rateLimitMiddleware(s.handleConfig)))
 
-	// Worker API - with rate limiting and authentication
-	mux.HandleFunc("/api/worker/next-job", s.rateLimitMiddleware(s.authMiddleware(s.GetNextJob)))
-	mux.HandleFunc("/api/worker/next-jobs", s.rateLimitMiddleware(s.authMiddleware(s.GetNextJobs)))
-	mux.HandleFunc("/api/worker/job-complete", s.rateLimitMiddleware(s.authMiddleware(s.JobComplete)))
-	mux.HandleFunc("/api/worker/job-failed", s.rateLimitMiddleware(s.authMiddleware(s.JobFailed)))
-	mux.HandleFunc("/api/worker/heartbeat", s.rateLimitMiddleware(s.authMiddleware(s.WorkerHeartbeat)))
-	mux.HandleFunc("/api/worker/download-video", s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo)))
-	mux.HandleFunc("/api/worker/upload-video", s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo)))
-	mux.HandleFunc("/api/worker/job-progress", s.rateLimitMiddleware(s.authMiddleware(s.JobProgress)))
-	mux.HandleFunc("/api/status", s.rateLimitMiddleware(s.GetStatus))
-	mux.HandleFunc("/api/stats", s.rateLimitMiddleware(s.GetStats))
+	// Worker API - with correlation ID, rate limiting and authentication
+	mux.HandleFunc("/api/worker/next-job", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetNextJob))))
+	mux.HandleFunc("/api/worker/next-jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetNextJobs))))
+	mux.HandleFunc("/api/worker/job-complete", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobComplete))))
+	mux.HandleFunc("/api/worker/job-failed", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobFailed))))
+	mux.HandleFunc("/api/worker/heartbeat", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.WorkerHeartbeat))))
+	mux.HandleFunc("/api/worker/download-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo))))
+	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
+	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
+	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
+	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 
-	// CLI API endpoints
-	mux.HandleFunc("/api/retry", s.rateLimitMiddleware(s.RetryFailedJobs))
-	mux.HandleFunc("/api/jobs", s.rateLimitMiddleware(s.ListJobs))
-	mux.HandleFunc("/api/job/cancel", s.rateLimitMiddleware(s.CancelJob))
-	mux.HandleFunc("/api/workers", s.rateLimitMiddleware(s.ListWorkers))
-	mux.HandleFunc("/api/validate-config", s.rateLimitMiddleware(s.ValidateConfig))
+	// CLI API endpoints - with correlation ID
+	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.RetryFailedJobs)))
+	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.ListJobs)))
+	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
+	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.ListWorkers)))
+	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.ValidateConfig)))
 
 	s.server = &http.Server{
 		Addr:         s.addr,
