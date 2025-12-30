@@ -123,9 +123,13 @@ DarkStream is a distributed video converter system built with Go that:
   - Migration support for adding priority to existing databases
   - Location: `video-converter-common/models/job.go`, `video-converter-common/constants/constants.go`, `video-converter-master/internal/db/tracker.go`
 
-- [ ] **Implement job batching**
-  - Fetch multiple jobs at once to reduce API calls
-  - Location: `video-converter-master/internal/server/handlers.go`
+- [x] **Implement job batching**
+  - Added `GetNextPendingJobs(limit)` database method to fetch multiple pending jobs
+  - Added `/api/worker/next-jobs` endpoint for batch job assignment
+  - Added `GetNextJobs(limit)` client method for workers to fetch multiple jobs
+  - Batch size configurable via `limit` parameter (default 5, max 20)
+  - Includes load balancing: respects worker capacity limits
+  - Location: `video-converter-master/internal/db/tracker.go`, `video-converter-master/internal/server/http.go`, `video-converter-worker/internal/client/master_client.go`
 
 ### Monitoring & Observability
 - [ ] **Add Prometheus metrics**

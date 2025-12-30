@@ -28,10 +28,10 @@ type ConnectionPoolConfig struct {
 // DefaultConnectionPoolConfig returns default connection pool configuration
 func DefaultConnectionPoolConfig() ConnectionPoolConfig {
 	return ConnectionPoolConfig{
-		MaxOpenConnections: 25,                 // SQLite typically works well with 25 connections
-		MaxIdleConnections: 5,                  // Keep 5 idle connections ready
-		ConnMaxLifetime:    time.Hour,          // Recycle connections after 1 hour
-		ConnMaxIdleTime:    10 * time.Minute,   // Close idle connections after 10 minutes
+		MaxOpenConnections: 25,               // SQLite typically works well with 25 connections
+		MaxIdleConnections: 5,                // Keep 5 idle connections ready
+		ConnMaxLifetime:    time.Hour,        // Recycle connections after 1 hour
+		ConnMaxIdleTime:    10 * time.Minute, // Close idle connections after 10 minutes
 	}
 }
 
@@ -53,19 +53,19 @@ func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, er
 		slog.Info("Database connection pool configured",
 			"max_open_connections", poolConfig.MaxOpenConnections)
 	}
-	
+
 	if poolConfig.MaxIdleConnections > 0 {
 		db.SetMaxIdleConns(poolConfig.MaxIdleConnections)
 		slog.Info("Database idle connections configured",
 			"max_idle_connections", poolConfig.MaxIdleConnections)
 	}
-	
+
 	if poolConfig.ConnMaxLifetime > 0 {
 		db.SetConnMaxLifetime(poolConfig.ConnMaxLifetime)
 		slog.Info("Database connection max lifetime configured",
 			"conn_max_lifetime", poolConfig.ConnMaxLifetime)
 	}
-	
+
 	if poolConfig.ConnMaxIdleTime > 0 {
 		db.SetConnMaxIdleTime(poolConfig.ConnMaxIdleTime)
 		slog.Info("Database connection max idle time configured",
@@ -140,22 +140,22 @@ func (t *Tracker) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
-	
+
 	// Add checksum columns if they don't exist (migration)
 	if err := t.migrateChecksumColumns(); err != nil {
 		return fmt.Errorf("failed to migrate checksum columns: %w", err)
 	}
-	
+
 	// Add worker status column if it doesn't exist (migration)
 	if err := t.migrateWorkerStatusColumn(); err != nil {
 		return fmt.Errorf("failed to migrate worker status column: %w", err)
 	}
-	
+
 	// Add priority column if it doesn't exist (migration)
 	if err := t.migratePriorityColumn(); err != nil {
 		return fmt.Errorf("failed to migrate priority column: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -236,7 +236,7 @@ func (t *Tracker) migratePriorityColumn() error {
 		if err != nil {
 			return fmt.Errorf("failed to add priority column: %w", err)
 		}
-		
+
 		// Create index on priority for efficient sorting
 		slog.Info("Creating index on priority column")
 		_, err = t.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)`)
@@ -339,6 +339,70 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 	}
 
 	return &job, nil
+}
+
+// GetNextPendingJobs retrieves multiple pending jobs from the queue for batch processing
+// Returns up to 'limit' jobs ordered by priority (highest first) and creation time
+func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100 // Cap at 100 to prevent excessive queries
+	}
+
+	query := `
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+		FROM jobs WHERE status = 'pending'
+		ORDER BY priority DESC, created_at ASC
+		LIMIT ?
+	`
+
+	rows, err := t.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending jobs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+
+		if err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
+		); err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
 }
 
 // UpdateJob updates an existing job in the database
@@ -473,7 +537,7 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 		FROM jobs WHERE status = ?
 		ORDER BY created_at DESC
 	`
-	
+
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -502,14 +566,14 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
 		}
-		
+
 		if startedAt.Valid {
 			job.StartedAt = &startedAt.Time
 		}
 		if completedAt.Valid {
 			job.CompletedAt = &completedAt.Time
 		}
-		
+
 		jobs = append(jobs, &job)
 	}
 
@@ -537,7 +601,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		WHERE created_at BETWEEN ? AND ?
 		ORDER BY created_at DESC
 	`
-	
+
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -566,14 +630,14 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			slog.Warn("Failed to scan job row", "error", err)
 			continue
 		}
-		
+
 		if startedAt.Valid {
 			job.StartedAt = &startedAt.Time
 		}
 		if completedAt.Valid {
 			job.CompletedAt = &completedAt.Time
 		}
-		
+
 		jobs = append(jobs, &job)
 	}
 
@@ -597,11 +661,11 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 		FROM jobs
 		WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
 	`).Scan(&totalDuration)
-	
+
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to calculate total duration: %w", err)
 	}
-	
+
 	if totalDuration.Valid {
 		metrics["total_conversion_time_seconds"] = totalDuration.Float64
 	} else {
@@ -617,11 +681,11 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 		FROM jobs
 		WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL
 	`).Scan(&avgDuration)
-	
+
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to calculate average duration: %w", err)
 	}
-	
+
 	if avgDuration.Valid {
 		metrics["average_conversion_time_seconds"] = avgDuration.Float64
 	} else {
@@ -635,11 +699,11 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 		FROM jobs
 		WHERE status = 'completed'
 	`).Scan(&totalSize)
-	
+
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("failed to calculate total size: %w", err)
 	}
-	
+
 	if totalSize.Valid {
 		metrics["total_output_size_bytes"] = totalSize.Int64
 	} else {
