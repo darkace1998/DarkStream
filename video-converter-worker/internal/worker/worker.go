@@ -542,7 +542,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 // reportProgress sends progress update to master
 func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) {
-	progress_report := &models.JobProgress{
+	progressReport := &models.JobProgress{
 		JobID:     jobID,
 		WorkerID:  w.config.Worker.ID,
 		Progress:  progress,
@@ -550,7 +550,7 @@ func (w *Worker) reportProgress(jobID string, progress float64, fps float64, sta
 		Stage:     stage,
 		UpdatedAt: time.Now(),
 	}
-	w.masterClient.ReportJobProgress(progress_report)
+	w.masterClient.ReportJobProgress(progressReport)
 }
 
 // sendHeartbeats periodically sends heartbeats to the master

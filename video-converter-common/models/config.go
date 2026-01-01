@@ -44,8 +44,8 @@ type MasterConfig struct {
 	} `yaml:"scanner"`
 
 	Monitoring struct {
-		JobTimeout            time.Duration `yaml:"job_timeout"`              // Maximum time a job can be in processing state (default: 2 hours)
-		WorkerHealthInterval  time.Duration `yaml:"worker_health_interval"`   // How often to check worker health (default: 30 seconds)
+		JobTimeout             time.Duration `yaml:"job_timeout"`               // Maximum time a job can be in processing state (default: 2 hours)
+		WorkerHealthInterval   time.Duration `yaml:"worker_health_interval"`    // How often to check worker health (default: 30 seconds)
 		FailedJobRetryInterval time.Duration `yaml:"failed_job_retry_interval"` // How often to check for failed jobs to retry (default: 1 minute)
 	} `yaml:"monitoring"`
 
@@ -64,28 +64,28 @@ type MasterConfig struct {
 // WorkerConfig holds the configuration for worker processes.
 type WorkerConfig struct {
 	Worker struct {
-		ID                   string        `yaml:"id"`
-		Concurrency          int           `yaml:"concurrency"`
-		MasterURL            string        `yaml:"master_url"`
-		APIKey               string        `yaml:"api_key"` // API key for authenticating with master
-		HeartbeatInterval    time.Duration `yaml:"heartbeat_interval"`
-		JobCheckInterval     time.Duration `yaml:"job_check_interval"`
-		JobTimeout           time.Duration `yaml:"job_timeout"`
-		MaxAPIRequestsPerMin int           `yaml:"max_api_requests_per_min"` // Rate limit for API calls (0 = unlimited)
-		MaxBackoffInterval   time.Duration `yaml:"max_backoff_interval"`     // Maximum backoff when no jobs available
+		ID                     string        `yaml:"id"`
+		Concurrency            int           `yaml:"concurrency"`
+		MasterURL              string        `yaml:"master_url"`
+		APIKey                 string        `yaml:"api_key"` // API key for authenticating with master
+		HeartbeatInterval      time.Duration `yaml:"heartbeat_interval"`
+		JobCheckInterval       time.Duration `yaml:"job_check_interval"`
+		JobTimeout             time.Duration `yaml:"job_timeout"`
+		MaxAPIRequestsPerMin   int           `yaml:"max_api_requests_per_min"` // Rate limit for API calls (0 = unlimited)
+		MaxBackoffInterval     time.Duration `yaml:"max_backoff_interval"`     // Maximum backoff when no jobs available
 		InitialBackoffInterval time.Duration `yaml:"initial_backoff_interval"` // Initial backoff when no jobs available
 	} `yaml:"worker"`
 
 	Storage struct {
-		MountPath         string        `yaml:"mount_path"`
-		DownloadTimeout   time.Duration `yaml:"download_timeout"`
-		UploadTimeout     time.Duration `yaml:"upload_timeout"`
-		CachePath         string        `yaml:"cache_path"`
-		ChunkSize         int           `yaml:"chunk_size"`          // Reserved for future chunked streaming; currently unused
-		MaxCacheSize      int64         `yaml:"max_cache_size"`      // Maximum cache size in bytes (0 = unlimited)
-		CacheCleanupAge   time.Duration `yaml:"cache_cleanup_age"`   // Age after which cached files are cleaned up
-		BandwidthLimit    int64         `yaml:"bandwidth_limit"`     // Bandwidth limit in bytes per second (0 = unlimited)
-		EnableResumeDownload bool       `yaml:"enable_resume_download"` // Enable resume support for downloads
+		MountPath            string        `yaml:"mount_path"`
+		DownloadTimeout      time.Duration `yaml:"download_timeout"`
+		UploadTimeout        time.Duration `yaml:"upload_timeout"`
+		CachePath            string        `yaml:"cache_path"`
+		ChunkSize            int           `yaml:"chunk_size"`            // Reserved for future chunked streaming; currently unused
+		MaxCacheSize         int64         `yaml:"max_cache_size"`        // Maximum cache size in bytes (0 = unlimited)
+		CacheCleanupAge      time.Duration `yaml:"cache_cleanup_age"`     // Age after which cached files are cleaned up
+		BandwidthLimit       int64         `yaml:"bandwidth_limit"`       // Bandwidth limit in bytes per second (0 = unlimited)
+		EnableResumeDownload bool          `yaml:"enable_resume_download"` // Enable resume support for downloads
 	} `yaml:"storage"`
 
 	FFmpeg struct {

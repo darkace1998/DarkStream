@@ -109,7 +109,7 @@ func newMetrics() *Metrics {
 			prometheus.GaugeOpts{
 				Namespace: "darkstream",
 				Subsystem: "workers",
-				Name:      "total",
+				Name:      "registered",
 				Help:      "Total number of registered workers",
 			},
 		),

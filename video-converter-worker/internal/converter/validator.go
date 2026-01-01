@@ -47,5 +47,9 @@ func (v *Validator) GetFileSize(path string) (int64, error) {
 
 // VerifyChecksum verifies that a file's SHA256 checksum matches the expected value
 func (v *Validator) VerifyChecksum(filePath, expectedChecksum string) (bool, error) {
-	return utils.VerifyFileSHA256(filePath, expectedChecksum)
+	match, err := utils.VerifyFileSHA256(filePath, expectedChecksum)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify checksum: %w", err)
+	}
+	return match, nil
 }

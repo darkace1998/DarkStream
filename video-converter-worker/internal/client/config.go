@@ -1,4 +1,3 @@
-// Package client provides HTTP client for communicating with the master coordinator.
 package client
 
 import (

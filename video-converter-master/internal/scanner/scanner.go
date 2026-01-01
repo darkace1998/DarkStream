@@ -17,13 +17,13 @@ import (
 
 // ScanOptions configures scanner behavior
 type ScanOptions struct {
-	MaxDepth          int   // -1 for unlimited, 0 for root only, >0 for specific depth
-	MinFileSize       int64 // Minimum file size in bytes (0 = no minimum)
-	MaxFileSize       int64 // Maximum file size in bytes (0 = no maximum)
-	SkipHiddenFiles   bool  // Skip files starting with '.'
-	SkipHiddenDirs    bool  // Skip directories starting with '.'
-	ReplaceSource     bool  // Replace source file with output (output path = source path)
-	DetectDuplicates  bool  // Track file hashes to detect duplicates
+	MaxDepth         int   // -1 for unlimited, 0 for root only, >0 for specific depth
+	MinFileSize      int64 // Minimum file size in bytes (0 = no minimum)
+	MaxFileSize      int64 // Maximum file size in bytes (0 = no maximum)
+	SkipHiddenFiles  bool  // Skip files starting with '.'
+	SkipHiddenDirs   bool  // Skip directories starting with '.'
+	ReplaceSource    bool  // Replace source file with output (output path = source path)
+	DetectDuplicates bool  // Track file hashes to detect duplicates
 }
 
 // Scanner discovers video files in a directory tree
@@ -70,7 +70,7 @@ func (s *Scanner) SetOptions(opts ScanOptions) {
 // ScanDirectory walks the directory tree and finds all video files
 func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 	var jobs []*models.Job
-	
+
 	// Reset duplicate detection map if enabled
 	if s.Options.DetectDuplicates {
 		s.seenHashes = make(map[string]string)
@@ -85,6 +85,7 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 }
 
 // scanWithDepth recursively scans directories with depth control
+//nolint:gocognit // Directory scanning with filtering and deduplication is inherently complex
 func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*models.Job) error {
 	// Check depth limit
 	if s.Options.MaxDepth >= 0 && currentDepth > s.Options.MaxDepth {
@@ -224,24 +225,28 @@ func computeFileHash(filePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			slog.Warn("Failed to close file during hash computation", "path", filePath, "error", cerr)
+		}
+	}()
 
 	hash := sha256.New()
-	
+
 	// Read file in chunks to avoid loading entire file into memory
 	buf := make([]byte, 8192)
 	for {
-		n, err := file.Read(buf)
+		n, readErr := file.Read(buf)
 		if n > 0 {
 			if _, writeErr := hash.Write(buf[:n]); writeErr != nil {
 				return "", fmt.Errorf("failed to write to hash: %w", writeErr)
 			}
 		}
-		if err != nil {
-			if err.Error() == "EOF" {
+		if readErr != nil {
+			if readErr.Error() == "EOF" {
 				break
 			}
-			return "", fmt.Errorf("failed to read file: %w", err)
+			return "", fmt.Errorf("failed to read file: %w", readErr)
 		}
 	}
 

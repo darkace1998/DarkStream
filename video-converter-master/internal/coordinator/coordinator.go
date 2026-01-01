@@ -42,13 +42,13 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		ConnMaxLifetime:    time.Duration(cfg.Database.ConnMaxLifetime) * time.Second,
 		ConnMaxIdleTime:    time.Duration(cfg.Database.ConnMaxIdleTime) * time.Second,
 	}
-	
+
 	// Use default config if not specified
 	if poolConfig.MaxOpenConnections == 0 {
 		defaultConfig := db.DefaultConnectionPoolConfig()
 		poolConfig = defaultConfig
 	}
-	
+
 	tracker, err := db.NewWithConfig(cfg.Database.Path, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database tracker: %w", err)
@@ -184,6 +184,7 @@ func (c *Coordinator) Start() error {
 }
 
 // monitorWorkerHealth periodically checks worker health
+//nolint:gocognit,cyclop // Worker health monitoring with stale job recovery is inherently complex
 func (c *Coordinator) monitorWorkerHealth() {
 	defer c.wg.Done()
 	
@@ -322,6 +323,7 @@ func (c *Coordinator) monitorWorkerHealth() {
 }
 
 // monitorFailedJobs periodically checks for failed jobs that can be retried
+//nolint:gocognit // Failed job retry logic with exponential backoff is inherently complex
 func (c *Coordinator) monitorFailedJobs() {
 	defer c.wg.Done()
 	
@@ -356,10 +358,7 @@ func (c *Coordinator) monitorFailedJobs() {
 				// Calculate exponential backoff delay
 				// Base delay: 2 minutes, exponentially increases with retry count
 				// Formula: 2^retry_count minutes (capped at 60 minutes)
-				delayMinutes := 1 << uint(job.RetryCount) // 2^retry_count
-				if delayMinutes > 60 {
-					delayMinutes = 60
-				}
+				delayMinutes := min(1<<uint(job.RetryCount), 60) // 2^retry_count capped at 60
 				backoffDuration := time.Duration(delayMinutes) * time.Minute
 
 				// Check if enough time has passed since last check

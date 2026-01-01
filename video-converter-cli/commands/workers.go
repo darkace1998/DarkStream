@@ -50,19 +50,19 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
-		os.Exit(1)
+		return
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -90,7 +90,7 @@ func watchWorkers(masterURL string, activeOnly bool, format string) {
 
 	for range ticker.C {
 		// Clear screen (ANSI escape code)
-		fmt.Print("\033[2J\033[H")
+		_, _ = os.Stdout.WriteString("\033[2J\033[H")
 		slog.Info(fmt.Sprintf("👁️  Worker Status (updated: %s)", time.Now().Format("15:04:05")))
 		slog.Info("")
 		displayWorkers(masterURL, activeOnly, format)
@@ -99,12 +99,13 @@ func watchWorkers(masterURL string, activeOnly bool, format string) {
 
 func workersToTable(result map[string]any) ([]string, [][]string) {
 	headers := []string{"ID", "Hostname", "Status", "Active Jobs", "GPU", "CPU%", "Mem%", "Last Heartbeat"}
-	var rows [][]string
 
 	workers, ok := result["workers"].([]any)
 	if !ok || len(workers) == 0 {
-		return headers, rows
+		return headers, nil
 	}
+
+	rows := make([][]string, 0, len(workers))
 
 	for _, w := range workers {
 		worker, ok := w.(map[string]any)

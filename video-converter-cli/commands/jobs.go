@@ -53,19 +53,19 @@ func displayJobs(masterURL, status string, limit int, format string) {
 		body, _ := io.ReadAll(resp.Body)
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
 		slog.Info(string(body))
-		os.Exit(1)
+		return
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -93,7 +93,7 @@ func watchJobs(masterURL, status string, limit int, format string) {
 
 	for range ticker.C {
 		// Clear screen (ANSI escape code)
-		fmt.Print("\033[2J\033[H")
+		_, _ = os.Stdout.WriteString("\033[2J\033[H")
 		slog.Info(fmt.Sprintf("👁️  Job Status (updated: %s)", time.Now().Format("15:04:05")))
 		slog.Info("")
 		displayJobs(masterURL, status, limit, format)
@@ -102,12 +102,13 @@ func watchJobs(masterURL, status string, limit int, format string) {
 
 func jobsToTable(result map[string]any) ([]string, [][]string) {
 	headers := []string{"ID", "Status", "Source", "Worker", "Retries", "Created", "Error"}
-	var rows [][]string
 
 	jobs, ok := result["jobs"].([]any)
 	if !ok || len(jobs) == 0 {
-		return headers, rows
+		return headers, nil
 	}
+
+	rows := make([][]string, 0, len(jobs))
 
 	for _, j := range jobs {
 		job, ok := j.(map[string]any)
@@ -144,6 +145,7 @@ func jobsToTable(result map[string]any) ([]string, [][]string) {
 	return headers, rows
 }
 
+//nolint:gocognit,cyclop // Table formatting with multiple job status types is inherently complex
 func printJobsTable(result map[string]any, filterStatus string) {
 	jobs, ok := result["jobs"].([]any)
 	if !ok || len(jobs) == 0 {
@@ -207,14 +209,15 @@ func printJobsTable(result map[string]any, filterStatus string) {
 				prefix = "└─"
 			}
 
-			if status == "failed" && errorMsg != "" {
+			switch {
+			case status == "failed" && errorMsg != "":
 				if len(errorMsg) > 40 {
 					errorMsg = errorMsg[:40] + "..."
 				}
 				slog.Info(fmt.Sprintf("  %s %s: %s", prefix, id, errorMsg))
-			} else if status == "processing" && workerID != "" {
+			case status == "processing" && workerID != "":
 				slog.Info(fmt.Sprintf("  %s %s (worker: %s)", prefix, id, workerID))
-			} else {
+			default:
 				slog.Info(fmt.Sprintf("  %s %s: %s", prefix, id, sourcePath))
 			}
 		}

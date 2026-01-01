@@ -1,4 +1,3 @@
-// Package utils provides utility functions for the video converter application.
 package utils
 
 import (
@@ -6,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 )
 
@@ -18,7 +18,7 @@ func CalculateFileSHA256(filePath string) (string, error) {
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			// Log error but don't override the return error
+			slog.Warn("Failed to close file during checksum calculation", "error", cerr)
 		}
 	}()
 

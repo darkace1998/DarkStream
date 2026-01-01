@@ -1,7 +1,7 @@
-// Package worker implements the video conversion worker.
 package worker
 
 import (
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -51,21 +51,21 @@ func NewCacheManager(cachePath string, maxSize int64, maxAge time.Duration) *Cac
 func (cm *CacheManager) calculateCacheSize() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	var totalSize int64
-	_ = filepath.WalkDir(cm.cachePath, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(cm.cachePath, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // Skip errors
+			return nil //nolint:nilerr // Skip errors and continue walking
 		}
 		if !d.IsDir() {
-			info, err := d.Info()
-			if err == nil {
+			info, infoErr := d.Info()
+			if infoErr == nil {
 				totalSize += info.Size()
 			}
 		}
 		return nil
 	})
-	
+
 	cm.currentSize = totalSize
 	slog.Debug("Cache size calculated", "size_bytes", totalSize, "path", cm.cachePath)
 }
@@ -169,14 +169,14 @@ func (cm *CacheManager) Cleanup() error {
 // listCacheEntries lists all cache entries
 func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
 	var entries []CacheEntry
-	
+
 	err := filepath.WalkDir(cm.cachePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // Skip errors
+			return nil //nolint:nilerr // Skip errors and continue walking
 		}
 		if !d.IsDir() {
-			info, err := d.Info()
-			if err == nil {
+			info, infoErr := d.Info()
+			if infoErr == nil {
 				entries = append(entries, CacheEntry{
 					Path:    path,
 					Size:    info.Size(),
@@ -186,8 +186,11 @@ func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
 		}
 		return nil
 	})
-	
-	return entries, err
+
+	if err != nil {
+		return entries, fmt.Errorf("failed to walk cache directory: %w", err)
+	}
+	return entries, nil
 }
 
 // AddFile records a new file being added to the cache

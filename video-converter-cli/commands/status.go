@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
@@ -95,7 +96,7 @@ func watchStatus(masterURL string, interval int, format string) {
 
 	for range ticker.C {
 		// Clear screen (ANSI escape code)
-		fmt.Print("\033[2J\033[H")
+		_, _ = os.Stdout.WriteString("\033[2J\033[H")
 		slog.Info(fmt.Sprintf("👁️  Status (updated: %s)", time.Now().Format("15:04:05")))
 		slog.Info("")
 		displayStatus(masterURL, format)
@@ -135,15 +136,16 @@ func printProgressBar(completed, total int) {
 		filled = width
 	}
 
-	bar := ""
-	for i := 0; i < width; i++ {
+	var builder strings.Builder
+	builder.Grow(width)
+	for i := range width {
 		if i < filled {
-			bar += "█"
+			builder.WriteString("█")
 		} else {
-			bar += "░"
+			builder.WriteString("░")
 		}
 	}
-	slog.Info(fmt.Sprintf("[%s]", bar))
+	slog.Info(fmt.Sprintf("[%s]", builder.String()))
 }
 
 func getIntValue(m map[string]any, key string) int {

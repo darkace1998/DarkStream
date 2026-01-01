@@ -104,6 +104,7 @@ func statsToCSV(stats map[string]any) ([]string, [][]string) {
 	return headers, rows
 }
 
+//nolint:gocognit // Statistics display with multiple data sources is inherently complex
 func printStatsTable(stats map[string]any, workerData map[string]any, detailed bool) {
 	slog.Info("📈 Detailed Statistics")
 	slog.Info("")
@@ -112,7 +113,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 	if jobs, ok := stats["jobs"].(map[string]any); ok {
 		total := 0
 		slog.Info("📋 Job Status:")
-		
+
 		// Print in order
 		statusOrder := []string{"completed", "processing", "pending", "failed"}
 		for _, status := range statusOrder {
@@ -129,7 +130,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 				slog.Info(fmt.Sprintf("  %s %s: %d", icon, status, countInt))
 			}
 		}
-		slog.Info(fmt.Sprintf("  ───────────────"))
+		slog.Info("  ───────────────")
 		slog.Info(fmt.Sprintf("  📊 Total: %d", total))
 		slog.Info("")
 	}
@@ -137,10 +138,10 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 	// Workers summary
 	if workerData != nil {
 		slog.Info("👷 Workers:")
-		
+
 		count := getIntValue(workerData, "count")
 		slog.Info(fmt.Sprintf("  ├─ Registered: %d", count))
-		
+
 		if wStats, ok := workerData["stats"].(map[string]any); ok {
 			if vulkan, ok := wStats["vulkan_workers"]; ok {
 				slog.Info(fmt.Sprintf("  ├─ Vulkan-capable: %v", vulkan))
@@ -161,7 +162,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 	// Additional metrics if detailed
 	if detailed {
 		slog.Info("📊 Metrics:")
-		
+
 		// Calculate some derived metrics
 		if jobs, ok := stats["jobs"].(map[string]any); ok {
 			completed := getIntValueFromAny(jobs["completed"])
@@ -170,7 +171,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 				successRate := float64(completed) / float64(completed+failed) * 100
 				slog.Info(fmt.Sprintf("  ├─ Success Rate: %.1f%%", successRate))
 			}
-			
+
 			processing := getIntValueFromAny(jobs["processing"])
 			pending := getIntValueFromAny(jobs["pending"])
 			if processing > 0 {

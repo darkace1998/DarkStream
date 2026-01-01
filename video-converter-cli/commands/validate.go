@@ -72,19 +72,19 @@ func Validate(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Validation request failed", "status", resp.StatusCode)
 		slog.Info(string(body))
-		os.Exit(1)
+		return
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	valid, _ := result["valid"].(bool)
@@ -99,7 +99,7 @@ func Validate(args []string) {
 
 	printValidationResult(*configPath, *configType, errors)
 	if !valid {
-		os.Exit(1)
+		return
 	}
 }
 

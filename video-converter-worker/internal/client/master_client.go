@@ -553,6 +553,9 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	tr.tokens -= int64(n)
 	tr.mu.Unlock()
 
+	if err != nil && err != io.EOF {
+		return n, fmt.Errorf("read error: %w", err)
+	}
 	return n, err
 }
 
@@ -742,6 +745,9 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 		callback(bytesTransferred, totalBytes)
 	}
 
+	if err != nil && err != io.EOF {
+		return n, fmt.Errorf("read error: %w", err)
+	}
 	return n, err
 }
 

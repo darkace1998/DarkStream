@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -12,12 +13,12 @@ func TestProgressReader(t *testing.T) {
 	// Create test data
 	testData := bytes.Repeat([]byte("test data chunk"), 100)
 	totalSize := int64(len(testData))
-	
+
 	// Track progress
 	var lastReported int64
 	var callCount int32
-	
-	progressCallback := func(transferred, total int64) {
+
+	progressCallback := func(transferred, _ int64) {
 		atomic.AddInt32(&callCount, 1)
 		atomic.StoreInt64(&lastReported, transferred)
 		
@@ -29,14 +30,14 @@ func TestProgressReader(t *testing.T) {
 	// Create progress reader with smaller report interval for testing
 	reader := NewProgressReader(bytes.NewReader(testData), totalSize, progressCallback)
 	reader.reportInterval = 10 * time.Millisecond
-	
+
 	// Read data
 	buf := make([]byte, 256)
 	totalRead := int64(0)
 	for {
 		n, err := reader.Read(buf)
 		totalRead += int64(n)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -45,7 +46,7 @@ func TestProgressReader(t *testing.T) {
 		// Sleep a bit to allow progress reporting
 		time.Sleep(15 * time.Millisecond)
 	}
-	
+
 	// Verify all data was read
 	if totalRead != totalSize {
 		t.Errorf("Expected to read %d bytes, but read %d", totalSize, totalRead)
@@ -66,16 +67,16 @@ func TestProgressReader(t *testing.T) {
 
 func TestProgressReaderWithZeroTotal(t *testing.T) {
 	testData := []byte("test")
-	
+
 	// Progress callback that tracks calls
 	var callCount int32
-	progressCallback := func(transferred, total int64) {
+	progressCallback := func(_, _ int64) {
 		atomic.AddInt32(&callCount, 1)
 	}
-	
+
 	reader := NewProgressReader(bytes.NewReader(testData), 0, progressCallback)
 	reader.reportInterval = 1 * time.Millisecond
-	
+
 	// Read all data
 	_, err := io.ReadAll(reader)
 	if err != nil {

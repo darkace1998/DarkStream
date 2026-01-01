@@ -42,19 +42,19 @@ func Cancel(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Failed to cancel job", "status", resp.StatusCode)
 		slog.Info(fmt.Sprintf("Response: %s", string(body)))
-		os.Exit(1)
+		return
 	}
 
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))

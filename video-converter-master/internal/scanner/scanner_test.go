@@ -83,9 +83,9 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	}
 
 	testFiles := map[string]string{
-		"video1.mp4":                     "root level",
-		"subdir1/video2.mp4":             "depth 1",
-		"subdir1/subdir2/video3.mp4":    "depth 2",
+		"video1.mp4":                 "root level",
+		"subdir1/video2.mp4":         "depth 1",
+		"subdir1/subdir2/video3.mp4": "depth 2",
 	}
 
 	for relPath, content := range testFiles {

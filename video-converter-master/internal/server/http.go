@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,16 @@ import (
 // jobIDPattern validates job IDs to prevent injection attacks
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-const statusProcessing = "processing"
+// Status constants for health checks and job states
+const (
+	statusProcessing = "processing"
+	statusPending    = "pending"
+	statusFailed     = "failed"
+	statusHealthy    = "healthy"
+	statusUnhealthy  = "unhealthy"
+	statusDegraded   = "degraded"
+	statusAll        = "all"
+)
 
 // validateJobID checks if a job ID is valid
 func validateJobID(jobID string) bool {
@@ -391,6 +401,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 
 // GetNextJobs handles batch requests for multiple pending jobs
 // This reduces API calls by allowing workers to fetch multiple jobs at once
+//nolint:gocognit,cyclop // Job assignment with worker validation and atomic updates is inherently complex
 func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -632,7 +643,7 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update the job status and error message
-	job.Status = "failed"
+	job.Status = statusFailed
 	job.WorkerID = req.WorkerID
 	job.ErrorMessage = req.ErrorMessage
 
@@ -645,13 +656,14 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	// Record metrics - classify error type
 	errorType := "unknown"
 	if req.ErrorMessage != "" {
-		if contains(req.ErrorMessage, "download") {
+		switch {
+		case contains(req.ErrorMessage, "download"):
 			errorType = "download"
-		} else if contains(req.ErrorMessage, "upload") {
+		case contains(req.ErrorMessage, "upload"):
 			errorType = "upload"
-		} else if contains(req.ErrorMessage, "conversion") || contains(req.ErrorMessage, "ffmpeg") {
+		case contains(req.ErrorMessage, "conversion") || contains(req.ErrorMessage, "ffmpeg"):
 			errorType = "conversion"
-		} else if contains(req.ErrorMessage, "timeout") {
+		case contains(req.ErrorMessage, "timeout"):
 			errorType = "timeout"
 		}
 	}
@@ -821,6 +833,7 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 
 // HealthCheck handles the detailed health check endpoint (/api/health)
 // Returns comprehensive health status of all components
+//nolint:gocognit,cyclop // Health check with multiple component checks is inherently complex
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -828,77 +841,77 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	checks := make(map[string]HealthStatus)
-	overallStatus := "healthy"
+	overallStatus := statusHealthy
 
 	// Check database
-	dbStatus := HealthStatus{Status: "healthy"}
+	dbStatus := HealthStatus{Status: statusHealthy}
 	jobStats, err := s.db.GetJobStats()
 	if err != nil {
-		dbStatus.Status = "unhealthy"
+		dbStatus.Status = statusUnhealthy
 		dbStatus.Message = err.Error()
-		overallStatus = "unhealthy"
+		overallStatus = statusUnhealthy
 	} else {
 		dbStatus.Message = "Connected and responsive"
 	}
 	checks["database"] = dbStatus
 
 	// Check queue depth
-	queueStatus := HealthStatus{Status: "healthy"}
+	queueStatus := HealthStatus{Status: statusHealthy}
 	pendingCount, err := s.db.CountPendingJobs()
 	if err != nil {
-		queueStatus.Status = "unhealthy"
+		queueStatus.Status = statusUnhealthy
 		queueStatus.Message = err.Error()
-		if overallStatus == "healthy" {
-			overallStatus = "degraded"
+		if overallStatus == statusHealthy {
+			overallStatus = statusDegraded
 		}
 	} else {
 		queueStatus.Message = fmt.Sprintf("%d jobs pending", pendingCount)
 		// Warn if queue is very large
 		if pendingCount > 1000 {
-			queueStatus.Status = "degraded"
+			queueStatus.Status = statusDegraded
 			queueStatus.Message = fmt.Sprintf("%d jobs pending (high backlog)", pendingCount)
-			if overallStatus == "healthy" {
-				overallStatus = "degraded"
+			if overallStatus == statusHealthy {
+				overallStatus = statusDegraded
 			}
 		}
 	}
 	checks["queue"] = queueStatus
 
 	// Check workers
-	workerStatus := HealthStatus{Status: "healthy"}
+	workerStatus := HealthStatus{Status: statusHealthy}
 	activeWorkers, err := s.db.GetActiveWorkers(120) // 2 minute threshold
 	if err != nil {
-		workerStatus.Status = "unhealthy"
+		workerStatus.Status = statusUnhealthy
 		workerStatus.Message = err.Error()
-		if overallStatus == "healthy" {
-			overallStatus = "degraded"
+		if overallStatus == statusHealthy {
+			overallStatus = statusDegraded
 		}
 	} else {
 		workerCount := len(activeWorkers)
 		workerStatus.Message = fmt.Sprintf("%d active workers", workerCount)
 		if workerCount == 0 {
-			workerStatus.Status = "degraded"
+			workerStatus.Status = statusDegraded
 			workerStatus.Message = "No active workers available"
-			if overallStatus == "healthy" {
-				overallStatus = "degraded"
+			if overallStatus == statusHealthy {
+				overallStatus = statusDegraded
 			}
 		}
 	}
 	checks["workers"] = workerStatus
 
 	// Check for stale jobs (jobs stuck in processing)
-	staleJobStatus := HealthStatus{Status: "healthy"}
+	staleJobStatus := HealthStatus{Status: statusHealthy}
 	staleJobs, err := s.db.GetStaleProcessingJobs(7200) // Jobs processing > 2 hours
 	if err != nil {
-		staleJobStatus.Status = "degraded"
+		staleJobStatus.Status = statusDegraded
 		staleJobStatus.Message = err.Error()
 	} else {
 		staleCount := len(staleJobs)
 		if staleCount > 0 {
-			staleJobStatus.Status = "degraded"
+			staleJobStatus.Status = statusDegraded
 			staleJobStatus.Message = fmt.Sprintf("%d jobs stuck in processing", staleCount)
-			if overallStatus == "healthy" {
-				overallStatus = "degraded"
+			if overallStatus == statusHealthy {
+				overallStatus = statusDegraded
 			}
 		} else {
 			staleJobStatus.Message = "No stale jobs"
@@ -964,7 +977,8 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DownloadVideo handles video file download requests from workers
+// DownloadVideo handles downloading source video files for processing
+//nolint:cyclop,gocognit // HTTP file transfer with range support is inherently complex
 func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1114,6 +1128,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // UploadVideo handles video file upload requests from workers
+//nolint:cyclop,gocognit // HTTP file upload with chunked transfer is inherently complex
 func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1360,6 +1375,7 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 // StreamJobProgress provides Server-Sent Events (SSE) for real-time progress updates
+//nolint:gocognit // SSE streaming with periodic polling and state tracking is inherently complex
 func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1410,7 +1426,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to marshal initial event", "error", err)
 		return
 	}
-	fmt.Fprintf(w, "event: progress\ndata: %s\n\n", eventData)
+	_, _ = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", eventData)
 	flusher.Flush()
 
 	// Poll for updates (2 second interval to reduce database load)
@@ -1431,7 +1447,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 			currentJob, jobErr := s.db.GetJobByID(jobID)
 			if jobErr != nil {
 				// Job deleted, send close event
-				fmt.Fprintf(w, "event: error\ndata: {\"error\": \"job not found\"}\n\n")
+				_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\": \"job not found\"}\n\n")
 				flusher.Flush()
 				return
 			}
@@ -1461,7 +1477,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 						slog.Error("Failed to marshal progress event", "error", marshalErr)
 						continue
 					}
-					fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+					_, _ = fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
 					flusher.Flush()
 				}
 			}
@@ -1477,7 +1493,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 					slog.Error("Failed to marshal complete event", "error", marshalErr)
 					return
 				}
-				fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
+				_, _ = fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
 				flusher.Flush()
 				return
 			}
@@ -1562,15 +1578,8 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 	if status != "" {
 		// Validate status value
-		validStatuses := []string{"pending", "processing", "completed", "failed"}
-		isValidStatus := false
-		for _, vs := range validStatuses {
-			if status == vs {
-				isValidStatus = true
-				break
-			}
-		}
-		if !isValidStatus {
+		validStatuses := []string{statusPending, statusProcessing, "completed", statusFailed}
+		if !slices.Contains(validStatuses, status) {
 			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed", http.StatusBadRequest)
 			return
 		}
@@ -1626,7 +1635,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Can only cancel pending or processing jobs
-	if job.Status != "pending" && job.Status != "processing" {
+	if job.Status != statusPending && job.Status != statusProcessing {
 		http.Error(w, fmt.Sprintf("Cannot cancel job with status '%s'. Only pending or processing jobs can be cancelled.", job.Status), http.StatusBadRequest)
 		return
 	}
@@ -1635,7 +1644,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	previousStatus := job.Status
 
 	// Update job status to cancelled (using failed with specific error message)
-	job.Status = "failed"
+	job.Status = statusFailed
 	job.ErrorMessage = "Job cancelled by user"
 	if err := s.db.UpdateJob(job); err != nil {
 		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
@@ -1665,7 +1674,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
-	if status != "pending" && status != "processing" && status != "all" {
+	if status != statusPending && status != statusProcessing && status != statusAll {
 		http.Error(w, "Invalid status parameter. Must be 'pending', 'processing', or 'all'", http.StatusBadRequest)
 		return
 	}
@@ -1679,19 +1688,15 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
 			return
 		}
-		if parsedLimit > 1000 {
-			limit = 1000 // Cap at 1000
-		} else {
-			limit = parsedLimit
-		}
+		limit = min(parsedLimit, 1000) // Cap at 1000
 	}
 
 	// Get jobs to cancel based on status filter
 	var jobsToCancel []*models.Job
 	var listErrors []error
 
-	if status == "all" || status == "pending" {
-		pendingJobs, listErr := s.db.GetJobsByStatus("pending", limit)
+	if status == statusAll || status == statusPending {
+		pendingJobs, listErr := s.db.GetJobsByStatus(statusPending, limit)
 		if listErr != nil {
 			slog.Error("Failed to list pending jobs for cancellation", "error", listErr)
 			listErrors = append(listErrors, listErr)
@@ -1700,8 +1705,8 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if status == "all" || status == "processing" {
-		processingJobs, listErr := s.db.GetJobsByStatus("processing", limit)
+	if status == statusAll || status == statusProcessing {
+		processingJobs, listErr := s.db.GetJobsByStatus(statusProcessing, limit)
 		if listErr != nil {
 			slog.Error("Failed to list processing jobs for cancellation", "error", listErr)
 			listErrors = append(listErrors, listErr)
@@ -1726,7 +1731,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		job.Status = "failed"
+		job.Status = statusFailed
 		job.ErrorMessage = "Job cancelled by user (batch cancellation)"
 		if err := s.db.UpdateJob(job); err != nil {
 			slog.Error("Failed to cancel job", "job_id", job.ID, "error", err)
@@ -1840,7 +1845,10 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
-	return n, err
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse integer: %w", err)
+	}
+	return n, nil
 }
 
 // validateConfigContent validates config YAML content

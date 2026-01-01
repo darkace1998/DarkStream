@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -92,10 +93,8 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	// Note: This is defense in depth - the final validation is done after cleaning
 	// URL encoding is not a concern here as these are file system paths, not URLs
 	pathComponents := strings.Split(filepath.ToSlash(targetPath), "/")
-	for _, component := range pathComponents {
-		if component == ".." {
-			return "", fmt.Errorf("path contains suspicious traversal pattern: %s", targetPath)
-		}
+	if slices.Contains(pathComponents, "..") {
+		return "", fmt.Errorf("path contains suspicious traversal pattern: %s", targetPath)
 	}
 
 	// Authoritative validation: Ensure the cleaned, resolved path is within the base directory

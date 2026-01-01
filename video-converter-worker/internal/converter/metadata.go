@@ -1,4 +1,3 @@
-// Package converter provides video conversion functionality using FFmpeg.
 package converter
 
 import (
