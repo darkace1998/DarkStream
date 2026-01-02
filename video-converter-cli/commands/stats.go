@@ -32,7 +32,8 @@ func displayStats(masterURL, format string, detailed bool) {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			slog.Error("Error closing response body", "error", err)
 		}
 	}()
@@ -49,7 +50,8 @@ func displayStats(masterURL, format string, detailed bool) {
 	}
 
 	var stats map[string]any
-	if err := json.Unmarshal(body, &stats); err != nil {
+	err = json.Unmarshal(body, &stats)
+	if err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
 	}
@@ -183,7 +185,8 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 
 	// Timestamp
 	if timestamp, ok := stats["timestamp"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+		t, err := time.Parse(time.RFC3339, timestamp)
+		if err == nil {
 			slog.Info(fmt.Sprintf("Last updated: %s", t.Format("2006-01-02 15:04:05")))
 		}
 	}

@@ -12,7 +12,8 @@ func TestScanDirectory(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
@@ -26,7 +27,8 @@ func TestScanDirectory(t *testing.T) {
 
 	for _, filename := range testFiles {
 		path := filepath.Join(videosDir, filename)
-		if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
+		err := os.WriteFile(path, []byte("test"), 0o600)
+		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}
@@ -78,7 +80,8 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	//     video2.mp4 (depth 1)
 	//     subdir2/
 	//       video3.mp4 (depth 2)
-	if err := os.MkdirAll(filepath.Join(videosDir, "subdir1", "subdir2"), 0o750); err != nil {
+	err := os.MkdirAll(filepath.Join(videosDir, "subdir1", "subdir2"), 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create nested directories: %v", err)
 	}
 
@@ -90,7 +93,8 @@ func TestScannerWithDepthLimit(t *testing.T) {
 
 	for relPath, content := range testFiles {
 		fullPath := filepath.Join(videosDir, relPath)
-		if err := os.WriteFile(fullPath, []byte(content), 0o600); err != nil {
+		err := os.WriteFile(fullPath, []byte(content), 0o600)
+		if err != nil {
 			t.Fatalf("Failed to create test file %s: %v", relPath, err)
 		}
 	}
@@ -144,7 +148,8 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
@@ -158,7 +163,8 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 	for filename, size := range files {
 		path := filepath.Join(videosDir, filename)
 		data := make([]byte, size)
-		if err := os.WriteFile(path, data, 0o600); err != nil {
+		err := os.WriteFile(path, data, 0o600)
+		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}
@@ -213,29 +219,34 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
 	// Create hidden directory
 	hiddenDir := filepath.Join(videosDir, ".hidden")
-	if err := os.MkdirAll(hiddenDir, 0o750); err != nil {
+	err = os.MkdirAll(hiddenDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create hidden directory: %v", err)
 	}
 
 	// Create test files explicitly
 	// 1. Visible file in root
-	if err := os.WriteFile(filepath.Join(videosDir, "visible.mp4"), []byte("test"), 0o600); err != nil {
+	err = os.WriteFile(filepath.Join(videosDir, "visible.mp4"), []byte("test"), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create visible.mp4: %v", err)
 	}
 
 	// 2. Hidden file in root
-	if err := os.WriteFile(filepath.Join(videosDir, ".hidden_file.mp4"), []byte("test"), 0o600); err != nil {
+	err = os.WriteFile(filepath.Join(videosDir, ".hidden_file.mp4"), []byte("test"), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create .hidden_file.mp4: %v", err)
 	}
 
 	// 3. File in hidden directory
-	if err := os.WriteFile(filepath.Join(hiddenDir, "video.mp4"), []byte("test"), 0o600); err != nil {
+	err = os.WriteFile(filepath.Join(hiddenDir, "video.mp4"), []byte("test"), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create .hidden/video.mp4: %v", err)
 	}
 
@@ -297,7 +308,8 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
@@ -312,13 +324,15 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 	// Write identical content to first two files
 	for i, filename := range files[:2] {
 		path := filepath.Join(videosDir, filename)
-		if err := os.WriteFile(path, content, 0o600); err != nil {
+		err := os.WriteFile(path, content, 0o600)
+		if err != nil {
 			t.Fatalf("Failed to create test file %d: %v", i, err)
 		}
 	}
 
 	// Write different content to third file
-	if err := os.WriteFile(filepath.Join(videosDir, files[2]), []byte("different content"), 0o600); err != nil {
+	err = os.WriteFile(filepath.Join(videosDir, files[2]), []byte("different content"), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create test file 3: %v", err)
 	}
 
@@ -357,13 +371,15 @@ func TestScannerWithReplaceSource(t *testing.T) {
 	videosDir := filepath.Join(tmpDir, "videos")
 	outputDir := filepath.Join(tmpDir, "output")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 
 	// Create test file
 	testFile := filepath.Join(videosDir, "video.mp4")
-	if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
+	err = os.WriteFile(testFile, []byte("test"), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 

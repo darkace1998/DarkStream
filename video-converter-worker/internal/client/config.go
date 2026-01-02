@@ -66,6 +66,26 @@ func (cf *ConfigFetcher) FetchConfig() (*models.ConversionSettings, error) {
 	return cf.fetchConfigWithRetry(0)
 }
 
+// GetCachedConfig returns the cached configuration without fetching
+// Returns nil if no configuration is cached
+func (cf *ConfigFetcher) GetCachedConfig() *models.ConversionSettings {
+	cf.mu.RLock()
+	defer cf.mu.RUnlock()
+
+	if cf.cachedConfig == nil {
+		return nil
+	}
+	cfg := *cf.cachedConfig
+	return &cfg
+}
+
+// InvalidateCache invalidates the cached configuration
+func (cf *ConfigFetcher) InvalidateCache() {
+	cf.mu.Lock()
+	defer cf.mu.Unlock()
+	cf.cachedConfig = nil
+}
+
 // fetchConfigWithRetry implements FetchConfig with a retry counter to prevent infinite recursion
 func (cf *ConfigFetcher) fetchConfigWithRetry(waitRetries int) (*models.ConversionSettings, error) {
 	// First try with read lock - fast path for cached config
@@ -118,19 +138,6 @@ func (cf *ConfigFetcher) fetchConfigWithRetry(waitRetries int) (*models.Conversi
 	return cf.fetchFromMaster()
 }
 
-// GetCachedConfig returns the cached configuration without fetching
-// Returns nil if no configuration is cached
-func (cf *ConfigFetcher) GetCachedConfig() *models.ConversionSettings {
-	cf.mu.RLock()
-	defer cf.mu.RUnlock()
-
-	if cf.cachedConfig == nil {
-		return nil
-	}
-	cfg := *cf.cachedConfig
-	return &cfg
-}
-
 // fetchFromMaster fetches configuration from the master with retry logic
 func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
 	var lastErr error
@@ -176,7 +183,8 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 		return nil, fmt.Errorf("failed to request config: %w", err)
 	}
 	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
+		cerr := resp.Body.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close response body", "error", cerr)
 		}
 	}()
@@ -207,7 +215,8 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 		} `json:"output"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&activeConfig); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&activeConfig)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
@@ -229,11 +238,4 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 	)
 
 	return cfg, nil
-}
-
-// InvalidateCache invalidates the cached configuration
-func (cf *ConfigFetcher) InvalidateCache() {
-	cf.mu.Lock()
-	defer cf.mu.Unlock()
-	cf.cachedConfig = nil
 }

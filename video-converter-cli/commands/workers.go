@@ -43,7 +43,8 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			slog.Error("Error closing response body", "error", err)
 		}
 	}()
@@ -60,7 +61,8 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
+	err = json.Unmarshal(body, &result)
+	if err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
 	}
@@ -127,7 +129,8 @@ func workersToTable(result map[string]any) ([]string, [][]string) {
 		cpuUsage := fmt.Sprintf("%.1f", getFloatValue(worker, "cpu_usage"))
 		memUsage := fmt.Sprintf("%.1f", getFloatValue(worker, "memory_usage"))
 		timestamp := getStringValue(worker, "timestamp")
-		if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+		t, err := time.Parse(time.RFC3339, timestamp)
+		if err == nil {
 			timestamp = t.Format("15:04:05")
 		}
 
@@ -176,7 +179,8 @@ func printWorkersTable(result map[string]any) {
 		}
 		slog.Info(fmt.Sprintf("│  ├─ CPU: %.1f%%", cpuUsage))
 		slog.Info(fmt.Sprintf("│  ├─ Memory: %.1f%%", memUsage))
-		if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+		t, err := time.Parse(time.RFC3339, timestamp)
+		if err == nil {
 			slog.Info(fmt.Sprintf("│  └─ Last Heartbeat: %s", t.Format("15:04:05")))
 		}
 		slog.Info("")

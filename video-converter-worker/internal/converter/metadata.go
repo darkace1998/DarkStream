@@ -96,7 +96,8 @@ func (me *MetadataExtractor) GetVideoMetadata(sourcePath string) (*models.VideoM
 	}
 
 	var probeResult FFprobeOutput
-	if err := json.Unmarshal(output, &probeResult); err != nil {
+	err = json.Unmarshal(output, &probeResult)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse ffprobe output: %w", err)
 	}
 
@@ -107,7 +108,8 @@ func (me *MetadataExtractor) GetVideoMetadata(sourcePath string) (*models.VideoM
 	// Parse duration
 	if probeResult.Format.Duration != "" {
 		var duration float64
-		if _, err := fmt.Sscanf(probeResult.Format.Duration, "%f", &duration); err == nil {
+		_, scanErr := fmt.Sscanf(probeResult.Format.Duration, "%f", &duration)
+		if scanErr == nil {
 			metadata.Duration = duration
 		}
 	}
@@ -115,7 +117,8 @@ func (me *MetadataExtractor) GetVideoMetadata(sourcePath string) (*models.VideoM
 	// Parse total bitrate
 	if probeResult.Format.BitRate != "" {
 		var bitrate int64
-		if _, err := fmt.Sscanf(probeResult.Format.BitRate, "%d", &bitrate); err == nil {
+		_, scanErr := fmt.Sscanf(probeResult.Format.BitRate, "%d", &bitrate)
+		if scanErr == nil {
 			metadata.Bitrate = bitrate
 		}
 	}

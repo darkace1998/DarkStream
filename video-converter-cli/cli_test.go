@@ -38,7 +38,8 @@ func TestCLIHelp(t *testing.T) {
 func TestMain(m *testing.M) {
 	// Build the CLI binary used by the integration-style tests.
 	buildCmd := exec.Command("go", "build", "-o", "video-converter-cli", ".")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
+	out, err := buildCmd.CombinedOutput()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to build CLI binary: %s: %v\n", string(out), err)
 		os.Exit(2)
 	}
@@ -112,17 +113,20 @@ func TestWorkerCommandNoConfig(t *testing.T) {
 func TestEndToEndWithMaster(t *testing.T) {
 	// This test requires the master and worker binaries to be built
 	// Skip if they don't exist
-	if _, err := os.Stat("../video-converter-master/video-converter-master"); os.IsNotExist(err) {
+	_, err := os.Stat("../video-converter-master/video-converter-master")
+	if os.IsNotExist(err) {
 		t.Skip("Master binary not found, skipping end-to-end test")
 	}
 
 	// Create test directories
 	testDir := "/tmp/cli-integration-test"
 	_ = os.RemoveAll(testDir)
-	if err := os.MkdirAll(testDir+"/videos", 0o750); err != nil {
+	err = os.MkdirAll(testDir+"/videos", 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directories: %v", err)
 	}
-	if err := os.MkdirAll(testDir+"/converted", 0o750); err != nil {
+	err = os.MkdirAll(testDir+"/converted", 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directories: %v", err)
 	}
 	defer func() {
@@ -151,7 +155,8 @@ logging:
   format: text
 `
 	configPath := testDir + "/master-config.yaml"
-	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+	err = os.WriteFile(configPath, []byte(config), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -160,12 +165,14 @@ logging:
 	var masterOut bytes.Buffer
 	masterCmd.Stdout = &masterOut
 	masterCmd.Stderr = &masterOut
-	if err := masterCmd.Start(); err != nil {
+	err = masterCmd.Start()
+	if err != nil {
 		t.Fatalf("Failed to start master: %v", err)
 	}
 	defer func() {
-		if err := masterCmd.Process.Kill(); err != nil {
-			t.Logf("Failed to kill master process: %v", err)
+		killErr := masterCmd.Process.Kill()
+		if killErr != nil {
+			t.Logf("Failed to kill master process: %v", killErr)
 		}
 	}()
 
@@ -313,7 +320,8 @@ func TestLocalValidation(t *testing.T) {
 	// Create a temporary config file
 	testDir := "/tmp/cli-validate-test"
 	_ = os.RemoveAll(testDir)
-	if err := os.MkdirAll(testDir, 0o750); err != nil {
+	err := os.MkdirAll(testDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() {
@@ -335,7 +343,8 @@ logging:
   level: info
 `
 	configPath := testDir + "/valid-config.yaml"
-	if err := os.WriteFile(configPath, []byte(validConfig), 0o600); err != nil {
+	err = os.WriteFile(configPath, []byte(validConfig), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
 
@@ -356,7 +365,8 @@ func TestLocalValidationInvalid(t *testing.T) {
 	// Create a temporary config file with missing required sections
 	testDir := "/tmp/cli-validate-invalid-test"
 	_ = os.RemoveAll(testDir)
-	if err := os.MkdirAll(testDir, 0o750); err != nil {
+	err := os.MkdirAll(testDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() {
@@ -368,7 +378,8 @@ func TestLocalValidationInvalid(t *testing.T) {
   level: info
 `
 	configPath := testDir + "/invalid-config.yaml"
-	if err := os.WriteFile(configPath, []byte(invalidConfig), 0o600); err != nil {
+	err = os.WriteFile(configPath, []byte(invalidConfig), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
 

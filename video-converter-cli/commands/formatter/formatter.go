@@ -53,7 +53,8 @@ func New(w io.Writer, format Format) *Output {
 func (o *Output) PrintJSON(data any) error {
 	encoder := json.NewEncoder(o.writer)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
+	err := encoder.Encode(data)
+	if err != nil {
 		return fmt.Errorf("failed to encode JSON: %w", err)
 	}
 	return nil
@@ -91,16 +92,19 @@ func (o *Output) PrintTable(headers []string, rows [][]string) {
 // PrintCSV outputs data as CSV
 func (o *Output) PrintCSV(headers []string, rows [][]string) error {
 	w := csv.NewWriter(o.writer)
-	if err := w.Write(headers); err != nil {
+	err := w.Write(headers)
+	if err != nil {
 		return fmt.Errorf("failed to write CSV headers: %w", err)
 	}
 	for _, row := range rows {
-		if err := w.Write(row); err != nil {
+		err = w.Write(row)
+		if err != nil {
 			return fmt.Errorf("failed to write CSV row: %w", err)
 		}
 	}
 	w.Flush()
-	if err := w.Error(); err != nil {
+	err = w.Error()
+	if err != nil {
 		return fmt.Errorf("failed to flush CSV: %w", err)
 	}
 	return nil

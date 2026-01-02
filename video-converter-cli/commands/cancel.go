@@ -34,7 +34,8 @@ func Cancel(args []string) {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			slog.Error("Error closing response body", "error", err)
 		}
 	}()
@@ -52,7 +53,8 @@ func Cancel(args []string) {
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
+	err = json.Unmarshal(body, &result)
+	if err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
 	}

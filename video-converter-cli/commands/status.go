@@ -39,7 +39,8 @@ func displayStatus(masterURL, format string) {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			slog.Error("Error closing response body", "error", err)
 		}
 	}()
@@ -56,7 +57,8 @@ func displayStatus(masterURL, format string) {
 	}
 
 	var stats map[string]any
-	if err := json.Unmarshal(body, &stats); err != nil {
+	err = json.Unmarshal(body, &stats)
+	if err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
 	}

@@ -76,7 +76,8 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 
 	// Ensure output directory exists
 	outputDir := filepath.Dir(job.OutputPath)
-	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+	err := os.MkdirAll(outputDir, 0o750)
+	if err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -105,7 +106,8 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 
 	slog.Debug("Executing FFmpeg command", "args", args)
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	if err != nil {
 		return fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
@@ -114,7 +116,8 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 		go fc.trackProgress(stderr, duration, progressCallback)
 	}
 
-	if err := cmd.Wait(); err != nil {
+	err = cmd.Wait()
+	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("ffmpeg conversion timed out after %v: %w", fc.timeout, err)
 		}
@@ -122,6 +125,23 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 	}
 
 	slog.Info("Conversion completed", "job_id", job.ID)
+	return nil
+}
+
+// ValidateOutput validates the converted output file
+func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
+	// Check if file exists
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return fmt.Errorf("output file not found: %w", err)
+	}
+
+	// Check minimum file size (1MB)
+	if info.Size() < MinOutputFileSize {
+		return fmt.Errorf("output file too small: %d bytes", info.Size())
+	}
+
+	slog.Info("Output validated", "path", outputPath, "size", info.Size())
 	return nil
 }
 
@@ -315,21 +335,4 @@ func (fc *FFmpegConverter) trackProgress(
 			)
 		}
 	}
-}
-
-// ValidateOutput validates the converted output file
-func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
-	// Check if file exists
-	info, err := os.Stat(outputPath)
-	if err != nil {
-		return fmt.Errorf("output file not found: %w", err)
-	}
-
-	// Check minimum file size (1MB)
-	if info.Size() < MinOutputFileSize {
-		return fmt.Errorf("output file too small: %d bytes", info.Size())
-	}
-
-	slog.Info("Output validated", "path", outputPath, "size", info.Size())
-	return nil
 }

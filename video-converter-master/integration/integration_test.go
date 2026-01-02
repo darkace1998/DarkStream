@@ -26,10 +26,12 @@ func TestEndToEndConversion(t *testing.T) {
 	convertedDir := filepath.Join(testDir, "converted")
 	dbPath := filepath.Join(testDir, "jobs.db")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create videos directory: %v", err)
 	}
-	if err := os.MkdirAll(convertedDir, 0o750); err != nil {
+	err = os.MkdirAll(convertedDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create converted directory: %v", err)
 	}
 
@@ -39,7 +41,8 @@ func TestEndToEndConversion(t *testing.T) {
 	for _, video := range testVideos {
 		src := filepath.Join(repoRoot, video)
 		dst := filepath.Join(videosDir, video)
-		if err := copyFile(src, dst); err != nil {
+		err := copyFile(src, dst)
+		if err != nil {
 			t.Fatalf("Failed to copy test video %s: %v", video, err)
 		}
 	}
@@ -76,7 +79,8 @@ logging:
 `, videosDir, convertedDir, dbPath, filepath.Join(testDir, "master.log"))
 
 	masterConfigPath := filepath.Join(testDir, "master-config.yaml")
-	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600); err != nil {
+	err = os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
@@ -86,11 +90,13 @@ logging:
 	// Start master server
 	// #nosec G204 - masterBinary is constructed from controlled paths, not user input
 	masterCmd := exec.Command(masterBinary, "--config", masterConfigPath)
-	if err := masterCmd.Start(); err != nil {
+	err = masterCmd.Start()
+	if err != nil {
 		t.Fatalf("Failed to start master: %v", err)
 	}
 	defer func() {
-		if err := masterCmd.Process.Kill(); err != nil {
+		err := masterCmd.Process.Kill()
+		if err != nil {
 			t.Logf("Failed to kill master process: %v", err)
 		}
 	}()
@@ -104,7 +110,8 @@ logging:
 		t.Fatalf("Master API not accessible: %v", err)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			t.Logf("Failed to close response body: %v", err)
 		}
 	}()
@@ -118,7 +125,8 @@ logging:
 		t.Fatalf("Failed to open database: %v", err)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
+		err := db.Close()
+		if err != nil {
 			t.Logf("Failed to close database: %v", err)
 		}
 	}()
@@ -144,7 +152,8 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer func() {
-		if err := sourceFile.Close(); err != nil {
+		err := sourceFile.Close()
+		if err != nil {
 			_ = err // Silently ignore close error in helper
 		}
 	}()
@@ -155,7 +164,8 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
 	defer func() {
-		if err := destFile.Close(); err != nil {
+		err := destFile.Close()
+		if err != nil {
 			_ = err // Silently ignore close error in helper
 		}
 	}()

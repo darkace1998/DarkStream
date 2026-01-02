@@ -243,7 +243,8 @@ func (w *Worker) runCacheCleanup() {
 	}
 
 	// Run initial cleanup
-	if err := w.cacheManager.Cleanup(); err != nil {
+	err := w.cacheManager.Cleanup()
+	if err != nil {
 		slog.Warn("Initial cache cleanup failed", "error", err)
 	}
 
@@ -256,7 +257,8 @@ func (w *Worker) runCacheCleanup() {
 			slog.Info("Cache cleanup goroutine stopping")
 			return
 		case <-ticker.C:
-			if err := w.cacheManager.Cleanup(); err != nil {
+			err := w.cacheManager.Cleanup()
+			if err != nil {
 				slog.Warn("Cache cleanup failed", "error", err)
 			}
 		}
@@ -385,12 +387,14 @@ func (w *Worker) processJob(job *models.Job) {
 	atomic.AddInt32(&w.activeJobs, 1)
 	defer atomic.AddInt32(&w.activeJobs, -1)
 
-	if err := w.executeJob(job); err != nil {
+	err := w.executeJob(job)
+	if err != nil {
 		slog.Error("Job execution failed",
 			"job_id", job.ID,
 			"error", err,
 		)
-		if reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error()); reportErr != nil {
+		reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error())
+		if reportErr != nil {
 			slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
 		}
 	} else {
@@ -416,7 +420,8 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Create job cache directory
 	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
-	if err := os.MkdirAll(jobCacheDir, 0o750); err != nil {
+	err := os.MkdirAll(jobCacheDir, 0o750)
+	if err != nil {
 		return fmt.Errorf("failed to create job cache directory: %w", err)
 	}
 	defer w.cleanupJobCache(jobCacheDir)
@@ -429,7 +434,8 @@ func (w *Worker) executeJob(job *models.Job) error {
 	}
 	sourceLocalPath := filepath.Join(jobCacheDir, "source"+sourceExt)
 	slog.Info("Downloading source video", "job_id", job.ID, "local_path", sourceLocalPath)
-	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
+	err = w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath)
+	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -517,12 +523,14 @@ func (w *Worker) executeJob(job *models.Job) error {
 	progressCallback := func(progress float64, fps float64) {
 		w.reportProgress(job.ID, progress, fps, "convert")
 	}
-	if err := w.ffmpegConverter.ConvertVideoWithProgress(job, cfg, progressCallback); err != nil {
+	err = w.ffmpegConverter.ConvertVideoWithProgress(job, cfg, progressCallback)
+	if err != nil {
 		return fmt.Errorf("conversion failed: %w", err)
 	}
 
 	// Validate output
-	if err := w.ffmpegConverter.ValidateOutput(job.OutputPath); err != nil {
+	err = w.ffmpegConverter.ValidateOutput(job.OutputPath)
+	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -531,7 +539,8 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Upload converted video to master
 	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
-	if err := w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath); err != nil {
+	err = w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath)
+	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -604,7 +613,8 @@ func getHostname() string {
 
 // cleanupJobCache removes the job cache directory
 func (w *Worker) cleanupJobCache(jobCacheDir string) {
-	if err := os.RemoveAll(jobCacheDir); err != nil {
+	err := os.RemoveAll(jobCacheDir)
+	if err != nil {
 		slog.Warn("Failed to cleanup job cache directory",
 			"path", jobCacheDir,
 			"error", err)

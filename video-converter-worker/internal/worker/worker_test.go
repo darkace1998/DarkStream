@@ -78,7 +78,7 @@ func TestGetAndUpdateBackoffDefaults(t *testing.T) {
 
 	// Increase until we hit the default max (30s)
 	// 1 -> 2 -> 4 -> 8 -> 16 -> 32 (capped to 30)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		backoff = w.getAndUpdateBackoff(true)
 	}
 	if backoff != 30*time.Second {
@@ -103,11 +103,11 @@ func TestGetAndUpdateBackoffConcurrency(t *testing.T) {
 	iterations := 100
 
 	// Run concurrent updates
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				// Alternate between increase and reset
 				if j%3 == 0 {
 					w.getAndUpdateBackoff(false)
@@ -136,7 +136,7 @@ func TestJobSemaphoreCapacity(t *testing.T) {
 	sem := make(chan struct{}, concurrency)
 
 	// Should be able to acquire all slots
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		select {
 		case sem <- struct{}{}:
 			// OK

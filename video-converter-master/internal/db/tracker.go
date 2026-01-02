@@ -73,221 +73,20 @@ func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, er
 			"conn_max_idle_time", poolConfig.ConnMaxIdleTime)
 	}
 
-	if err := db.Ping(); err != nil {
+	err = db.Ping()
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	tracker := &Tracker{db: db}
-	if err := tracker.initSchema(); err != nil {
+	err = tracker.initSchema()
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	return tracker, nil
-}
-
-func (t *Tracker) initSchema() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS jobs (
-		id TEXT PRIMARY KEY,
-		source_path TEXT NOT NULL,
-		output_path TEXT NOT NULL,
-		status TEXT NOT NULL,
-		priority INTEGER DEFAULT 5,
-		worker_id TEXT,
-		started_at TIMESTAMP,
-		completed_at TIMESTAMP,
-		error_message TEXT,
-		retry_count INTEGER DEFAULT 0,
-		max_retries INTEGER DEFAULT 3,
-		source_duration REAL,
-		output_size INTEGER,
-		created_at TIMESTAMP NOT NULL,
-		source_checksum TEXT,
-		output_checksum TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS workers (
-		id TEXT PRIMARY KEY,
-		hostname TEXT NOT NULL,
-		last_heartbeat TIMESTAMP,
-		vulkan_available BOOLEAN,
-		active_jobs INTEGER DEFAULT 0,
-		gpu_name TEXT,
-		cpu_usage REAL,
-		memory_usage REAL,
-		status TEXT DEFAULT 'online'
-	);
-
-	CREATE TABLE IF NOT EXISTS job_progress (
-		job_id TEXT PRIMARY KEY,
-		worker_id TEXT NOT NULL,
-		progress REAL DEFAULT 0,
-		fps REAL DEFAULT 0,
-		stage TEXT DEFAULT 'pending',
-		updated_at TIMESTAMP NOT NULL,
-		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
-	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
-	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
-	`
-
-	_, err := t.db.Exec(schema)
-	if err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
-	}
-
-	// Add checksum columns if they don't exist (migration)
-	if err := t.migrateChecksumColumns(); err != nil {
-		return fmt.Errorf("failed to migrate checksum columns: %w", err)
-	}
-
-	// Add worker status column if it doesn't exist (migration)
-	if err := t.migrateWorkerStatusColumn(); err != nil {
-		return fmt.Errorf("failed to migrate worker status column: %w", err)
-	}
-
-	// Add priority column if it doesn't exist (migration)
-	if err := t.migratePriorityColumn(); err != nil {
-		return fmt.Errorf("failed to migrate priority column: %w", err)
-	}
-
-	// Add video metadata columns if they don't exist (migration)
-	if err := t.migrateVideoMetadataColumns(); err != nil {
-		return fmt.Errorf("failed to migrate video metadata columns: %w", err)
-	}
-
-	return nil
-}
-
-// migrateChecksumColumns adds checksum columns if they don't exist
-func (t *Tracker) migrateChecksumColumns() error {
-	// Check if source_checksum column exists
-	var columnExists int
-	err := t.db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='source_checksum'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check for source_checksum column: %w", err)
-	}
-
-	if columnExists == 0 {
-		slog.Info("Adding source_checksum column to jobs table")
-		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN source_checksum TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add source_checksum column: %w", err)
-		}
-	}
-
-	// Check if output_checksum column exists
-	err = t.db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='output_checksum'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check for output_checksum column: %w", err)
-	}
-
-	if columnExists == 0 {
-		slog.Info("Adding output_checksum column to jobs table")
-		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN output_checksum TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add output_checksum column: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// migrateWorkerStatusColumn adds status column to workers table if it doesn't exist
-func (t *Tracker) migrateWorkerStatusColumn() error {
-	// Check if status column exists in workers table
-	var columnExists int
-	err := t.db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('workers') WHERE name='status'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check for status column: %w", err)
-	}
-
-	if columnExists == 0 {
-		slog.Info("Adding status column to workers table")
-		_, err := t.db.Exec(`ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'online'`)
-		if err != nil {
-			return fmt.Errorf("failed to add status column: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// migratePriorityColumn adds priority column to jobs table if it doesn't exist
-func (t *Tracker) migratePriorityColumn() error {
-	// Check if priority column exists in jobs table
-	var columnExists int
-	err := t.db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='priority'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check for priority column: %w", err)
-	}
-
-	if columnExists == 0 {
-		slog.Info("Adding priority column to jobs table")
-		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN priority INTEGER DEFAULT 5`)
-		if err != nil {
-			return fmt.Errorf("failed to add priority column: %w", err)
-		}
-
-		// Create index on priority for efficient sorting
-		slog.Info("Creating index on priority column")
-		_, err = t.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)`)
-		if err != nil {
-			return fmt.Errorf("failed to create priority index: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// migrateVideoMetadataColumns adds video metadata columns to jobs table if they don't exist
-func (t *Tracker) migrateVideoMetadataColumns() error {
-	// List of columns to add with their types
-	columns := []struct {
-		name     string
-		dataType string
-	}{
-		{"source_width", "INTEGER"},
-		{"source_height", "INTEGER"},
-		{"source_video_codec", "TEXT"},
-		{"source_audio_codec", "TEXT"},
-		{"source_bitrate", "INTEGER"},
-		{"source_file_size", "INTEGER"},
-	}
-
-	for _, col := range columns {
-		var columnExists int
-		err := t.db.QueryRow(`
-			SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name=?
-		`, col.name).Scan(&columnExists)
-		if err != nil {
-			return fmt.Errorf("failed to check for %s column: %w", col.name, err)
-		}
-
-		if columnExists == 0 {
-			slog.Info("Adding column to jobs table", "column", col.name)
-			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %s %s`, col.name, col.dataType)
-			if _, err := t.db.Exec(query); err != nil {
-				return fmt.Errorf("failed to add %s column: %w", col.name, err)
-			}
-		}
-	}
-
-	return nil
 }
 
 // CreateJob inserts a new job into the database
@@ -415,8 +214,9 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 		return nil, fmt.Errorf("failed to query pending jobs: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
+		closeErr := rows.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close rows", "error", closeErr)
 		}
 	}()
 
@@ -425,14 +225,15 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 		var job models.Job
 		var startedAt, completedAt sql.NullTime
 
-		if err := rows.Scan(
+		scanErr := rows.Scan(
 			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
 			&job.SourceChecksum, &job.OutputChecksum,
-		); err != nil {
-			slog.Warn("Failed to scan job row", "error", err)
+		)
+		if scanErr != nil {
+			slog.Warn("Failed to scan job row", "error", scanErr)
 			continue
 		}
 
@@ -446,7 +247,8 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 		jobs = append(jobs, &job)
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating job rows: %w", err)
 	}
 
@@ -521,22 +323,25 @@ func (t *Tracker) GetJobStats() (map[string]any, error) {
 		return nil, fmt.Errorf("failed to query job stats: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
+		closeErr := rows.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close rows", "error", closeErr)
 		}
 	}()
 
 	for rows.Next() {
 		var status string
 		var count int
-		if err := rows.Scan(&status, &count); err != nil {
-			slog.Warn("Failed to scan job stats row", "error", err)
+		scanErr := rows.Scan(&status, &count)
+		if scanErr != nil {
+			slog.Warn("Failed to scan job stats row", "error", scanErr)
 			continue
 		}
 		stats[status] = count
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating job stats rows: %w", err)
 	}
 
@@ -556,8 +361,9 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 		return nil, fmt.Errorf("failed to query workers: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
+		closeErr := rows.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close rows", "error", closeErr)
 		}
 	}()
 
@@ -565,11 +371,12 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	for rows.Next() {
 		var w models.WorkerHeartbeat
 		var lastHeartbeat sql.NullTime
-		if err := rows.Scan(
+		scanErr := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
 			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
-		); err != nil {
-			slog.Warn("Failed to scan worker row", "error", err)
+		)
+		if scanErr != nil {
+			slog.Warn("Failed to scan worker row", "error", scanErr)
 			continue
 		}
 		if lastHeartbeat.Valid {
@@ -578,7 +385,8 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 		workers = append(workers, &w)
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating worker rows: %w", err)
 	}
 
@@ -611,8 +419,9 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 		return nil, fmt.Errorf("failed to query jobs by status: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
+		closeErr := rows.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close rows", "error", closeErr)
 		}
 	}()
 
@@ -620,14 +429,15 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 	for rows.Next() {
 		var job models.Job
 		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(
+		scanErr := rows.Scan(
 			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
 			&job.SourceChecksum, &job.OutputChecksum,
-		); err != nil {
-			slog.Warn("Failed to scan job row", "error", err)
+		)
+		if scanErr != nil {
+			slog.Warn("Failed to scan job row", "error", scanErr)
 			continue
 		}
 
@@ -641,7 +451,8 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 		jobs = append(jobs, &job)
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating job rows: %w", err)
 	}
 
@@ -675,8 +486,9 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		return nil, fmt.Errorf("failed to query job history: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
+		closeErr := rows.Close()
+		if closeErr != nil {
+			slog.Warn("Failed to close rows", "error", closeErr)
 		}
 	}()
 
@@ -684,14 +496,15 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 	for rows.Next() {
 		var job models.Job
 		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(
+		scanErr := rows.Scan(
 			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
 			&job.SourceChecksum, &job.OutputChecksum,
-		); err != nil {
-			slog.Warn("Failed to scan job row", "error", err)
+		)
+		if scanErr != nil {
+			slog.Warn("Failed to scan job row", "error", scanErr)
 			continue
 		}
 
@@ -705,7 +518,8 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		jobs = append(jobs, &job)
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating job rows: %w", err)
 	}
 
@@ -785,7 +599,8 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 		return nil, fmt.Errorf("failed to query status counts: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
+		err := rows.Close()
+		if err != nil {
 			slog.Warn("Failed to close rows", "error", err)
 		}
 	}()
@@ -793,14 +608,16 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 	for rows.Next() {
 		var status string
 		var count int
-		if err := rows.Scan(&status, &count); err != nil {
+		err := rows.Scan(&status, &count)
+		if err != nil {
 			slog.Warn("Failed to scan status count", "error", err)
 			continue
 		}
 		statusCounts[status] = count
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating status rows: %w", err)
 	}
 
@@ -825,7 +642,8 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 		return nil, fmt.Errorf("failed to query active workers: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
+		err := rows.Close()
+		if err != nil {
 			slog.Warn("Failed to close rows", "error", err)
 		}
 	}()
@@ -834,10 +652,11 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	for rows.Next() {
 		var w models.WorkerHeartbeat
 		var lastHeartbeat sql.NullTime
-		if err := rows.Scan(
+		err := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
 			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
-		); err != nil {
+		)
+		if err != nil {
 			slog.Warn("Failed to scan worker row", "error", err)
 			continue
 		}
@@ -847,7 +666,8 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 		workers = append(workers, &w)
 	}
 
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		return nil, fmt.Errorf("error iterating worker rows: %w", err)
 	}
 
@@ -932,47 +752,6 @@ func (t *Tracker) GetWorkerStats() (map[string]any, error) {
 	}
 
 	return stats, nil
-}
-
-// scanJobsFromRows is a helper function that scans job rows from a SQL query result.
-// This reduces code duplication between GetStaleProcessingJobs, GetJobsForWorker, etc.
-func (t *Tracker) scanJobsFromRows(rows *sql.Rows) ([]*models.Job, error) {
-	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Warn("Failed to close rows", "error", err)
-		}
-	}()
-
-	var jobs []*models.Job
-	for rows.Next() {
-		var job models.Job
-		var startedAt, completedAt sql.NullTime
-		if err := rows.Scan(
-			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
-			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
-			&startedAt, &completedAt, &job.ErrorMessage,
-			&job.SourceDuration, &job.OutputSize,
-			&job.SourceChecksum, &job.OutputChecksum,
-		); err != nil {
-			slog.Warn("Failed to scan job row", "error", err)
-			continue
-		}
-
-		if startedAt.Valid {
-			job.StartedAt = &startedAt.Time
-		}
-		if completedAt.Valid {
-			job.CompletedAt = &completedAt.Time
-		}
-
-		jobs = append(jobs, &job)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating job rows: %w", err)
-	}
-
-	return jobs, nil
 }
 
 // GetStaleProcessingJobs returns jobs stuck in processing state longer than timeout
@@ -1066,7 +845,8 @@ func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool) error {
 
 // Close closes the database connection
 func (t *Tracker) Close() error {
-	if err := t.db.Close(); err != nil {
+	err := t.db.Close()
+	if err != nil {
 		return fmt.Errorf("failed to close database: %w", err)
 	}
 	return nil
@@ -1112,4 +892,257 @@ func (t *Tracker) DeleteJobProgress(jobID string) error {
 		return fmt.Errorf("failed to delete job progress: %w", err)
 	}
 	return nil
+}
+
+// initSchema initializes the database schema
+func (t *Tracker) initSchema() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS jobs (
+		id TEXT PRIMARY KEY,
+		source_path TEXT NOT NULL,
+		output_path TEXT NOT NULL,
+		status TEXT NOT NULL,
+		priority INTEGER DEFAULT 5,
+		worker_id TEXT,
+		started_at TIMESTAMP,
+		completed_at TIMESTAMP,
+		error_message TEXT,
+		retry_count INTEGER DEFAULT 0,
+		max_retries INTEGER DEFAULT 3,
+		source_duration REAL,
+		output_size INTEGER,
+		created_at TIMESTAMP NOT NULL,
+		source_checksum TEXT,
+		output_checksum TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS workers (
+		id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		last_heartbeat TIMESTAMP,
+		vulkan_available BOOLEAN,
+		active_jobs INTEGER DEFAULT 0,
+		gpu_name TEXT,
+		cpu_usage REAL,
+		memory_usage REAL,
+		status TEXT DEFAULT 'online'
+	);
+
+	CREATE TABLE IF NOT EXISTS job_progress (
+		job_id TEXT PRIMARY KEY,
+		worker_id TEXT NOT NULL,
+		progress REAL DEFAULT 0,
+		fps REAL DEFAULT 0,
+		stage TEXT DEFAULT 'pending',
+		updated_at TIMESTAMP NOT NULL,
+		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
+	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
+	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
+	`
+
+	_, err := t.db.Exec(schema)
+	if err != nil {
+		return fmt.Errorf("failed to execute schema: %w", err)
+	}
+
+	// Add checksum columns if they don't exist (migration)
+	err = t.migrateChecksumColumns()
+	if err != nil {
+		return fmt.Errorf("failed to migrate checksum columns: %w", err)
+	}
+
+	// Add worker status column if it doesn't exist (migration)
+	err = t.migrateWorkerStatusColumn()
+	if err != nil {
+		return fmt.Errorf("failed to migrate worker status column: %w", err)
+	}
+
+	// Add priority column if it doesn't exist (migration)
+	err = t.migratePriorityColumn()
+	if err != nil {
+		return fmt.Errorf("failed to migrate priority column: %w", err)
+	}
+
+	// Add video metadata columns if they don't exist (migration)
+	err = t.migrateVideoMetadataColumns()
+	if err != nil {
+		return fmt.Errorf("failed to migrate video metadata columns: %w", err)
+	}
+
+	return nil
+}
+
+// migrateChecksumColumns adds checksum columns if they don't exist
+func (t *Tracker) migrateChecksumColumns() error {
+	// Check if source_checksum column exists
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='source_checksum'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for source_checksum column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding source_checksum column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN source_checksum TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add source_checksum column: %w", err)
+		}
+	}
+
+	// Check if output_checksum column exists
+	err = t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='output_checksum'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for output_checksum column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding output_checksum column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN output_checksum TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add output_checksum column: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migrateWorkerStatusColumn adds status column to workers table if it doesn't exist
+func (t *Tracker) migrateWorkerStatusColumn() error {
+	// Check if status column exists in workers table
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('workers') WHERE name='status'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for status column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding status column to workers table")
+		_, err := t.db.Exec(`ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'online'`)
+		if err != nil {
+			return fmt.Errorf("failed to add status column: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migratePriorityColumn adds priority column to jobs table if it doesn't exist
+func (t *Tracker) migratePriorityColumn() error {
+	// Check if priority column exists in jobs table
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='priority'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for priority column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding priority column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN priority INTEGER DEFAULT 5`)
+		if err != nil {
+			return fmt.Errorf("failed to add priority column: %w", err)
+		}
+
+		// Create index on priority for efficient sorting
+		slog.Info("Creating index on priority column")
+		_, err = t.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)`)
+		if err != nil {
+			return fmt.Errorf("failed to create priority index: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migrateVideoMetadataColumns adds video metadata columns to jobs table if they don't exist
+func (t *Tracker) migrateVideoMetadataColumns() error {
+	// List of columns to add with their types
+	columns := []struct {
+		name     string
+		dataType string
+	}{
+		{"source_width", "INTEGER"},
+		{"source_height", "INTEGER"},
+		{"source_video_codec", "TEXT"},
+		{"source_audio_codec", "TEXT"},
+		{"source_bitrate", "INTEGER"},
+		{"source_file_size", "INTEGER"},
+	}
+
+	for _, col := range columns {
+		var columnExists int
+		err := t.db.QueryRow(`
+			SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name=?
+		`, col.name).Scan(&columnExists)
+		if err != nil {
+			return fmt.Errorf("failed to check for %s column: %w", col.name, err)
+		}
+
+		if columnExists == 0 {
+			slog.Info("Adding column to jobs table", "column", col.name)
+			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %s %s`, col.name, col.dataType)
+			_, err := t.db.Exec(query)
+			if err != nil {
+				return fmt.Errorf("failed to add %s column: %w", col.name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// scanJobsFromRows is a helper function that scans job rows from a SQL query result.
+// This reduces code duplication between GetStaleProcessingJobs, GetJobsForWorker, etc.
+func (t *Tracker) scanJobsFromRows(rows *sql.Rows) ([]*models.Job, error) {
+	defer func() {
+		err := rows.Close()
+		if err != nil {
+			slog.Warn("Failed to close rows", "error", err)
+		}
+	}()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		var job models.Job
+		var startedAt, completedAt sql.NullTime
+		err := rows.Scan(
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
+			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
+			&startedAt, &completedAt, &job.ErrorMessage,
+			&job.SourceDuration, &job.OutputSize,
+			&job.SourceChecksum, &job.OutputChecksum,
+		)
+		if err != nil {
+			slog.Warn("Failed to scan job row", "error", err)
+			continue
+		}
+
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			job.CompletedAt = &completedAt.Time
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	err := rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("error iterating job rows: %w", err)
+	}
+
+	return jobs, nil
 }

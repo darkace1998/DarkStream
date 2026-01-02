@@ -55,9 +55,11 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 	}
 
 	// Try to load from JSON file first
-	if cfg, err := m.loadFromFile(); err == nil {
+	cfg, loadErr := m.loadFromFile()
+	if loadErr == nil {
 		// Validate loaded config to catch manually edited invalid configurations
-		if validErr := validateConfig(cfg); validErr != nil {
+		validErr := validateConfig(cfg)
+		if validErr != nil {
 			slog.Warn("Loaded config failed validation, using YAML defaults", "error", validErr)
 		} else {
 			m.config = cfg
@@ -85,7 +87,8 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 	}
 
 	// Persist the initial config
-	if err := m.saveToFile(); err != nil {
+	err := m.saveToFile()
+	if err != nil {
 		return nil, fmt.Errorf("failed to save initial config: %w", err)
 	}
 
@@ -128,7 +131,8 @@ func (m *Manager) GetConversionSettings() *models.ConversionSettings {
 
 // Update updates the configuration with validation
 func (m *Manager) Update(cfg *ActiveConfig) error {
-	if err := validateConfig(cfg); err != nil {
+	err := validateConfig(cfg)
+	if err != nil {
 		return err
 	}
 
@@ -139,10 +143,11 @@ func (m *Manager) Update(cfg *ActiveConfig) error {
 	m.mu.Unlock()
 
 	// Perform file I/O outside the critical section to reduce lock contention
-	if err := m.saveToFile(); err != nil {
+	saveErr := m.saveToFile()
+	if saveErr != nil {
 		// Log the error but don't fail - in-memory state is already updated
-		slog.Error("Failed to persist config to file", "error", err)
-		return err
+		slog.Error("Failed to persist config to file", "error", saveErr)
+		return saveErr
 	}
 
 	return nil
@@ -157,7 +162,8 @@ func (m *Manager) loadFromFile() (*ActiveConfig, error) {
 	}
 
 	var cfg ActiveConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	err = json.Unmarshal(data, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -173,12 +179,14 @@ func (m *Manager) saveToFile() error {
 
 	// Write to temp file first for atomic operation
 	tempPath := m.filePath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0o600); err != nil {
+	err = os.WriteFile(tempPath, data, 0o600)
+	if err != nil {
 		return fmt.Errorf("failed to write temp config file: %w", err)
 	}
 
 	// Rename for atomic update
-	if err := os.Rename(tempPath, m.filePath); err != nil {
+	err = os.Rename(tempPath, m.filePath)
+	if err != nil {
 		return fmt.Errorf("failed to rename config file: %w", err)
 	}
 

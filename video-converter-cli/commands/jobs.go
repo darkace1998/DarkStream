@@ -44,7 +44,8 @@ func displayJobs(masterURL, status string, limit int, format string) {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err := resp.Body.Close()
+		if err != nil {
 			slog.Error("Error closing response body", "error", err)
 		}
 	}()
@@ -63,7 +64,8 @@ func displayJobs(masterURL, status string, limit int, format string) {
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
+	err = json.Unmarshal(body, &result)
+	if err != nil {
 		slog.Error("Error parsing response", "error", err)
 		return
 	}
@@ -131,7 +133,8 @@ func jobsToTable(result map[string]any) ([]string, [][]string) {
 		}
 		retries := fmt.Sprintf("%d/%d", getIntValue(job, "retry_count"), getIntValue(job, "max_retries"))
 		createdAt := getStringValue(job, "created_at")
-		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+		t, err := time.Parse(time.RFC3339, createdAt)
+		if err == nil {
 			createdAt = t.Format("01-02 15:04")
 		}
 		errorMsg := getStringValue(job, "error_message")

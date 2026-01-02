@@ -164,75 +164,6 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 	}
 }
 
-// rateLimitMiddleware applies rate limiting to endpoints
-func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract client IP (considering X-Forwarded-For header)
-		ip := r.RemoteAddr
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			ip = forwarded
-		}
-
-		// Apply rate limit: 100 requests per minute per IP
-		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
-			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-			return
-		}
-
-		next(w, r)
-	}
-}
-
-// authMiddleware validates API key for worker endpoints
-func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Skip authentication if no API key is configured (backward compatibility)
-		if s.apiKey == "" {
-			next(w, r)
-			return
-		}
-
-		// Extract Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			slog.Warn("Missing Authorization header", "path", r.URL.Path, "ip", r.RemoteAddr)
-			http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
-			return
-		}
-
-		// Validate API key format: "Bearer <api_key>"
-		expectedHeader := "Bearer " + s.apiKey
-		if authHeader != expectedHeader {
-			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
-			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
-			return
-		}
-
-		next(w, r)
-	}
-}
-
-// correlationMiddleware adds a correlation ID to each request for tracing
-func (s *Server) correlationMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Check if correlation ID is already in the request header
-		correlationID := r.Header.Get("X-Correlation-ID")
-		if correlationID == "" {
-			correlationID = utils.GenerateCorrelationID()
-		}
-
-		// Add correlation ID to response header
-		w.Header().Set("X-Correlation-ID", correlationID)
-
-		// Add correlation ID to request context
-		ctx := utils.ContextWithCorrelationID(r.Context(), correlationID)
-		r = r.WithContext(ctx)
-
-		next(w, r)
-	}
-}
-
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -284,7 +215,8 @@ func (s *Server) Start() error {
 	}
 
 	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics", "health_endpoints", "/healthz, /readyz, /api/health")
-	if err := s.server.ListenAndServe(); err != nil {
+	err := s.server.ListenAndServe()
+	if err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
 	return nil
@@ -300,30 +232,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.rateLimiter.stop()
 
 	slog.Info("Shutting down HTTP server")
-	if err := s.server.Shutdown(ctx); err != nil {
+	err := s.server.Shutdown(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)
 	}
 	return nil
-}
-
-// handleConfig routes GET/POST requests to appropriate config handlers
-func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.GetConfig(w, r)
-	case http.MethodPost:
-		s.UpdateConfig(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// updateQueueDepthMetric updates the queue depth metric
-func (s *Server) updateQueueDepthMetric() {
-	count, err := s.db.CountPendingJobs()
-	if err == nil {
-		s.metrics.SetQueueDepth(float64(count))
-	}
 }
 
 // GetNextJob handles requests for the next pending job with load balancing
@@ -380,7 +293,8 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	job.StartedAt = &now
 
-	if err := s.db.UpdateJob(job); err != nil {
+	err = s.db.UpdateJob(job)
+	if err != nil {
 		slog.Error("Failed to update job", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -393,7 +307,8 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	s.updateQueueDepthMetric()
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(job); err != nil {
+	err = json.NewEncoder(w).Encode(job)
+	if err != nil {
 		slog.Error("Failed to encode job as JSON", "error", err)
 		return
 	}
@@ -454,7 +369,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 						"jobs":  []*models.Job{},
 						"count": 0,
 					}
-					if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+					encErr := json.NewEncoder(w).Encode(response)
+					if encErr != nil {
 						slog.Error("Failed to encode response", "error", encErr)
 					}
 					return
@@ -476,7 +392,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 			"jobs":  []*models.Job{},
 			"count": 0,
 		}
-		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+		encErr := json.NewEncoder(w).Encode(response)
+		if encErr != nil {
 			slog.Error("Failed to encode response", "error", encErr)
 		}
 		return
@@ -488,7 +405,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 			"jobs":  []*models.Job{},
 			"count": 0,
 		}
-		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+		encErr := json.NewEncoder(w).Encode(response)
+		if encErr != nil {
 			slog.Error("Failed to encode response", "error", encErr)
 		}
 		return
@@ -507,7 +425,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		job.WorkerID = workerID
 		job.StartedAt = &now
 
-		if err := s.db.UpdateJob(job); err != nil {
+		err := s.db.UpdateJob(job)
+		if err != nil {
 			slog.Error("Failed to update job for batch assignment", "job_id", job.ID, "error", err)
 			failedAssignments++
 			continue
@@ -541,7 +460,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		"jobs":  assignedJobs,
 		"count": len(assignedJobs),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode batch jobs response", "error", err)
 		return
 	}
@@ -560,7 +480,8 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		OutputSize int64  `json:"output_size"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -590,7 +511,8 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 	job.OutputSize = req.OutputSize
 	job.CompletedAt = &now
 
-	if err := s.db.UpdateJob(job); err != nil {
+	err = s.db.UpdateJob(job)
+	if err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -620,7 +542,8 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		ErrorMessage string `json:"error_message"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -648,7 +571,8 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	job.WorkerID = req.WorkerID
 	job.ErrorMessage = req.ErrorMessage
 
-	if err := s.db.UpdateJob(job); err != nil {
+	err = s.db.UpdateJob(job)
+	if err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -687,7 +611,8 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hb models.WorkerHeartbeat
-	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&hb)
+	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -697,7 +622,8 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.UpdateWorkerHeartbeat(&hb); err != nil {
+	err = s.db.UpdateWorkerHeartbeat(&hb)
+	if err != nil {
 		slog.Error("Failed to update worker heartbeat", "worker_id", hb.WorkerID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -732,7 +658,8 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(stats); err != nil {
+	err = json.NewEncoder(w).Encode(stats)
+	if err != nil {
 		slog.Error("Failed to encode job stats response", "error", err)
 		return
 	}
@@ -758,7 +685,8 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode stats response", "error", err)
 		return
 	}
@@ -791,8 +719,9 @@ func (s *Server) HealthzLive(w http.ResponseWriter, r *http.Request) {
 		"status":    "alive",
 		"timestamp": time.Now(),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("Failed to encode healthz response", "error", err)
+	encErr := json.NewEncoder(w).Encode(response)
+	if encErr != nil {
+		slog.Error("Failed to encode healthz response", "error", encErr)
 	}
 }
 
@@ -815,7 +744,8 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 			"timestamp": time.Now(),
 			"reason":    "database unavailable",
 		}
-		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+		encErr := json.NewEncoder(w).Encode(response)
+		if encErr != nil {
 			slog.Error("Failed to encode readyz response", "error", encErr)
 		}
 		return
@@ -827,7 +757,8 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 		"status":    "ready",
 		"timestamp": time.Now(),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode readyz response", "error", err)
 	}
 }
@@ -974,7 +905,8 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode health check response", "error", err)
 	}
 }
@@ -1035,7 +967,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
+		cerr := file.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close source file", "path", validatedPath, "error", cerr)
 		}
 	}()
@@ -1088,7 +1021,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			contentLength := end - start + 1
 
 			// Seek to the start position
-			if _, err := file.Seek(start, 0); err != nil {
+			_, err = file.Seek(start, 0)
+			if err != nil {
 				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
 				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
 				return
@@ -1103,7 +1037,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusPartialContent)
 
 			// Stream the remaining file content
-			if _, err := io.CopyN(w, file, contentLength); err != nil {
+			_, err = io.CopyN(w, file, contentLength)
+			if err != nil {
 				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
 				return
 			}
@@ -1122,7 +1057,8 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Stream the file
-	if _, err := io.Copy(w, file); err != nil {
+	_, err = io.Copy(w, file)
+	if err != nil {
 		slog.Error("Failed to stream file", "job_id", jobID, "error", err)
 		return
 	}
@@ -1188,7 +1124,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse multipart form (32MB max memory)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	err = r.ParseMultipartForm(32 << 20)
+	if err != nil {
 		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)
 		return
 	}
@@ -1200,14 +1137,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
+		cerr := file.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close uploaded file", "error", cerr)
 		}
 	}()
 
 	// Create output directory if needed
 	outputDir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+	err = os.MkdirAll(outputDir, 0o750)
+	if err != nil {
 		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
 		http.Error(w, "Failed to create output directory", http.StatusInternalServerError)
 		return
@@ -1224,12 +1163,15 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	tempPath := tempFile.Name()
 	defer func() {
-		if cerr := tempFile.Close(); cerr != nil {
+		cerr := tempFile.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close temp file", "error", cerr)
 		}
 		// Clean up temp file if it still exists (meaning we didn't rename it)
-		if _, err := os.Stat(tempPath); err == nil {
-			if rerr := os.Remove(tempPath); rerr != nil {
+		_, statErr := os.Stat(tempPath)
+		if statErr == nil {
+			rerr := os.Remove(tempPath)
+			if rerr != nil {
 				slog.Warn("Failed to remove temp file", "path", tempPath, "error", rerr)
 			}
 		}
@@ -1244,14 +1186,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Close the temp file before renaming
-	if err := tempFile.Close(); err != nil {
+	err = tempFile.Close()
+	if err != nil {
 		slog.Error("Failed to close temp file before rename", "error", err)
 		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
 	}
 
 	// Atomically rename temp file to final location first
-	if err := os.Rename(tempPath, outputPath); err != nil {
+	err = os.Rename(tempPath, outputPath)
+	if err != nil {
 		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", outputPath, "error", err)
 		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
 		return
@@ -1272,7 +1216,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	job.CompletedAt = &now
 	job.OutputChecksum = outputChecksum
 
-	if err := s.db.UpdateJob(job); err != nil {
+	err = s.db.UpdateJob(job)
+	if err != nil {
 		slog.Error("Failed to update job", "job_id", jobID, "error", err)
 		// File is saved but status update failed - this is acceptable
 		// The job will remain in processing state and can be retried
@@ -1288,7 +1233,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		"file_size": bytesWritten,
 		"status":    "completed",
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode upload response", "error", err)
 		return
 	}
@@ -1302,7 +1248,8 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var progress models.JobProgress
-	if err := json.NewDecoder(r.Body).Decode(&progress); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&progress)
+	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
@@ -1320,7 +1267,8 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 	// Set the update time
 	progress.UpdatedAt = time.Now()
 
-	if err := s.db.UpdateJobProgress(&progress); err != nil {
+	err = s.db.UpdateJobProgress(&progress)
+	if err != nil {
 		slog.Error("Failed to update job progress", "job_id", progress.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -1366,14 +1314,16 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 			"updated_at": job.CreatedAt,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
+		encErr := json.NewEncoder(w).Encode(response)
+		if encErr != nil {
 			slog.Error("Failed to encode job progress response", "error", encErr)
 		}
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(progress); err != nil {
+	err = json.NewEncoder(w).Encode(progress)
+	if err != nil {
 		slog.Error("Failed to encode job progress response", "error", err)
 	}
 }
@@ -1419,7 +1369,8 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 		"progress": 0.0,
 		"stage":    job.Status,
 	}
-	if progress, progressErr := s.db.GetJobProgress(jobID); progressErr == nil {
+	progress, progressErr := s.db.GetJobProgress(jobID)
+	if progressErr == nil {
 		initialEvent["progress"] = progress.Progress
 		initialEvent["fps"] = progress.FPS
 		initialEvent["stage"] = progress.Stage
@@ -1539,7 +1490,8 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		if i >= limit {
 			break
 		}
-		if err := s.db.ResetJobToPending(job.ID, true); err != nil {
+		err := s.db.ResetJobToPending(job.ID, true)
+		if err != nil {
 			slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
 			continue
 		}
@@ -1552,7 +1504,8 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		"retried": retriedCount,
 		"message": fmt.Sprintf("Successfully retried %d job(s)", retriedCount),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode retry response", "error", err)
 		return
 	}
@@ -1612,7 +1565,8 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 		"jobs":  jobs,
 		"count": len(jobs),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode jobs response", "error", err)
 		return
 	}
@@ -1651,7 +1605,8 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	// Update job status to cancelled (using failed with specific error message)
 	job.Status = statusFailed
 	job.ErrorMessage = "Job cancelled by user"
-	if err := s.db.UpdateJob(job); err != nil {
+	err = s.db.UpdateJob(job)
+	if err != nil {
 		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
 		http.Error(w, "Failed to cancel job", http.StatusInternalServerError)
 		return
@@ -1665,7 +1620,8 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		"status":  "cancelled",
 		"message": "Job cancelled successfully",
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode cancel response", "error", err)
 		return
 	}
@@ -1738,7 +1694,8 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 
 		job.Status = statusFailed
 		job.ErrorMessage = "Job cancelled by user (batch cancellation)"
-		if err := s.db.UpdateJob(job); err != nil {
+		err := s.db.UpdateJob(job)
+		if err != nil {
 			slog.Error("Failed to cancel job", "job_id", job.ID, "error", err)
 			failedCount++
 			continue
@@ -1761,7 +1718,8 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		"status_filter":   status,
 		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode batch cancel response", "error", err)
 		return
 	}
@@ -1806,7 +1764,8 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 		"count":   len(workers),
 		"stats":   workerStats,
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode workers response", "error", err)
 		return
 	}
@@ -1840,7 +1799,8 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 		"errors": errors,
 		"type":   configType,
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
 		slog.Error("Failed to encode validation response", "error", err)
 		return
 	}
@@ -1869,7 +1829,8 @@ func validateConfigContent(configType string, content []byte) []string {
 	switch configType {
 	case "master":
 		var cfg models.MasterConfig
-		if err := yaml.Unmarshal(content, &cfg); err != nil {
+		err := yaml.Unmarshal(content, &cfg)
+		if err != nil {
 			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
 			return errors
 		}
@@ -1893,7 +1854,8 @@ func validateConfigContent(configType string, content []byte) []string {
 
 	case "worker":
 		var cfg models.WorkerConfig
-		if err := yaml.Unmarshal(content, &cfg); err != nil {
+		err := yaml.Unmarshal(content, &cfg)
+		if err != nil {
 			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
 			return errors
 		}
@@ -1911,4 +1873,93 @@ func validateConfigContent(configType string, content []byte) []string {
 	}
 
 	return errors
+}
+
+// rateLimitMiddleware applies rate limiting to endpoints
+func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract client IP (considering X-Forwarded-For header)
+		ip := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			ip = forwarded
+		}
+
+		// Apply rate limit: 100 requests per minute per IP
+		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
+			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// authMiddleware validates API key for worker endpoints
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Skip authentication if no API key is configured (backward compatibility)
+		if s.apiKey == "" {
+			next(w, r)
+			return
+		}
+
+		// Extract Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			slog.Warn("Missing Authorization header", "path", r.URL.Path, "ip", r.RemoteAddr)
+			http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		// Validate API key format: "Bearer <api_key>"
+		expectedHeader := "Bearer " + s.apiKey
+		if authHeader != expectedHeader {
+			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
+			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// correlationMiddleware adds a correlation ID to each request for tracing
+func (s *Server) correlationMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check if correlation ID is already in the request header
+		correlationID := r.Header.Get("X-Correlation-ID")
+		if correlationID == "" {
+			correlationID = utils.GenerateCorrelationID()
+		}
+
+		// Add correlation ID to response header
+		w.Header().Set("X-Correlation-ID", correlationID)
+
+		// Add correlation ID to request context
+		ctx := utils.ContextWithCorrelationID(r.Context(), correlationID)
+		r = r.WithContext(ctx)
+
+		next(w, r)
+	}
+}
+
+// handleConfig routes GET/POST requests to appropriate config handlers
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.GetConfig(w, r)
+	case http.MethodPost:
+		s.UpdateConfig(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// updateQueueDepthMetric updates the queue depth metric
+func (s *Server) updateQueueDepthMetric() {
+	count, err := s.db.CountPendingJobs()
+	if err == nil {
+		s.metrics.SetQueueDepth(float64(count))
+	}
 }

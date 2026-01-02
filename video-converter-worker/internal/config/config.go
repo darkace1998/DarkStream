@@ -18,7 +18,8 @@ func LoadWorkerConfig(path string) (*models.WorkerConfig, error) {
 	}
 
 	var cfg models.WorkerConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	err = yaml.Unmarshal(data, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 

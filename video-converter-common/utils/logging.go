@@ -64,7 +64,8 @@ func GetComponentLogLevel(component string) slog.Level {
 // GenerateCorrelationID generates a new correlation ID for request tracing
 func GenerateCorrelationID() string {
 	bytes := make([]byte, 8)
-	if _, err := rand.Read(bytes); err != nil {
+	_, err := rand.Read(bytes)
+	if err != nil {
 		// Fallback to timestamp + pid based ID if random fails
 		now := time.Now().UnixNano()
 		pid := os.Getpid()
@@ -133,23 +134,6 @@ func (l *ComponentLogger) With(args ...any) *ComponentLogger {
 	}
 }
 
-// buildArgs prepends component and correlation ID to log args
-func (l *ComponentLogger) buildArgs(args []any) []any {
-	baseArgs := make([]any, 0, len(args)+len(l.attrs)+4)
-	baseArgs = append(baseArgs, "component", l.component)
-	if l.correlationID != "" {
-		baseArgs = append(baseArgs, "correlation_id", l.correlationID)
-	}
-	baseArgs = append(baseArgs, l.attrs...)
-	baseArgs = append(baseArgs, args...)
-	return baseArgs
-}
-
-// shouldLog checks if logging is enabled for this component at the given level
-func (l *ComponentLogger) shouldLog(level slog.Level) bool {
-	return level >= GetComponentLogLevel(l.component)
-}
-
 // Debug logs a debug message
 func (l *ComponentLogger) Debug(msg string, args ...any) {
 	if l.shouldLog(slog.LevelDebug) {
@@ -176,6 +160,23 @@ func (l *ComponentLogger) Error(msg string, args ...any) {
 	if l.shouldLog(slog.LevelError) {
 		slog.Error(msg, l.buildArgs(args)...)
 	}
+}
+
+// buildArgs prepends component and correlation ID to log args
+func (l *ComponentLogger) buildArgs(args []any) []any {
+	baseArgs := make([]any, 0, len(args)+len(l.attrs)+4)
+	baseArgs = append(baseArgs, "component", l.component)
+	if l.correlationID != "" {
+		baseArgs = append(baseArgs, "correlation_id", l.correlationID)
+	}
+	baseArgs = append(baseArgs, l.attrs...)
+	baseArgs = append(baseArgs, args...)
+	return baseArgs
+}
+
+// shouldLog checks if logging is enabled for this component at the given level
+func (l *ComponentLogger) shouldLog(level slog.Level) bool {
+	return level >= GetComponentLogLevel(l.component)
 }
 
 func parseLogLevel(level string) slog.Level {

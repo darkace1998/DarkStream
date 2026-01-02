@@ -37,7 +37,8 @@ func NewCacheManager(cachePath string, maxSize int64, maxAge time.Duration) *Cac
 	}
 
 	// Ensure cache directory exists
-	if err := os.MkdirAll(cachePath, 0o750); err != nil {
+	err := os.MkdirAll(cachePath, 0o750)
+	if err != nil {
 		slog.Warn("Failed to create cache directory", "path", cachePath, "error", err)
 	}
 
@@ -45,29 +46,6 @@ func NewCacheManager(cachePath string, maxSize int64, maxAge time.Duration) *Cac
 	cm.calculateCacheSize()
 
 	return cm
-}
-
-// calculateCacheSize calculates the current cache size
-func (cm *CacheManager) calculateCacheSize() {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	var totalSize int64
-	_ = filepath.WalkDir(cm.cachePath, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // Skip errors and continue walking
-		}
-		if !d.IsDir() {
-			info, infoErr := d.Info()
-			if infoErr == nil {
-				totalSize += info.Size()
-			}
-		}
-		return nil
-	})
-
-	cm.currentSize = totalSize
-	slog.Debug("Cache size calculated", "size_bytes", totalSize, "path", cm.cachePath)
 }
 
 // GetCacheSize returns the current cache size in bytes
@@ -101,8 +79,9 @@ func (cm *CacheManager) Cleanup() error {
 		for _, entry := range entries {
 			age := now.Sub(entry.ModTime)
 			if age > cm.maxAge {
-				if err := os.Remove(entry.Path); err != nil {
-					slog.Warn("Failed to remove old cache file", "path", entry.Path, "error", err)
+				removeErr := os.Remove(entry.Path)
+				if removeErr != nil {
+					slog.Warn("Failed to remove old cache file", "path", entry.Path, "error", removeErr)
 					continue
 				}
 				removedCount++
@@ -138,8 +117,9 @@ func (cm *CacheManager) Cleanup() error {
 				break
 			}
 
-			if err := os.Remove(entry.Path); err != nil {
-				slog.Warn("Failed to remove cache file for size limit", "path", entry.Path, "error", err)
+			removeErr := os.Remove(entry.Path)
+			if removeErr != nil {
+				slog.Warn("Failed to remove cache file for size limit", "path", entry.Path, "error", removeErr)
 				continue
 			}
 			currentSize -= entry.Size
@@ -164,33 +144,6 @@ func (cm *CacheManager) Cleanup() error {
 	}
 
 	return nil
-}
-
-// listCacheEntries lists all cache entries
-func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
-	var entries []CacheEntry
-
-	err := filepath.WalkDir(cm.cachePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // Skip errors and continue walking
-		}
-		if !d.IsDir() {
-			info, infoErr := d.Info()
-			if infoErr == nil {
-				entries = append(entries, CacheEntry{
-					Path:    path,
-					Size:    info.Size(),
-					ModTime: info.ModTime(),
-				})
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		return entries, fmt.Errorf("failed to walk cache directory: %w", err)
-	}
-	return entries, nil
 }
 
 // AddFile records a new file being added to the cache
@@ -223,4 +176,54 @@ func (cm *CacheManager) IsStopped() bool {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.stopped
+}
+
+// calculateCacheSize calculates the current cache size
+func (cm *CacheManager) calculateCacheSize() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	var totalSize int64
+	_ = filepath.WalkDir(cm.cachePath, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // Skip errors and continue walking
+		}
+		if !d.IsDir() {
+			info, infoErr := d.Info()
+			if infoErr == nil {
+				totalSize += info.Size()
+			}
+		}
+		return nil
+	})
+
+	cm.currentSize = totalSize
+	slog.Debug("Cache size calculated", "size_bytes", totalSize, "path", cm.cachePath)
+}
+
+// listCacheEntries lists all cache entries
+func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
+	var entries []CacheEntry
+
+	err := filepath.WalkDir(cm.cachePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // Skip errors and continue walking
+		}
+		if !d.IsDir() {
+			info, infoErr := d.Info()
+			if infoErr == nil {
+				entries = append(entries, CacheEntry{
+					Path:    path,
+					Size:    info.Size(),
+					ModTime: info.ModTime(),
+				})
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return entries, fmt.Errorf("failed to walk cache directory: %w", err)
+	}
+	return entries, nil
 }

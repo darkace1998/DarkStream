@@ -538,7 +538,8 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 
 	// Get job statistics
 	stats := DashboardStats{Workers: onlineWorkers}
-	if jobStats, err := s.db.GetJobStats(); err == nil {
+	jobStats, err := s.db.GetJobStats()
+	if err == nil {
 		if v, ok := jobStats["pending"].(int); ok {
 			stats.Pending = v
 		}
@@ -561,10 +562,12 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 
 	// Get recent completed/failed jobs
 	recentJobs := make([]*models.Job, 0)
-	if completed, err := s.db.GetJobsByStatus("completed", 25); err == nil {
+	completed, err := s.db.GetJobsByStatus("completed", 25)
+	if err == nil {
 		recentJobs = append(recentJobs, completed...)
 	}
-	if failed, err := s.db.GetJobsByStatus("failed", 25); err == nil {
+	failed, err := s.db.GetJobsByStatus("failed", 25)
+	if err == nil {
 		recentJobs = append(recentJobs, failed...)
 	}
 
@@ -578,7 +581,8 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := webUITemplate.Execute(w, data); err != nil {
+	err = webUITemplate.Execute(w, data)
+	if err != nil {
 		slog.Error("Failed to render web UI template", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -595,7 +599,8 @@ func (s *Server) GetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.configMgr.Get()
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+	err := json.NewEncoder(w).Encode(cfg)
+	if err != nil {
 		slog.Error("Failed to encode config", "error", err)
 		return
 	}
@@ -609,17 +614,20 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cfg config.ActiveConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&cfg)
+	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	if err := s.configMgr.Update(&cfg); err != nil {
+	err = s.configMgr.Update(&cfg)
+	if err != nil {
 		var validationErrs *config.ValidationErrors
 		if errors.As(err, &validationErrs) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			if encErr := json.NewEncoder(w).Encode(validationErrs); encErr != nil {
+			encErr := json.NewEncoder(w).Encode(validationErrs)
+			if encErr != nil {
 				slog.Error("Failed to encode validation errors", "error", encErr)
 			}
 			return
@@ -632,7 +640,8 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Configuration updated", "version", s.configMgr.Get().Version)
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.configMgr.Get()); err != nil {
+	err = json.NewEncoder(w).Encode(s.configMgr.Get())
+	if err != nil {
 		slog.Error("Failed to encode updated config", "error", err)
 		return
 	}

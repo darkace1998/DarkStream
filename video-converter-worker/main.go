@@ -31,7 +31,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := w.Start(); err != nil {
+	err = w.Start()
+	if err != nil {
 		slog.Error("Worker failed", "error", err)
 		os.Exit(1)
 	}

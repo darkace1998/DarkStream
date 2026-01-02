@@ -26,17 +26,20 @@ func TestFileTransferWorkflow(t *testing.T) {
 	convertedDir := filepath.Join(testDir, "converted")
 	dbPath := filepath.Join(testDir, "jobs.db")
 
-	if err := os.MkdirAll(videosDir, 0o750); err != nil {
+	err := os.MkdirAll(videosDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create videos directory: %v", err)
 	}
-	if err := os.MkdirAll(convertedDir, 0o750); err != nil {
+	err = os.MkdirAll(convertedDir, 0o750)
+	if err != nil {
 		t.Fatalf("Failed to create converted directory: %v", err)
 	}
 
 	// Create a test video file
 	testVideoPath := filepath.Join(videosDir, "test.mp4")
 	testVideoContent := []byte("fake video content for testing")
-	if err := os.WriteFile(testVideoPath, testVideoContent, 0o600); err != nil {
+	err = os.WriteFile(testVideoPath, testVideoContent, 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create test video: %v", err)
 	}
 
@@ -46,7 +49,8 @@ func TestFileTransferWorkflow(t *testing.T) {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 	defer func() {
-		if cerr := db.Close(); cerr != nil {
+		cerr := db.Close()
+		if cerr != nil {
 			t.Logf("Failed to close database: %v", cerr)
 		}
 	}()
@@ -69,7 +73,8 @@ func TestFileTransferWorkflow(t *testing.T) {
 		output_size INTEGER DEFAULT 0
 	);
 	`
-	if _, err := db.Exec(createTableSQL); err != nil {
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
 		t.Fatalf("Failed to create jobs table: %v", err)
 	}
 
@@ -77,7 +82,8 @@ func TestFileTransferWorkflow(t *testing.T) {
 	jobID := "test-job-1"
 	outputPath := filepath.Join(convertedDir, "test-output.mp4")
 	insertSQL := `INSERT INTO jobs (id, source_path, output_path, status, worker_id) VALUES (?, ?, ?, ?, ?)`
-	if _, err := db.Exec(insertSQL, jobID, testVideoPath, outputPath, "processing", "worker-test"); err != nil {
+	_, err = db.Exec(insertSQL, jobID, testVideoPath, outputPath, "processing", "worker-test")
+	if err != nil {
 		t.Fatalf("Failed to insert test job: %v", err)
 	}
 
@@ -112,7 +118,8 @@ logging:
 `, videosDir, convertedDir, dbPath, filepath.Join(testDir, "master.log"))
 
 	masterConfigPath := filepath.Join(testDir, "master-config.yaml")
-	if err := os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600); err != nil {
+	err = os.WriteFile(masterConfigPath, []byte(masterConfig), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
@@ -121,7 +128,8 @@ logging:
 	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
 
 	// Build master if not exists
-	if _, err := os.Stat(masterBinary); os.IsNotExist(err) {
+	_, err = os.Stat(masterBinary)
+	if os.IsNotExist(err) {
 		t.Skip("Master binary not found, skipping integration test")
 	}
 
@@ -151,13 +159,14 @@ logging:
 		// Create a fake converted video
 		convertedContent := []byte("fake converted video content")
 		convertedFile := filepath.Join(testDir, "converted-test.mp4")
-		if err := os.WriteFile(convertedFile, convertedContent, 0o600); err != nil {
+		err := os.WriteFile(convertedFile, convertedContent, 0o600)
+		if err != nil {
 			t.Fatalf("Failed to create converted video: %v", err)
 		}
 
 		// Verify job exists
 		var status string
-		err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status)
+		err = db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status)
 		if err != nil {
 			t.Fatalf("Failed to query job status: %v", err)
 		}
@@ -223,7 +232,8 @@ func TestUploadMultipartForm(t *testing.T) {
 	testDir := t.TempDir()
 	testFile := filepath.Join(testDir, "test.mp4")
 	testContent := []byte("test video content")
-	if err := os.WriteFile(testFile, testContent, 0o600); err != nil {
+	err := os.WriteFile(testFile, testContent, 0o600)
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -237,7 +247,8 @@ func TestUploadMultipartForm(t *testing.T) {
 		t.Fatalf("Failed to open test file: %v", err)
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
+		cerr := file.Close()
+		if cerr != nil {
 			t.Logf("Failed to close file: %v", cerr)
 		}
 	}()
@@ -247,11 +258,13 @@ func TestUploadMultipartForm(t *testing.T) {
 		t.Fatalf("Failed to create form file: %v", err)
 	}
 
-	if _, err := io.Copy(part, file); err != nil {
+	_, err = io.Copy(part, file)
+	if err != nil {
 		t.Fatalf("Failed to copy file to multipart: %v", err)
 	}
 
-	if err := writer.Close(); err != nil {
+	err = writer.Close()
+	if err != nil {
 		t.Fatalf("Failed to close multipart writer: %v", err)
 	}
 
@@ -280,7 +293,8 @@ func TestJobStatusTransitions(t *testing.T) {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 	defer func() {
-		if cerr := db.Close(); cerr != nil {
+		cerr := db.Close()
+		if cerr != nil {
 			t.Logf("Failed to close database: %v", cerr)
 		}
 	}()
@@ -303,7 +317,8 @@ func TestJobStatusTransitions(t *testing.T) {
 		output_size INTEGER DEFAULT 0
 	);
 	`
-	if _, err := db.Exec(createTableSQL); err != nil {
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
 		t.Fatalf("Failed to create jobs table: %v", err)
 	}
 
@@ -323,19 +338,22 @@ func TestJobStatusTransitions(t *testing.T) {
 
 			// Insert job
 			insertSQL := `INSERT INTO jobs (id, source_path, output_path, status) VALUES (?, ?, ?, ?)`
-			if _, err := db.Exec(insertSQL, jobID, "/tmp/source.mp4", "/tmp/output.mp4", tc.initialStatus); err != nil {
+			_, err := db.Exec(insertSQL, jobID, "/tmp/source.mp4", "/tmp/output.mp4", tc.initialStatus)
+			if err != nil {
 				t.Fatalf("Failed to insert job: %v", err)
 			}
 
 			// Update status
 			updateSQL := `UPDATE jobs SET status = ? WHERE id = ?`
-			if _, err := db.Exec(updateSQL, tc.expectedStatus, jobID); err != nil {
+			_, err = db.Exec(updateSQL, tc.expectedStatus, jobID)
+			if err != nil {
 				t.Fatalf("Failed to update job status: %v", err)
 			}
 
 			// Verify status
 			var status string
-			if err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status); err != nil {
+			err = db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status)
+			if err != nil {
 				t.Fatalf("Failed to query job status: %v", err)
 			}
 

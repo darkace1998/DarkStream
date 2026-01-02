@@ -31,7 +31,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := coord.Start(); err != nil {
+	err = coord.Start()
+	if err != nil {
 		slog.Error("Coordinator failed", "error", err)
 		os.Exit(1)
 	}

@@ -109,7 +109,8 @@ func (c *Coordinator) Start() error {
 	// Insert jobs into database
 	failedInsertions := 0
 	for _, job := range jobs {
-		if err := c.db.CreateJob(job); err != nil {
+		err := c.db.CreateJob(job)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				// Job already exists, skip silently
 				continue
@@ -158,7 +159,8 @@ func (c *Coordinator) Start() error {
 		// Attempt graceful shutdown of HTTP server
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := c.server.Shutdown(shutdownCtx); err != nil {
+		err := c.server.Shutdown(shutdownCtx)
+		if err != nil {
 			slog.Error("HTTP server shutdown error", "err", err)
 		}
 	}()
@@ -171,7 +173,8 @@ func (c *Coordinator) Start() error {
 	c.wg.Wait()
 
 	// Close database connection
-	if dbErr := c.db.Close(); dbErr != nil {
+	dbErr := c.db.Close()
+	if dbErr != nil {
 		slog.Error("Failed to close database", "error", dbErr)
 	}
 
@@ -239,7 +242,8 @@ func (c *Coordinator) monitorWorkerHealth() {
 						"last_heartbeat", worker.Timestamp)
 
 					// Mark worker as offline in database
-					if err := c.db.MarkWorkerOffline(worker.WorkerID); err != nil {
+					err := c.db.MarkWorkerOffline(worker.WorkerID)
+					if err != nil {
 						slog.Error("Failed to mark worker as offline",
 							"worker_id", worker.WorkerID, "error", err)
 					}
@@ -258,7 +262,8 @@ func (c *Coordinator) monitorWorkerHealth() {
 				for _, job := range jobs {
 					// Reset job to pending without incrementing retry count
 					// since worker failure is not job's fault
-					if err := c.db.ResetJobToPending(job.ID, false); err != nil {
+					err := c.db.ResetJobToPending(job.ID, false)
+					if err != nil {
 						slog.Error("Failed to reset job from offline worker",
 							"job_id", job.ID, "worker_id", workerID, "error", err)
 					} else {
@@ -297,7 +302,8 @@ func (c *Coordinator) monitorWorkerHealth() {
 						jobTimeout, job.RetryCount, job.MaxRetries)
 					completedAt := time.Now()
 					job.CompletedAt = &completedAt
-					if err := c.db.UpdateJob(job); err != nil {
+					err := c.db.UpdateJob(job)
+					if err != nil {
 						slog.Error("Failed to mark stale job as failed",
 							"job_id", job.ID, "error", err)
 					} else {
@@ -308,7 +314,8 @@ func (c *Coordinator) monitorWorkerHealth() {
 					}
 				} else {
 					// Reset job to pending with retry count increment
-					if err := c.db.ResetJobToPending(job.ID, true); err != nil {
+					err := c.db.ResetJobToPending(job.ID, true)
+					if err != nil {
 						slog.Error("Failed to reset stale job",
 							"job_id", job.ID, "error", err)
 					} else {
@@ -375,7 +382,8 @@ func (c *Coordinator) monitorFailedJobs() {
 				retryBackoff[job.ID] = time.Now()
 
 				// Reset job to pending with incremented retry count
-				if err := c.db.ResetJobToPending(job.ID, true); err != nil {
+				err := c.db.ResetJobToPending(job.ID, true)
+				if err != nil {
 					slog.Error("Failed to reset job for retry",
 						"job_id", job.ID, "error", err)
 					continue

@@ -18,13 +18,15 @@ func CalculateFileSHA256(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
+		cerr := file.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close file during checksum calculation", "error", cerr)
 		}
 	}()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	_, err = io.Copy(hash, file)
+	if err != nil {
 		return "", fmt.Errorf("failed to calculate checksum: %w", err)
 	}
 

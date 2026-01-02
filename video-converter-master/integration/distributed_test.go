@@ -43,7 +43,8 @@ func copyFileHelper(src, dst string) error {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer func() {
-		if cerr := sourceFile.Close(); cerr != nil {
+		cerr := sourceFile.Close()
+		if cerr != nil {
 			_ = cerr // Silently ignore close error in helper
 		}
 	}()
@@ -54,7 +55,8 @@ func copyFileHelper(src, dst string) error {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
 	defer func() {
-		if cerr := destFile.Close(); cerr != nil {
+		cerr := destFile.Close()
+		if cerr != nil {
 			_ = cerr // Silently ignore close error in helper
 		}
 	}()
@@ -81,8 +83,9 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 
 	for _, dir := range []string{env.videosDir, env.convertedDir, env.worker1Cache, env.worker2Cache} {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			t.Fatalf("Failed to create directory %s: %v", dir, err)
+		mkErr := os.MkdirAll(dir, 0o750)
+		if mkErr != nil {
+			t.Fatalf("Failed to create directory %s: %v", dir, mkErr)
 		}
 	}
 	return env
@@ -95,11 +98,13 @@ func createTestVideos(t *testing.T, env *testEnv) {
 	for _, video := range testVideos {
 		src := filepath.Join(env.repoRoot, video)
 		dst := filepath.Join(env.videosDir, video)
-		if err := copyFileHelper(src, dst); err != nil {
-			t.Logf("Warning: Failed to copy test video %s: %v (will create dummy)", video, err)
+		copyErr := copyFileHelper(src, dst)
+		if copyErr != nil {
+			t.Logf("Warning: Failed to copy test video %s: %v (will create dummy)", video, copyErr)
 			dummyContent := bytes.Repeat([]byte("fake video content "), 10000)
-			if err := os.WriteFile(dst, dummyContent, 0o600); err != nil {
-				t.Fatalf("Failed to create dummy video %s: %v", video, err)
+			writeErr := os.WriteFile(dst, dummyContent, 0o600)
+			if writeErr != nil {
+				t.Fatalf("Failed to create dummy video %s: %v", video, writeErr)
 			}
 		}
 	}
@@ -138,8 +143,9 @@ logging:
 `, env.videosDir, env.convertedDir, env.dbPath, filepath.Join(env.testDir, "master.log"))
 
 	configPath := filepath.Join(env.testDir, "master-config.yaml")
-	if err := os.WriteFile(configPath, []byte(masterConfig), 0o600); err != nil {
-		t.Fatalf("Failed to write master config: %v", err)
+	writeErr := os.WriteFile(configPath, []byte(masterConfig), 0o600)
+	if writeErr != nil {
+		t.Fatalf("Failed to write master config: %v", writeErr)
 	}
 	return configPath
 }
@@ -187,12 +193,14 @@ logging:
 // buildBinaryIfNeeded builds a binary if it doesn't exist
 func buildBinaryIfNeeded(t *testing.T, binaryPath, sourceDir string) {
 	t.Helper()
-	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+	_, statErr := os.Stat(binaryPath)
+	if os.IsNotExist(statErr) {
 		t.Logf("Building binary at %s...", binaryPath)
 		buildCmd := exec.Command("go", "build", "-o", filepath.Base(binaryPath), "./main.go")
 		buildCmd.Dir = sourceDir
-		if output, err := buildCmd.CombinedOutput(); err != nil {
-			t.Fatalf("Failed to build binary: %v\n%s", err, output)
+		output, buildErr := buildCmd.CombinedOutput()
+		if buildErr != nil {
+			t.Fatalf("Failed to build binary: %v\n%s", buildErr, output)
 		}
 	}
 }
@@ -204,7 +212,8 @@ func startProcess(t *testing.T, name, binary string, args ...string) *exec.Cmd {
 	cmd := exec.Command(binary, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	err := cmd.Start()
+	if err != nil {
 		t.Fatalf("Failed to start %s: %v", name, err)
 	}
 	return cmd
@@ -214,8 +223,9 @@ func startProcess(t *testing.T, name, binary string, args ...string) *exec.Cmd {
 func killProcess(t *testing.T, name string, cmd *exec.Cmd) {
 	t.Helper()
 	if cmd.Process != nil {
-		if err := cmd.Process.Kill(); err != nil {
-			t.Logf("Failed to kill %s process: %v", name, err)
+		killErr := cmd.Process.Kill()
+		if killErr != nil {
+			t.Logf("Failed to kill %s process: %v", name, killErr)
 		}
 	}
 }
@@ -227,7 +237,8 @@ func verifyMasterAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Master API not accessible: %v", err)
 	}
-	if cerr := resp.Body.Close(); cerr != nil {
+	cerr := resp.Body.Close()
+	if cerr != nil {
 		t.Logf("Failed to close response body: %v", cerr)
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -247,7 +258,8 @@ func queryJobStats(t *testing.T, db *sql.DB) jobStats {
 		"failed":     &stats.failed,
 	}
 	for status, count := range queries {
-		if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = ?", status).Scan(count); err != nil {
+		err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = ?", status).Scan(count)
+		if err != nil {
 			t.Fatalf("Failed to query %s jobs: %v", status, err)
 		}
 	}
@@ -309,7 +321,8 @@ func logJobDetails(t *testing.T, db *sql.DB) {
 		return
 	}
 	defer func() {
-		if cerr := rows.Close(); cerr != nil {
+		cerr := rows.Close()
+		if cerr != nil {
 			t.Logf("Failed to close rows: %v", cerr)
 		}
 	}()
@@ -318,13 +331,15 @@ func logJobDetails(t *testing.T, db *sql.DB) {
 	for rows.Next() {
 		var id, workerID, status string
 		var outputSize int64
-		if err := rows.Scan(&id, &workerID, &status, &outputSize); err != nil {
+		err := rows.Scan(&id, &workerID, &status, &outputSize)
+		if err != nil {
 			t.Logf("Failed to scan row: %v", err)
 			continue
 		}
 		t.Logf("Job %s: Worker=%s, Status=%s, Size=%d bytes", id, workerID, status, outputSize)
 	}
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	if err != nil {
 		t.Logf("Error iterating rows: %v", err)
 	}
 }
@@ -339,13 +354,15 @@ func testAPIEndpoints(t *testing.T) {
 		return
 	}
 	defer func() {
-		if cerr := statusResp.Body.Close(); cerr != nil {
+		cerr := statusResp.Body.Close()
+		if cerr != nil {
 			t.Logf("Failed to close response body: %v", cerr)
 		}
 	}()
 
 	var statusData map[string]any
-	if err := json.NewDecoder(statusResp.Body).Decode(&statusData); err != nil {
+	err = json.NewDecoder(statusResp.Body).Decode(&statusData)
+	if err != nil {
 		t.Logf("Failed to decode status: %v", err)
 		return
 	}
@@ -386,13 +403,15 @@ func TestDistributedFileTransfer(t *testing.T) {
 		t.Fatalf("Failed to open database: %v", err)
 	}
 	defer func() {
-		if cerr := db.Close(); cerr != nil {
+		cerr := db.Close()
+		if cerr != nil {
 			t.Logf("Failed to close database: %v", cerr)
 		}
 	}()
 
 	var jobCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&jobCount); err != nil {
+	err = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&jobCount)
+	if err != nil {
 		t.Fatalf("Failed to query jobs: %v", err)
 	}
 	t.Logf("✓ Found %d pending jobs", jobCount)
@@ -403,16 +422,19 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Create worker configs
 	worker1ConfigPath := filepath.Join(env.testDir, "worker1-config.yaml")
-	if err := os.WriteFile(worker1ConfigPath, []byte(createWorkerConfig("worker-1", env.worker1Cache, env.testDir)), 0o600); err != nil {
+	err = os.WriteFile(worker1ConfigPath, []byte(createWorkerConfig("worker-1", env.worker1Cache, env.testDir)), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write worker1 config: %v", err)
 	}
 	worker2ConfigPath := filepath.Join(env.testDir, "worker2-config.yaml")
-	if err := os.WriteFile(worker2ConfigPath, []byte(createWorkerConfig("worker-2", env.worker2Cache, env.testDir)), 0o600); err != nil {
+	err = os.WriteFile(worker2ConfigPath, []byte(createWorkerConfig("worker-2", env.worker2Cache, env.testDir)), 0o600)
+	if err != nil {
 		t.Fatalf("Failed to write worker2 config: %v", err)
 	}
 
 	// Check if ffmpeg is available
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
+	_, err = exec.LookPath("ffmpeg")
+	if err != nil {
 		t.Skip("FFmpeg not found, skipping worker execution test")
 	}
 
@@ -430,7 +452,8 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Check worker heartbeats
 	var heartbeatCount int
-	if err := db.QueryRow("SELECT COUNT(DISTINCT worker_id) FROM worker_heartbeats").Scan(&heartbeatCount); err != nil {
+	err = db.QueryRow("SELECT COUNT(DISTINCT worker_id) FROM worker_heartbeats").Scan(&heartbeatCount)
+	if err != nil {
 		t.Logf("Warning: Failed to query worker heartbeats: %v", err)
 	} else {
 		t.Logf("✓ Received heartbeats from %d worker(s)", heartbeatCount)

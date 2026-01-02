@@ -41,7 +41,8 @@ func runBinaryCommand(cmdName, binaryName string, args []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	if err != nil {
 		slog.Error(fmt.Sprintf("%s process failed", cmdName), "error", err)
 		os.Exit(1)
 	}
@@ -49,7 +50,8 @@ func runBinaryCommand(cmdName, binaryName string, args []string) {
 
 func findBinary(name string) (string, error) {
 	// Try to find in PATH
-	if path, err := exec.LookPath(name); err == nil {
+	path, err := exec.LookPath(name)
+	if err == nil {
 		return path, nil
 	}
 
@@ -61,14 +63,16 @@ func findBinary(name string) (string, error) {
 
 	// Try current directory
 	localPath := filepath.Join(currentDir, name, name)
-	if _, err := os.Stat(localPath); err == nil {
+	_, err = os.Stat(localPath)
+	if err == nil {
 		return localPath, nil
 	}
 
 	// Try parent directory
 	parentDir := filepath.Dir(currentDir)
 	parentPath := filepath.Join(parentDir, name, name)
-	if _, err := os.Stat(parentPath); err == nil {
+	_, err = os.Stat(parentPath)
+	if err == nil {
 		return parentPath, nil
 	}
 

@@ -132,8 +132,9 @@ func (vd *VulkanDetector) DetectVulkanCapabilities() (*VulkanCapabilities, error
 	}
 
 	// Initialize Vulkan (only happens once)
-	if err := initVulkan(); err != nil {
-		slog.Warn("Failed to initialize Vulkan, falling back to CPU encoding", "error", err)
+	initErr := initVulkan()
+	if initErr != nil {
+		slog.Warn("Failed to initialize Vulkan, falling back to CPU encoding", "error", initErr)
 		return caps, nil
 	}
 

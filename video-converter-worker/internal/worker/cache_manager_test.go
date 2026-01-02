@@ -48,10 +48,11 @@ func TestCacheManager_Cleanup_SizeLimit(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Create test files totaling 3000 bytes
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		filePath := filepath.Join(tempDir, "test"+string(rune('A'+i))+".tmp")
 		data := make([]byte, 1000)
-		if err := os.WriteFile(filePath, data, 0o644); err != nil {
+		err := os.WriteFile(filePath, data, 0o644)
+		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 		// Stagger file times so we know which gets removed first

@@ -18,7 +18,8 @@ func LoadMasterConfig(path string) (*models.MasterConfig, error) {
 	}
 
 	var cfg models.MasterConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	err = yaml.Unmarshal(data, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 

@@ -19,7 +19,8 @@ func TestTrackerCreateAndGetJob(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -37,7 +38,8 @@ func TestTrackerCreateAndGetJob(t *testing.T) {
 	}
 
 	// Insert job
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 
@@ -68,7 +70,8 @@ func TestTrackerUpdateJob(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -85,7 +88,8 @@ func TestTrackerUpdateJob(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 
@@ -96,7 +100,8 @@ func TestTrackerUpdateJob(t *testing.T) {
 	job.CompletedAt = &now
 	job.OutputSize = 12345
 
-	if err := tracker.UpdateJob(job); err != nil {
+	err = tracker.UpdateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
 
@@ -120,7 +125,8 @@ func TestTrackerWorkerHeartbeat(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -139,14 +145,16 @@ func TestTrackerWorkerHeartbeat(t *testing.T) {
 	}
 
 	// Insert heartbeat
-	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
 		t.Fatalf("Failed to update worker heartbeat: %v", err)
 	}
 
 	// Update heartbeat (should use ON CONFLICT)
 	hb.ActiveJobs = 3
 	hb.CPUUsage = 55.0
-	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
 		t.Fatalf("Failed to update worker heartbeat again: %v", err)
 	}
 }
@@ -160,13 +168,15 @@ func TestDatabaseCreation(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
 
 	// Verify database file exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	_, err = os.Stat(dbPath)
+	if os.IsNotExist(err) {
 		t.Error("Database file was not created")
 	}
 }
@@ -180,7 +190,8 @@ func TestGetJobByID(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -198,7 +209,8 @@ func TestGetJobByID(t *testing.T) {
 	}
 
 	// Insert job
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 
@@ -236,7 +248,8 @@ func TestGetJobsByStatus(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -276,7 +289,8 @@ func TestGetJobsByStatus(t *testing.T) {
 	}
 
 	for _, job := range jobs {
-		if err := tracker.CreateJob(job); err != nil {
+		err := tracker.CreateJob(job)
+		if err != nil {
 			t.Fatalf("Failed to create job: %v", err)
 		}
 	}
@@ -312,7 +326,8 @@ func TestGetJobMetrics(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -336,12 +351,14 @@ func TestGetJobMetrics(t *testing.T) {
 		MaxRetries:  3,
 	}
 
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 
 	// Update the job to set completed status and output size
-	if err := tracker.UpdateJob(job); err != nil {
+	err = tracker.UpdateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
 
@@ -388,7 +405,8 @@ func TestGetActiveWorkers(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -418,11 +436,13 @@ func TestGetActiveWorkers(t *testing.T) {
 		MemoryUsage:     30.0,
 	}
 
-	if err := tracker.UpdateWorkerHeartbeat(recentHb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(recentHb)
+	if err != nil {
 		t.Fatalf("Failed to insert recent heartbeat: %v", err)
 	}
 
-	if err := tracker.UpdateWorkerHeartbeat(oldHb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(oldHb)
+	if err != nil {
 		t.Fatalf("Failed to insert old heartbeat: %v", err)
 	}
 
@@ -451,7 +471,8 @@ func TestGetWorkerStats(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -491,7 +512,8 @@ func TestGetWorkerStats(t *testing.T) {
 	}
 
 	for _, w := range workers {
-		if err := tracker.UpdateWorkerHeartbeat(w); err != nil {
+		err := tracker.UpdateWorkerHeartbeat(w)
+		if err != nil {
 			t.Fatalf("Failed to insert worker heartbeat: %v", err)
 		}
 	}
@@ -534,7 +556,8 @@ func TestGetJobHistory(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -565,7 +588,8 @@ func TestGetJobHistory(t *testing.T) {
 	}
 
 	for _, job := range jobs {
-		if err := tracker.CreateJob(job); err != nil {
+		err := tracker.CreateJob(job)
+		if err != nil {
 			t.Fatalf("Failed to create job: %v", err)
 		}
 	}
@@ -598,7 +622,8 @@ func TestGetStaleProcessingJobs(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -616,10 +641,12 @@ func TestGetStaleProcessingJobs(t *testing.T) {
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
-	if err := tracker.CreateJob(staleJob); err != nil {
+	err = tracker.CreateJob(staleJob)
+	if err != nil {
 		t.Fatalf("Failed to create stale job: %v", err)
 	}
-	if err := tracker.UpdateJob(staleJob); err != nil {
+	err = tracker.UpdateJob(staleJob)
+	if err != nil {
 		t.Fatalf("Failed to update stale job: %v", err)
 	}
 
@@ -636,10 +663,12 @@ func TestGetStaleProcessingJobs(t *testing.T) {
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
-	if err := tracker.CreateJob(recentJob); err != nil {
+	err = tracker.CreateJob(recentJob)
+	if err != nil {
 		t.Fatalf("Failed to create recent job: %v", err)
 	}
-	if err := tracker.UpdateJob(recentJob); err != nil {
+	err = tracker.UpdateJob(recentJob)
+	if err != nil {
 		t.Fatalf("Failed to update recent job: %v", err)
 	}
 
@@ -668,7 +697,8 @@ func TestGetRetryableFailedJobs(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -685,10 +715,12 @@ func TestGetRetryableFailedJobs(t *testing.T) {
 		RetryCount:   1,
 		MaxRetries:   3,
 	}
-	if err := tracker.CreateJob(retryableJob); err != nil {
+	err = tracker.CreateJob(retryableJob)
+	if err != nil {
 		t.Fatalf("Failed to create retryable job: %v", err)
 	}
-	if err := tracker.UpdateJob(retryableJob); err != nil {
+	err = tracker.UpdateJob(retryableJob)
+	if err != nil {
 		t.Fatalf("Failed to update retryable job: %v", err)
 	}
 
@@ -704,10 +736,12 @@ func TestGetRetryableFailedJobs(t *testing.T) {
 		RetryCount:   3,
 		MaxRetries:   3,
 	}
-	if err := tracker.CreateJob(nonRetryableJob); err != nil {
+	err = tracker.CreateJob(nonRetryableJob)
+	if err != nil {
 		t.Fatalf("Failed to create non-retryable job: %v", err)
 	}
-	if err := tracker.UpdateJob(nonRetryableJob); err != nil {
+	err = tracker.UpdateJob(nonRetryableJob)
+	if err != nil {
 		t.Fatalf("Failed to update non-retryable job: %v", err)
 	}
 
@@ -736,7 +770,8 @@ func TestGetJobsForWorker(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -755,10 +790,12 @@ func TestGetJobsForWorker(t *testing.T) {
 			RetryCount: 0,
 			MaxRetries: 3,
 		}
-		if err := tracker.CreateJob(job); err != nil {
+		err := tracker.CreateJob(job)
+		if err != nil {
 			t.Fatalf("Failed to create job: %v", err)
 		}
-		if err := tracker.UpdateJob(job); err != nil {
+		err = tracker.UpdateJob(job)
+		if err != nil {
 			t.Fatalf("Failed to update job: %v", err)
 		}
 	}
@@ -776,10 +813,12 @@ func TestGetJobsForWorker(t *testing.T) {
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
-	if err := tracker.CreateJob(worker2Job); err != nil {
+	err = tracker.CreateJob(worker2Job)
+	if err != nil {
 		t.Fatalf("Failed to create worker2 job: %v", err)
 	}
-	if err := tracker.UpdateJob(worker2Job); err != nil {
+	err = tracker.UpdateJob(worker2Job)
+	if err != nil {
 		t.Fatalf("Failed to update worker2 job: %v", err)
 	}
 
@@ -813,7 +852,8 @@ func TestResetJobToPending(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -830,15 +870,18 @@ func TestResetJobToPending(t *testing.T) {
 		RetryCount:   1,
 		MaxRetries:   3,
 	}
-	if err := tracker.CreateJob(failedJob); err != nil {
+	err = tracker.CreateJob(failedJob)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
-	if err := tracker.UpdateJob(failedJob); err != nil {
+	err = tracker.UpdateJob(failedJob)
+	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
 
 	// Reset job to pending with retry increment
-	if err := tracker.ResetJobToPending("failed-job", true); err != nil {
+	err = tracker.ResetJobToPending("failed-job", true)
+	if err != nil {
 		t.Fatalf("Failed to reset job: %v", err)
 	}
 
@@ -876,15 +919,18 @@ func TestResetJobToPending(t *testing.T) {
 		RetryCount:   0,
 		MaxRetries:   3,
 	}
-	if err := tracker.CreateJob(failedJob2); err != nil {
+	err = tracker.CreateJob(failedJob2)
+	if err != nil {
 		t.Fatalf("Failed to create job2: %v", err)
 	}
-	if err := tracker.UpdateJob(failedJob2); err != nil {
+	err = tracker.UpdateJob(failedJob2)
+	if err != nil {
 		t.Fatalf("Failed to update job2: %v", err)
 	}
 
 	// Reset without increment (worker failure, not job's fault)
-	if err := tracker.ResetJobToPending("failed-job-2", false); err != nil {
+	err = tracker.ResetJobToPending("failed-job-2", false)
+	if err != nil {
 		t.Fatalf("Failed to reset job2: %v", err)
 	}
 
@@ -907,7 +953,8 @@ func TestJobProgress(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -923,7 +970,8 @@ func TestJobProgress(t *testing.T) {
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 
@@ -938,7 +986,8 @@ func TestJobProgress(t *testing.T) {
 	}
 
 	// Insert progress
-	if err := tracker.UpdateJobProgress(progress); err != nil {
+	err = tracker.UpdateJobProgress(progress)
+	if err != nil {
 		t.Fatalf("Failed to insert job progress: %v", err)
 	}
 
@@ -972,7 +1021,8 @@ func TestJobProgress(t *testing.T) {
 	progress.Progress = 75.0
 	progress.Stage = "upload"
 	progress.UpdatedAt = time.Now()
-	if err := tracker.UpdateJobProgress(progress); err != nil {
+	err = tracker.UpdateJobProgress(progress)
+	if err != nil {
 		t.Fatalf("Failed to update job progress: %v", err)
 	}
 
@@ -991,7 +1041,8 @@ func TestJobProgress(t *testing.T) {
 	}
 
 	// Delete progress
-	if err := tracker.DeleteJobProgress("progress-test-job"); err != nil {
+	err = tracker.DeleteJobProgress("progress-test-job")
+	if err != nil {
 		t.Fatalf("Failed to delete job progress: %v", err)
 	}
 
@@ -1019,7 +1070,8 @@ func TestConnectionPoolConfig(t *testing.T) {
 		t.Fatalf("Failed to create tracker with custom pool config: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -1035,9 +1087,9 @@ func TestConnectionPoolConfig(t *testing.T) {
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
-
-	if err := tracker.CreateJob(job); err != nil {
-		t.Fatalf("Failed to create job with pooled connection: %v", err)
+	err = tracker.CreateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to create job: %v", err)
 	}
 
 	// Retrieve job to verify connection pool is working
@@ -1082,7 +1134,8 @@ func TestNewUsesDefaultPoolConfig(t *testing.T) {
 		t.Fatalf("Failed to create tracker with default config: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -1099,7 +1152,8 @@ func TestNewUsesDefaultPoolConfig(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := tracker.CreateJob(job); err != nil {
+	err = tracker.CreateJob(job)
+	if err != nil {
 		t.Fatalf("Failed to create job with default pooled connection: %v", err)
 	}
 }
@@ -1113,7 +1167,8 @@ func TestMarkWorkerOffline(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -1132,7 +1187,8 @@ func TestMarkWorkerOffline(t *testing.T) {
 	}
 
 	// Insert worker
-	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
 		t.Fatalf("Failed to update worker heartbeat: %v", err)
 	}
 
@@ -1149,7 +1205,8 @@ func TestMarkWorkerOffline(t *testing.T) {
 	}
 
 	// Mark worker as offline
-	if err := tracker.MarkWorkerOffline("worker-1"); err != nil {
+	err = tracker.MarkWorkerOffline("worker-1")
+	if err != nil {
 		t.Fatalf("Failed to mark worker offline: %v", err)
 	}
 
@@ -1175,7 +1232,8 @@ func TestWorkerStatusMigration(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -1194,7 +1252,8 @@ func TestWorkerStatusMigration(t *testing.T) {
 	}
 
 	// Insert worker
-	if err := tracker.UpdateWorkerHeartbeat(hb); err != nil {
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
 		t.Fatalf("Failed to update worker heartbeat: %v", err)
 	}
 
@@ -1223,7 +1282,8 @@ func TestJobPriority(t *testing.T) {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
 	defer func() {
-		if err := tracker.Close(); err != nil {
+		err := tracker.Close()
+		if err != nil {
 			t.Logf("Failed to close tracker: %v", err)
 		}
 	}()
@@ -1263,7 +1323,8 @@ func TestJobPriority(t *testing.T) {
 	}
 
 	for _, job := range jobs {
-		if err := tracker.CreateJob(job); err != nil {
+		err := tracker.CreateJob(job)
+		if err != nil {
 			t.Fatalf("Failed to create job: %v", err)
 		}
 	}
@@ -1282,7 +1343,8 @@ func TestJobPriority(t *testing.T) {
 
 	// Mark it as processing
 	job1.Status = "processing"
-	if err := tracker.UpdateJob(job1); err != nil {
+	err = tracker.UpdateJob(job1)
+	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
 
@@ -1297,7 +1359,8 @@ func TestJobPriority(t *testing.T) {
 
 	// Mark it as processing
 	job2.Status = "processing"
-	if err := tracker.UpdateJob(job2); err != nil {
+	err = tracker.UpdateJob(job2)
+	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
 

@@ -15,7 +15,8 @@ linters:
     - paralleltest       # Don't require t.Parallel() (may not be needed for all tests)
     - testpackage        # Allow tests in same package (white-box testing)
     - varnamelen         # Allow short variable names (standard Go practice)
-    - wsl                # Whitespace linter (too opinionated)
+    - wsl    
+    - wsl_v5            # Whitespace linter (too opinionated)
     - tagliatelle        # Don't enforce tag naming convention (allow snake_case for JSON)
     - mnd                # Don't flag magic numbers (sometimes constants are overkill)
     - perfsprint         # Don't enforce fmt.Sprintf vs string concat (micro-optimization)
@@ -41,6 +42,10 @@ linters:
     goconst:
       min-len: 3
       min-occurrences: 3
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true  # Allow package names like "utils"
 
 issues:
   max-issues-per-linter: 0

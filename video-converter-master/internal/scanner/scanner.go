@@ -116,7 +116,8 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 
 		if entry.IsDir() {
 			// Recursively scan subdirectory
-			if err := s.scanWithDepth(fullPath, currentDepth+1, jobs); err != nil {
+			err := s.scanWithDepth(fullPath, currentDepth+1, jobs)
+			if err != nil {
 				slog.Warn("Error scanning subdirectory", "path", fullPath, "error", err)
 			}
 			continue
@@ -182,12 +183,14 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 		// Validate paths before creating job
 		// This ensures no path traversal issues even if directory structure is compromised
 		// Use utils for consistent validation across the codebase
-		if _, err := utils.ValidatePathWithinBase(s.RootPath, fullPath); err != nil {
+		_, err = utils.ValidatePathWithinBase(s.RootPath, fullPath)
+		if err != nil {
 			slog.Warn("Source path validation failed, skipping", "root", s.RootPath, "path", fullPath, "error", err)
 			continue
 		}
 		if !s.Options.ReplaceSource {
-			if _, err := utils.ValidatePathWithinBase(s.OutputBase, outputPath); err != nil {
+			_, err = utils.ValidatePathWithinBase(s.OutputBase, outputPath)
+			if err != nil {
 				slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
 				continue
 			}
@@ -227,7 +230,8 @@ func computeFileHash(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
+		cerr := file.Close()
+		if cerr != nil {
 			slog.Warn("Failed to close file during hash computation", "path", filePath, "error", cerr)
 		}
 	}()
@@ -239,7 +243,8 @@ func computeFileHash(filePath string) (string, error) {
 	for {
 		n, readErr := file.Read(buf)
 		if n > 0 {
-			if _, writeErr := hash.Write(buf[:n]); writeErr != nil {
+			_, writeErr := hash.Write(buf[:n])
+			if writeErr != nil {
 				return "", fmt.Errorf("failed to write to hash: %w", writeErr)
 			}
 		}
