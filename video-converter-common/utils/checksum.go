@@ -1,3 +1,4 @@
+// Package utils provides common utility functions for the video converter system.
 package utils
 
 import (

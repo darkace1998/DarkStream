@@ -62,6 +62,8 @@ func NewMetadataExtractor(ffmpegPath string) *MetadataExtractor {
 
 // GetVideoMetadata extracts metadata from a video file using FFprobe
 // The sourcePath must be a validated path to an existing file
+//
+//nolint:gocognit,cyclop // FFprobe output parsing with multiple format fallbacks is inherently complex
 func (me *MetadataExtractor) GetVideoMetadata(sourcePath string) (*models.VideoMetadata, error) {
 	// Validate source path exists and is a file
 	fileInfo, err := os.Stat(sourcePath)

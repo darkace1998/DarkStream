@@ -981,7 +981,7 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // DownloadVideo handles downloading source video files for processing
 //
-//nolint:cyclop,gocognit // HTTP file transfer with range support is inherently complex
+//nolint:cyclop // HTTP file transfer with range support is inherently complex
 func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1132,7 +1132,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 
 // UploadVideo handles video file upload requests from workers
 //
-//nolint:cyclop,gocognit // HTTP file upload with chunked transfer is inherently complex
+//nolint:cyclop // HTTP file upload with chunked transfer is inherently complex
 func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
