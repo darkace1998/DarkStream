@@ -1245,7 +1245,7 @@ func TestJobPriority(t *testing.T) {
 			SourcePath: "/source/video2.mp4",
 			OutputPath: "/output/video2.mp4",
 			Status:     "pending",
-			Priority:   5, // Normal priority
+			Priority:   5,                               // Normal priority
 			CreatedAt:  time.Now().Add(1 * time.Second), // Created after low priority
 			RetryCount: 0,
 			MaxRetries: 3,
@@ -1255,7 +1255,7 @@ func TestJobPriority(t *testing.T) {
 			SourcePath: "/source/video3.mp4",
 			OutputPath: "/output/video3.mp4",
 			Status:     "pending",
-			Priority:   10, // High priority
+			Priority:   10,                              // High priority
 			CreatedAt:  time.Now().Add(2 * time.Second), // Created after others
 			RetryCount: 0,
 			MaxRetries: 3,

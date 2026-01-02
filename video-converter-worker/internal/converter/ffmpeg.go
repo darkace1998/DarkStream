@@ -96,7 +96,7 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 
 	// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
 	cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
-	
+
 	// Setup stderr pipe for progress tracking
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -151,7 +151,7 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	// Video codec selection with Vulkan support
 	videoCodec := fc.getVideoCodec(cfg.Codec, cfg.UseVulkan)
 	args = append(args, "-c:v", videoCodec)
-	
+
 	// Add preset and bitrate for video
 	args = append(args,
 		"-preset", cfg.Preset,
@@ -248,7 +248,7 @@ func (fc *FFmpegConverter) getOutputFormat(format string) string {
 func (fc *FFmpegConverter) getVideoDuration(sourcePath string) (float64, error) {
 	// Determine ffprobe path from ffmpeg path
 	ffprobePath := strings.Replace(fc.ffmpegPath, "ffmpeg", "ffprobe", 1)
-	
+
 	// #nosec G204 - ffprobePath is derived from validated fc.ffmpegPath
 	cmd := exec.Command(ffprobePath,
 		"-v", "error",
@@ -308,7 +308,7 @@ func (fc *FFmpegConverter) trackProgress(
 				progress = 100
 			}
 			callback(progress, fps)
-			
+
 			slog.Debug("Conversion progress",
 				"progress", fmt.Sprintf("%.1f%%", progress),
 				"fps", fmt.Sprintf("%.1f", fps),

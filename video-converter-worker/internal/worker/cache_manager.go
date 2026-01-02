@@ -35,15 +35,15 @@ func NewCacheManager(cachePath string, maxSize int64, maxAge time.Duration) *Cac
 		maxSize:   maxSize,
 		maxAge:    maxAge,
 	}
-	
+
 	// Ensure cache directory exists
 	if err := os.MkdirAll(cachePath, 0o750); err != nil {
 		slog.Warn("Failed to create cache directory", "path", cachePath, "error", err)
 	}
-	
+
 	// Calculate initial cache size
 	cm.calculateCacheSize()
-	
+
 	return cm
 }
 
@@ -85,17 +85,17 @@ func (cm *CacheManager) Cleanup() error {
 		return nil
 	}
 	cm.mu.Unlock()
-	
+
 	entries, err := cm.listCacheEntries()
 	if err != nil {
 		return err
 	}
-	
+
 	var totalSize int64
 	var removedCount int
 	var removedSize int64
 	now := time.Now()
-	
+
 	// First pass: remove old files based on age
 	if cm.maxAge > 0 {
 		for _, entry := range entries {
@@ -117,7 +117,7 @@ func (cm *CacheManager) Cleanup() error {
 			totalSize += entry.Size
 		}
 	}
-	
+
 	// Second pass: remove files to enforce size limit (remove oldest first)
 	if cm.maxSize > 0 && totalSize > cm.maxSize {
 		// Re-fetch entries after age cleanup
@@ -125,19 +125,19 @@ func (cm *CacheManager) Cleanup() error {
 		if err != nil {
 			return err
 		}
-		
+
 		// Sort by modification time (oldest first)
 		sort.Slice(entries, func(i, j int) bool {
 			return entries[i].ModTime.Before(entries[j].ModTime)
 		})
-		
+
 		// Calculate current size and remove files in a single pass
 		currentSize := totalSize
 		for _, entry := range entries {
 			if currentSize <= cm.maxSize {
 				break
 			}
-			
+
 			if err := os.Remove(entry.Path); err != nil {
 				slog.Warn("Failed to remove cache file for size limit", "path", entry.Path, "error", err)
 				continue
@@ -147,14 +147,14 @@ func (cm *CacheManager) Cleanup() error {
 			removedSize += entry.Size
 			slog.Debug("Removed cache file for size limit", "path", entry.Path, "size", entry.Size)
 		}
-		
+
 		totalSize = currentSize
 	}
-	
+
 	cm.mu.Lock()
 	cm.currentSize = totalSize
 	cm.mu.Unlock()
-	
+
 	if removedCount > 0 {
 		slog.Info("Cache cleanup completed",
 			"removed_files", removedCount,
@@ -162,7 +162,7 @@ func (cm *CacheManager) Cleanup() error {
 			"current_size", totalSize,
 		)
 	}
-	
+
 	return nil
 }
 

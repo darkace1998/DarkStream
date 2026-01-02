@@ -401,6 +401,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 
 // GetNextJobs handles batch requests for multiple pending jobs
 // This reduces API calls by allowing workers to fetch multiple jobs at once
+//
 //nolint:gocognit,cyclop // Job assignment with worker validation and atomic updates is inherently complex
 func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -833,6 +834,7 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 
 // HealthCheck handles the detailed health check endpoint (/api/health)
 // Returns comprehensive health status of all components
+//
 //nolint:gocognit,cyclop // Health check with multiple component checks is inherently complex
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -978,6 +980,7 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // DownloadVideo handles downloading source video files for processing
+//
 //nolint:cyclop,gocognit // HTTP file transfer with range support is inherently complex
 func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -1128,6 +1131,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // UploadVideo handles video file upload requests from workers
+//
 //nolint:cyclop,gocognit // HTTP file upload with chunked transfer is inherently complex
 func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1375,6 +1379,7 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 // StreamJobProgress provides Server-Sent Events (SSE) for real-time progress updates
+//
 //nolint:gocognit // SSE streaming with periodic polling and state tracking is inherently complex
 func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
