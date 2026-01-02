@@ -137,6 +137,7 @@ type Server struct {
 	addr        string
 	server      *http.Server
 	configMgr   *config.Manager
+	masterCfg   *models.MasterConfig // Master configuration for worker defaults
 	rateLimiter *rateLimiter
 	apiKey      string
 	allowedDirs []string // Allowed directories for file operations (source and output)
@@ -157,6 +158,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		db:          tracker,
 		addr:        addr,
 		configMgr:   configMgr,
+		masterCfg:   cfg,
 		rateLimiter: newRateLimiter(),
 		apiKey:      apiKey,
 		allowedDirs: allowedDirs,
