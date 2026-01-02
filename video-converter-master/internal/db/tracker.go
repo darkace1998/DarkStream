@@ -430,7 +430,7 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 		var job models.Job
 		var startedAt, completedAt sql.NullTime
 		scanErr := rows.Scan(
-			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
@@ -497,7 +497,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		var job models.Job
 		var startedAt, completedAt sql.NullTime
 		scanErr := rows.Scan(
-			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.CreatedAt,
+			&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
