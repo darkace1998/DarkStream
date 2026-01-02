@@ -181,6 +181,8 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 }
 
 // ReportJobComplete reports successful job completion to the master
+//
+//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error {
 	payload := map[string]any{
 		"job_id":      jobID,
@@ -222,6 +224,8 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 }
 
 // ReportJobFailed reports job failure to the master
+//
+//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 	payload := map[string]any{
 		"job_id":        jobID,
@@ -262,6 +266,8 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 }
 
 // SendHeartbeat sends a heartbeat to the master
+//
+//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 	body, err := json.Marshal(hb)
 	if err != nil {
@@ -300,6 +306,8 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 }
 
 // ReportJobProgress reports job progress to the master
+//
+//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 	body, err := json.Marshal(progress)
 	if err != nil {
@@ -369,6 +377,8 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 }
 
 // downloadSourceVideoAttempt performs a single download attempt
+//
+//nolint:gocognit,cyclop // File download with resume support is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) error {
 	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
 
@@ -414,6 +424,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 
 	// Handle response status
 	var totalContentLength int64
+	//nolint:gocritic // if-else chain with compound condition not suitable for switch
 	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
 		// Resume successful
 		totalContentLength = startOffset + resp.ContentLength
@@ -556,6 +567,7 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	if err != nil && err != io.EOF {
 		return n, fmt.Errorf("read error: %w", err)
 	}
+	//nolint:wrapcheck // io.EOF is a sentinel value and should not be wrapped
 	return n, err
 }
 
@@ -748,6 +760,7 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	if err != nil && err != io.EOF {
 		return n, fmt.Errorf("read error: %w", err)
 	}
+	//nolint:wrapcheck // io.EOF is a sentinel value and should not be wrapped
 	return n, err
 }
 
@@ -781,6 +794,8 @@ func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string
 }
 
 // downloadSourceVideoAttemptWithProgress performs a single download attempt with progress tracking
+//
+//nolint:gocognit,cyclop // File download with resume support and progress tracking is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath string, progressCallback ProgressCallback) error {
 	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
 
@@ -826,6 +841,7 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 
 	// Handle response status
 	var totalContentLength int64
+	//nolint:gocritic // if-else chain with compound condition not suitable for switch
 	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
 		// Resume successful
 		totalContentLength = startOffset + resp.ContentLength
@@ -873,7 +889,7 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 		// Wrap with progress reader
 		// ProgressReader tracks remaining bytes (resp.ContentLength)
 		// The callback then adds startOffset to report total file progress
-		progressReader := NewProgressReader(reader, resp.ContentLength, func(bytesTransferred, totalBytes int64) {
+		progressReader := NewProgressReader(reader, resp.ContentLength, func(bytesTransferred, _ int64) {
 			// Report total progress including already-downloaded bytes
 			progressCallback(startOffset+bytesTransferred, totalContentLength)
 		})

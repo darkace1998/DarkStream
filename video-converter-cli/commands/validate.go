@@ -87,7 +87,6 @@ func Validate(args []string) {
 		return
 	}
 
-	valid, _ := result["valid"].(bool)
 	var errors []string
 	if errList, ok := result["errors"].([]any); ok {
 		for _, e := range errList {
@@ -98,9 +97,6 @@ func Validate(args []string) {
 	}
 
 	printValidationResult(*configPath, *configType, errors)
-	if !valid {
-		return
-	}
 }
 
 func validateConfigLocally(configType string, content []byte) []string {

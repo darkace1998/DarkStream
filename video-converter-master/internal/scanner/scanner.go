@@ -86,7 +86,7 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 
 // scanWithDepth recursively scans directories with depth control
 //
-//nolint:gocognit // Directory scanning with filtering and deduplication is inherently complex
+//nolint:cyclop,gocognit,unparam // Directory scanning with filtering and deduplication is inherently complex; error return for future-proofing
 func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*models.Job) error {
 	// Check depth limit
 	if s.Options.MaxDepth >= 0 && currentDepth > s.Options.MaxDepth {

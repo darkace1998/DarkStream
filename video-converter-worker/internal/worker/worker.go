@@ -21,6 +21,8 @@ import (
 )
 
 // Worker manages job processing and communication with the master
+//
+//nolint:containedctx // Context stored in struct for long-running worker lifecycle management
 type Worker struct {
 	config            *models.WorkerConfig
 	masterClient      *client.MasterClient

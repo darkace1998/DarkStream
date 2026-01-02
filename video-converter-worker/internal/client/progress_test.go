@@ -22,8 +22,8 @@ func TestProgressReader(t *testing.T) {
 		atomic.AddInt32(&callCount, 1)
 		atomic.StoreInt64(&lastReported, transferred)
 
-		if transferred > total {
-			t.Errorf("Transferred bytes (%d) exceeds total (%d)", transferred, total)
+		if transferred > totalSize {
+			t.Errorf("Transferred bytes (%d) exceeds total (%d)", transferred, totalSize)
 		}
 	}
 
