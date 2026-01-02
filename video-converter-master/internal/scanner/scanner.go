@@ -85,6 +85,7 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 }
 
 // scanWithDepth recursively scans directories with depth control
+//
 //nolint:gocognit // Directory scanning with filtering and deduplication is inherently complex
 func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*models.Job) error {
 	// Check depth limit
@@ -153,8 +154,8 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 				// Continue processing even if hash fails
 			} else {
 				if originalPath, exists := s.seenHashes[fileHash]; exists {
-					slog.Info("Duplicate file detected", 
-						"path", fullPath, 
+					slog.Info("Duplicate file detected",
+						"path", fullPath,
 						"original", originalPath,
 						"hash", fileHash)
 					continue // Skip duplicate

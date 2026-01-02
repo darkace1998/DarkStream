@@ -57,7 +57,7 @@ func (vd *VulkanDetector) createVulkanInstance() (vk.Instance, error) {
 	// Add validation layers if enabled
 	if vd.enableValidation {
 		validationLayers := []string{VulkanValidationLayer}
-		
+
 		// Check if validation layers are available
 		availableLayers, err := vk.EnumerateInstanceLayerProperties()
 		if err == nil {
@@ -68,7 +68,7 @@ func (vd *VulkanDetector) createVulkanInstance() (vk.Instance, error) {
 					break
 				}
 			}
-			
+
 			if layerFound {
 				instanceCreateInfo.EnabledLayerNames = validationLayers
 				vd.validationLayersSet = true

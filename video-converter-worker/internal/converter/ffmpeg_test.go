@@ -13,10 +13,10 @@ func TestGetVideoCodec(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		codec      string
-		useVulkan  bool
-		expected   string
+		name      string
+		codec     string
+		useVulkan bool
+		expected  string
 	}{
 		{
 			name:      "h264 with Vulkan",

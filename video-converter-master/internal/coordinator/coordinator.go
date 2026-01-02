@@ -68,7 +68,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		cfg.Scanner.VideoExtensions,
 		cfg.Scanner.OutputBase,
 	)
-	
+
 	// Configure scanner options from config
 	scn.SetOptions(scanner.ScanOptions{
 		MaxDepth:         cfg.Scanner.RecursiveDepth,
@@ -184,16 +184,17 @@ func (c *Coordinator) Start() error {
 }
 
 // monitorWorkerHealth periodically checks worker health
+//
 //nolint:gocognit,cyclop // Worker health monitoring with stale job recovery is inherently complex
 func (c *Coordinator) monitorWorkerHealth() {
 	defer c.wg.Done()
-	
+
 	// Use configured interval or default to 30 seconds
 	healthCheckInterval := c.config.Monitoring.WorkerHealthInterval
 	if healthCheckInterval == 0 {
 		healthCheckInterval = 30 * time.Second
 	}
-	
+
 	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
 
@@ -232,11 +233,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 			for _, worker := range allWorkers {
 				if !activeWorkerIDs[worker.WorkerID] {
 					offlineWorkers = append(offlineWorkers, worker.WorkerID)
-					slog.Warn("Worker offline detected", 
+					slog.Warn("Worker offline detected",
 						"worker_id", worker.WorkerID,
 						"hostname", worker.Hostname,
 						"last_heartbeat", worker.Timestamp)
-					
+
 					// Mark worker as offline in database
 					if err := c.db.MarkWorkerOffline(worker.WorkerID); err != nil {
 						slog.Error("Failed to mark worker as offline",
@@ -249,7 +250,7 @@ func (c *Coordinator) monitorWorkerHealth() {
 			for _, workerID := range offlineWorkers {
 				jobs, err := c.db.GetJobsForWorker(workerID)
 				if err != nil {
-					slog.Error("Failed to get jobs for offline worker", 
+					slog.Error("Failed to get jobs for offline worker",
 						"worker_id", workerID, "error", err)
 					continue
 				}
@@ -274,7 +275,7 @@ func (c *Coordinator) monitorWorkerHealth() {
 				jobTimeout = 2 * time.Hour
 			}
 			jobTimeoutSeconds := int(jobTimeout.Seconds())
-			
+
 			staleJobs, err := c.db.GetStaleProcessingJobs(jobTimeoutSeconds)
 			if err != nil {
 				slog.Error("Failed to get stale jobs", "error", err)
@@ -292,7 +293,7 @@ func (c *Coordinator) monitorWorkerHealth() {
 				if job.RetryCount >= job.MaxRetries {
 					// Mark job as failed permanently
 					job.Status = "failed"
-					job.ErrorMessage = fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)", 
+					job.ErrorMessage = fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)",
 						jobTimeout, job.RetryCount, job.MaxRetries)
 					completedAt := time.Now()
 					job.CompletedAt = &completedAt
@@ -323,16 +324,17 @@ func (c *Coordinator) monitorWorkerHealth() {
 }
 
 // monitorFailedJobs periodically checks for failed jobs that can be retried
+//
 //nolint:gocognit // Failed job retry logic with exponential backoff is inherently complex
 func (c *Coordinator) monitorFailedJobs() {
 	defer c.wg.Done()
-	
+
 	// Use configured interval or default to 1 minute
 	retryCheckInterval := c.config.Monitoring.FailedJobRetryInterval
 	if retryCheckInterval == 0 {
 		retryCheckInterval = 1 * time.Minute
 	}
-	
+
 	ticker := time.NewTicker(retryCheckInterval)
 	defer ticker.Stop()
 

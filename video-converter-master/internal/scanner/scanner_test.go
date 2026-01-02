@@ -194,8 +194,8 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 
 	// Test with both min and max size filters
 	scanner.SetOptions(ScanOptions{
-		MinFileSize: 1000,  // 1KB minimum
-		MaxFileSize: 6000,  // 6KB maximum
+		MinFileSize: 1000, // 1KB minimum
+		MaxFileSize: 6000, // 6KB maximum
 	})
 
 	jobs, err = scanner.ScanDirectory()
@@ -228,12 +228,12 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(videosDir, "visible.mp4"), []byte("test"), 0o600); err != nil {
 		t.Fatalf("Failed to create visible.mp4: %v", err)
 	}
-	
+
 	// 2. Hidden file in root
 	if err := os.WriteFile(filepath.Join(videosDir, ".hidden_file.mp4"), []byte("test"), 0o600); err != nil {
 		t.Fatalf("Failed to create .hidden_file.mp4: %v", err)
 	}
-	
+
 	// 3. File in hidden directory
 	if err := os.WriteFile(filepath.Join(hiddenDir, "video.mp4"), []byte("test"), 0o600); err != nil {
 		t.Fatalf("Failed to create .hidden/video.mp4: %v", err)
