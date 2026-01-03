@@ -1976,7 +1976,25 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get worker defaults from master config, with sensible fallback defaults
+	// Use the shared helper to build worker config with defaults
+	response := s.buildRemoteWorkerConfig()
+
+	// Add API key to the response (not included in webui display version)
+	response.APIKey = s.apiKey
+
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode worker config", "error", err)
+		return
+	}
+
+	slog.Debug("Worker configuration requested")
+}
+
+// buildRemoteWorkerConfig constructs the RemoteWorkerConfig with sensible defaults.
+// This is shared between GetWorkerConfig endpoint and the web UI display.
+func (s *Server) buildRemoteWorkerConfig() *models.RemoteWorkerConfig {
 	defaults := s.masterCfg.WorkerDefaults
 
 	// Apply sensible defaults if not configured
@@ -2050,11 +2068,9 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		logFormat = "json"
 	}
 
-	// Get conversion settings from config manager
 	conversionSettings := s.configMgr.GetConversionSettings()
 
-	// Build the remote worker config response
-	response := models.RemoteWorkerConfig{
+	return &models.RemoteWorkerConfig{
 		Concurrency:            concurrency,
 		HeartbeatInterval:      int64(heartbeatInterval.Seconds()),
 		JobCheckInterval:       int64(jobCheckInterval.Seconds()),
@@ -2073,15 +2089,5 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		Conversion:             *conversionSettings,
 		LogLevel:               logLevel,
 		LogFormat:              logFormat,
-		APIKey:                 s.apiKey,
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		slog.Error("Failed to encode worker config", "error", err)
-		return
-	}
-
-	slog.Debug("Worker configuration requested")
 }
