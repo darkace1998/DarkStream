@@ -394,6 +394,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <input type="number" id="bandwidthLimit" name="bandwidthLimit" value="{{.Config.Worker.BandwidthLimit}}" min="0" />
                         </div>
                         <div class="form-group">
+                            <label for="cacheCleanupAge">Cache Cleanup Age (seconds)</label>
+                            <input type="number" id="cacheCleanupAge" name="cacheCleanupAge" value="{{.Config.Worker.CacheCleanupAge}}" min="3600" max="604800" />
+                        </div>
+                        <div class="form-group">
                             <label for="enableResumeDownload">Resume Downloads</label>
                             <select id="enableResumeDownload" name="enableResumeDownload">
                                 <option value="true" {{if .Config.Worker.EnableResumeDownload}}selected{{end}}>Enabled</option>
@@ -483,7 +487,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     download_timeout: parseInt(document.getElementById('downloadTimeout').value) || 1800,
                     upload_timeout: parseInt(document.getElementById('uploadTimeout').value) || 1800,
                     max_cache_size: parseInt(document.getElementById('maxCacheSize').value) || 10737418240,
-                    cache_cleanup_age: 86400,
+                    cache_cleanup_age: parseInt(document.getElementById('cacheCleanupAge').value) || 86400,
                     bandwidth_limit: parseInt(document.getElementById('bandwidthLimit').value) || 0,
                     enable_resume_download: document.getElementById('enableResumeDownload').value === 'true',
                     use_vulkan: document.getElementById('useVulkan').value === 'true',
