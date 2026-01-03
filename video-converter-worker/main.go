@@ -6,6 +6,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -76,7 +78,11 @@ func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, err
 
 	// Generate worker ID if not provided
 	if workerID == "" {
-		hostname, _ := os.Hostname()
+		hostname, err := os.Hostname()
+		if err != nil {
+			log.Printf("Warning: failed to get hostname: %v, using 'worker' as fallback", err)
+			hostname = "worker"
+		}
 		if hostname == "" {
 			hostname = "worker"
 		}
@@ -98,9 +104,10 @@ func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, err
 	cfg.Worker.MaxBackoffInterval = time.Duration(remoteCfg.MaxBackoffInterval) * time.Second
 	cfg.Worker.InitialBackoffInterval = time.Duration(remoteCfg.InitialBackoffInterval) * time.Second
 
-	// Storage settings - local paths with remote timeouts/limits
-	cfg.Storage.MountPath = "/mnt/storage"                      // Local default
-	cfg.Storage.CachePath = "/tmp/converter-cache"              // Local default
+	// Storage settings - use OS-appropriate paths with remote timeouts/limits
+	// These are local machine paths that cannot be configured remotely
+	cfg.Storage.MountPath = getDefaultMountPath()
+	cfg.Storage.CachePath = getDefaultCachePath()
 	cfg.Storage.DownloadTimeout = time.Duration(remoteCfg.DownloadTimeout) * time.Second
 	cfg.Storage.UploadTimeout = time.Duration(remoteCfg.UploadTimeout) * time.Second
 	cfg.Storage.MaxCacheSize = remoteCfg.MaxCacheSize
@@ -130,16 +137,47 @@ func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, err
 
 // findFFmpegPath attempts to find ffmpeg in common locations
 func findFFmpegPath() string {
-	paths := []string{
-		"/usr/bin/ffmpeg",
-		"/usr/local/bin/ffmpeg",
-		"/opt/ffmpeg/bin/ffmpeg",
-		"ffmpeg", // Use PATH
+	var paths []string
+	
+	if runtime.GOOS == "windows" {
+		paths = []string{
+			"C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+			"C:\\ffmpeg\\bin\\ffmpeg.exe",
+			"ffmpeg.exe", // Use PATH
+		}
+	} else {
+		paths = []string{
+			"/usr/bin/ffmpeg",
+			"/usr/local/bin/ffmpeg",
+			"/opt/ffmpeg/bin/ffmpeg",
+			"/opt/homebrew/bin/ffmpeg", // macOS Homebrew
+			"ffmpeg", // Use PATH
+		}
 	}
+	
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			log.Printf("Found ffmpeg at: %s", p)
 			return p
 		}
 	}
+	
+	log.Printf("FFmpeg not found in common locations, falling back to PATH lookup")
 	return "ffmpeg" // Fallback to PATH lookup
+}
+
+// getDefaultMountPath returns an OS-appropriate default mount path
+func getDefaultMountPath() string {
+	if runtime.GOOS == "windows" {
+		return "C:\\VideoConverter\\storage"
+	}
+	return "/mnt/storage"
+}
+
+// getDefaultCachePath returns an OS-appropriate default cache path
+func getDefaultCachePath() string {
+	// Try to use the system temp directory
+	tempDir := os.TempDir()
+	cachePath := filepath.Join(tempDir, "converter-cache")
+	return cachePath
 }

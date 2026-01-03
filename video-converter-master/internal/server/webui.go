@@ -607,13 +607,10 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build master URL for display
-	masterURL := fmt.Sprintf("http://%s:%d", s.masterCfg.Server.Host, s.masterCfg.Server.Port)
-	if s.masterCfg.Server.Host == "0.0.0.0" {
-		masterURL = fmt.Sprintf("http://<server-ip>:%d", s.masterCfg.Server.Port)
-	}
+	masterURL := s.getMasterURL()
 
-	// Get worker defaults for display
-	workerDefaults := s.buildWorkerDefaults()
+	// Get worker defaults for display (uses shared helper from http.go)
+	workerDefaults := s.buildRemoteWorkerConfig()
 
 	data := WebUIData{
 		Config:         cfg,
@@ -635,91 +632,12 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// buildWorkerDefaults constructs the worker defaults from master config
-func (s *Server) buildWorkerDefaults() *models.RemoteWorkerConfig {
-	defaults := s.masterCfg.WorkerDefaults
-
-	// Apply sensible defaults if not configured
-	concurrency := defaults.Concurrency
-	if concurrency <= 0 {
-		concurrency = 3
+// getMasterURL returns the master URL for worker connections
+func (s *Server) getMasterURL() string {
+	if s.masterCfg.Server.Host == "0.0.0.0" {
+		return fmt.Sprintf("http://<server-ip>:%d", s.masterCfg.Server.Port)
 	}
-
-	heartbeatInterval := defaults.HeartbeatInterval
-	if heartbeatInterval <= 0 {
-		heartbeatInterval = 30 * time.Second
-	}
-
-	jobCheckInterval := defaults.JobCheckInterval
-	if jobCheckInterval <= 0 {
-		jobCheckInterval = 5 * time.Second
-	}
-
-	jobTimeout := defaults.JobTimeout
-	if jobTimeout <= 0 {
-		jobTimeout = 2 * time.Hour
-	}
-
-	maxAPIRequestsPerMin := defaults.MaxAPIRequestsPerMin
-	if maxAPIRequestsPerMin <= 0 {
-		maxAPIRequestsPerMin = 60
-	}
-
-	downloadTimeout := defaults.DownloadTimeout
-	if downloadTimeout <= 0 {
-		downloadTimeout = 30 * time.Minute
-	}
-
-	uploadTimeout := defaults.UploadTimeout
-	if uploadTimeout <= 0 {
-		uploadTimeout = 30 * time.Minute
-	}
-
-	maxCacheSize := defaults.MaxCacheSize
-	if maxCacheSize <= 0 {
-		maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
-	}
-
-	cacheCleanupAge := defaults.CacheCleanupAge
-	if cacheCleanupAge <= 0 {
-		cacheCleanupAge = 24 * time.Hour
-	}
-
-	ffmpegTimeout := defaults.FFmpegTimeout
-	if ffmpegTimeout <= 0 {
-		ffmpegTimeout = 2 * time.Hour
-	}
-
-	logLevel := defaults.LogLevel
-	if logLevel == "" {
-		logLevel = "info"
-	}
-
-	logFormat := defaults.LogFormat
-	if logFormat == "" {
-		logFormat = "json"
-	}
-
-	conversionSettings := s.configMgr.GetConversionSettings()
-
-	return &models.RemoteWorkerConfig{
-		Concurrency:          concurrency,
-		HeartbeatInterval:    int64(heartbeatInterval.Seconds()),
-		JobCheckInterval:     int64(jobCheckInterval.Seconds()),
-		JobTimeout:           int64(jobTimeout.Seconds()),
-		MaxAPIRequestsPerMin: maxAPIRequestsPerMin,
-		DownloadTimeout:      int64(downloadTimeout.Seconds()),
-		UploadTimeout:        int64(uploadTimeout.Seconds()),
-		MaxCacheSize:         maxCacheSize,
-		CacheCleanupAge:      int64(cacheCleanupAge.Seconds()),
-		BandwidthLimit:       defaults.BandwidthLimit,
-		EnableResumeDownload: defaults.EnableResumeDownload,
-		UseVulkan:            defaults.UseVulkan,
-		FFmpegTimeout:        int64(ffmpegTimeout.Seconds()),
-		Conversion:           *conversionSettings,
-		LogLevel:             logLevel,
-		LogFormat:            logFormat,
-	}
+	return fmt.Sprintf("http://%s:%d", s.masterCfg.Server.Host, s.masterCfg.Server.Port)
 }
 
 // GetConfig returns the current configuration as JSON
