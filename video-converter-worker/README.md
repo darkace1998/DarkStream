@@ -17,26 +17,44 @@ The worker:
 go build -o worker
 ```
 
-## Configuration
+## Quick Start (Recommended)
 
-Copy the example configuration:
+The simplest way to start a worker is to connect it directly to the master server. The worker will automatically fetch all configuration from the master:
+
 ```bash
-cp config.yaml.example config.yaml
+./worker -url http://master-server:8080
 ```
 
-Edit `config.yaml` to configure:
+That's it! The worker will:
+- Generate a unique worker ID automatically
+- Fetch all configuration settings from the master
+- Start processing jobs immediately
+
+### Optional: Custom Worker ID
+
+You can specify a custom worker ID:
+
+```bash
+./worker -url http://master-server:8080 -id my-worker-01
+```
+
+## Alternative: Local Configuration File
+
+If you prefer to configure the worker locally (or need to override settings), you can use a configuration file:
+
+```bash
+cp config.yaml.example config.yaml
+# Edit config.yaml as needed
+./worker -config config.yaml
+```
+
+Configuration file options:
 - Worker ID and concurrency settings
 - Master coordinator URL
 - Storage mount paths
 - FFmpeg and Vulkan settings
 - Conversion parameters (resolution, codec, bitrate, etc.)
 - Logging preferences
-
-## Running
-
-```bash
-./worker --config config.yaml
-```
 
 ## Architecture
 
@@ -60,7 +78,7 @@ The worker consists of several internal packages:
 
 ## GPU Acceleration
 
-The worker supports Vulkan-based GPU acceleration for video encoding/decoding. Configure `ffmpeg.use_vulkan: true` and ensure FFmpeg is compiled with Vulkan support.
+The worker supports Vulkan-based GPU acceleration for video encoding/decoding. This is enabled by default when using `-url` mode. When using a config file, set `ffmpeg.use_vulkan: true` and ensure FFmpeg is compiled with Vulkan support.
 
 To check available Vulkan devices, see the Vulkan detector logs on startup.
 
@@ -72,4 +90,4 @@ Workers send periodic heartbeats to the master containing:
 - System metrics (CPU/memory usage)
 - Health status
 
-Monitor worker health through the master's API or CLI tools.
+Monitor worker health through the master's web UI or API.

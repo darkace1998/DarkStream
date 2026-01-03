@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -237,7 +238,15 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <!-- Workers Tab -->
         <div id="workers" class="tab-content">
             <div class="card">
-                <h2>Connected Workers</h2>
+                <h2>🔗 Connect New Workers</h2>
+                <p style="color: #aaa; margin-bottom: 15px;">Workers can connect to this master using the following command:</p>
+                <div style="background: #0f0f23; padding: 15px; border-radius: 4px; font-family: monospace; color: #00d9ff; margin-bottom: 20px;">
+                    worker -url {{.MasterURL}}
+                </div>
+                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive all configuration settings from this master.</p>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h2>👥 Connected Workers</h2>
                 {{if .Workers}}
                 <table class="table">
                     <thead>
@@ -266,6 +275,30 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 {{else}}
                 <div class="no-data">No workers connected</div>
                 {{end}}
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h2>⚙️ Worker Default Settings</h2>
+                <p style="color: #888; margin-bottom: 15px; font-size: 0.9em;">These settings are provided to workers when they connect. Configure them in the master's config.yaml file under <code>worker_defaults:</code></p>
+                <div class="grid">
+                    <div>
+                        <table class="table">
+                            <tr><td style="color: #aaa;">Concurrency</td><td>{{.WorkerDefaults.Concurrency}} jobs</td></tr>
+                            <tr><td style="color: #aaa;">Heartbeat Interval</td><td>{{.WorkerDefaults.HeartbeatInterval}}s</td></tr>
+                            <tr><td style="color: #aaa;">Job Check Interval</td><td>{{.WorkerDefaults.JobCheckInterval}}s</td></tr>
+                            <tr><td style="color: #aaa;">Job Timeout</td><td>{{.WorkerDefaults.JobTimeout}}s</td></tr>
+                            <tr><td style="color: #aaa;">Use Vulkan GPU</td><td>{{if .WorkerDefaults.UseVulkan}}Yes{{else}}No{{end}}</td></tr>
+                        </table>
+                    </div>
+                    <div>
+                        <table class="table">
+                            <tr><td style="color: #aaa;">Download Timeout</td><td>{{.WorkerDefaults.DownloadTimeout}}s</td></tr>
+                            <tr><td style="color: #aaa;">Upload Timeout</td><td>{{.WorkerDefaults.UploadTimeout}}s</td></tr>
+                            <tr><td style="color: #aaa;">Max Cache Size</td><td>{{.WorkerDefaults.MaxCacheSize}} bytes</td></tr>
+                            <tr><td style="color: #aaa;">Log Level</td><td>{{.WorkerDefaults.LogLevel}}</td></tr>
+                            <tr><td style="color: #aaa;">Resume Download</td><td>{{if .WorkerDefaults.EnableResumeDownload}}Enabled{{else}}Disabled{{end}}</td></tr>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -493,6 +526,8 @@ type WebUIData struct {
 	PendingJobs    []*models.Job
 	ProcessingJobs []*models.Job
 	RecentJobs     []*models.Job
+	MasterURL      string                      // URL for workers to connect
+	WorkerDefaults *models.RemoteWorkerConfig  // Worker default settings
 }
 
 // ServeWebUI serves the web interface at the root path
@@ -571,6 +606,15 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		recentJobs = append(recentJobs, failed...)
 	}
 
+	// Build master URL for display
+	masterURL := fmt.Sprintf("http://%s:%d", s.masterCfg.Server.Host, s.masterCfg.Server.Port)
+	if s.masterCfg.Server.Host == "0.0.0.0" {
+		masterURL = fmt.Sprintf("http://<server-ip>:%d", s.masterCfg.Server.Port)
+	}
+
+	// Get worker defaults for display
+	workerDefaults := s.buildWorkerDefaults()
+
 	data := WebUIData{
 		Config:         cfg,
 		Workers:        workerInfos,
@@ -578,6 +622,8 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		PendingJobs:    pendingJobs,
 		ProcessingJobs: processingJobs,
 		RecentJobs:     recentJobs,
+		MasterURL:      masterURL,
+		WorkerDefaults: workerDefaults,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -586,6 +632,93 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to render web UI template", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
+	}
+}
+
+// buildWorkerDefaults constructs the worker defaults from master config
+func (s *Server) buildWorkerDefaults() *models.RemoteWorkerConfig {
+	defaults := s.masterCfg.WorkerDefaults
+
+	// Apply sensible defaults if not configured
+	concurrency := defaults.Concurrency
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
+	heartbeatInterval := defaults.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 30 * time.Second
+	}
+
+	jobCheckInterval := defaults.JobCheckInterval
+	if jobCheckInterval <= 0 {
+		jobCheckInterval = 5 * time.Second
+	}
+
+	jobTimeout := defaults.JobTimeout
+	if jobTimeout <= 0 {
+		jobTimeout = 2 * time.Hour
+	}
+
+	maxAPIRequestsPerMin := defaults.MaxAPIRequestsPerMin
+	if maxAPIRequestsPerMin <= 0 {
+		maxAPIRequestsPerMin = 60
+	}
+
+	downloadTimeout := defaults.DownloadTimeout
+	if downloadTimeout <= 0 {
+		downloadTimeout = 30 * time.Minute
+	}
+
+	uploadTimeout := defaults.UploadTimeout
+	if uploadTimeout <= 0 {
+		uploadTimeout = 30 * time.Minute
+	}
+
+	maxCacheSize := defaults.MaxCacheSize
+	if maxCacheSize <= 0 {
+		maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
+	}
+
+	cacheCleanupAge := defaults.CacheCleanupAge
+	if cacheCleanupAge <= 0 {
+		cacheCleanupAge = 24 * time.Hour
+	}
+
+	ffmpegTimeout := defaults.FFmpegTimeout
+	if ffmpegTimeout <= 0 {
+		ffmpegTimeout = 2 * time.Hour
+	}
+
+	logLevel := defaults.LogLevel
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	logFormat := defaults.LogFormat
+	if logFormat == "" {
+		logFormat = "json"
+	}
+
+	conversionSettings := s.configMgr.GetConversionSettings()
+
+	return &models.RemoteWorkerConfig{
+		Concurrency:          concurrency,
+		HeartbeatInterval:    int64(heartbeatInterval.Seconds()),
+		JobCheckInterval:     int64(jobCheckInterval.Seconds()),
+		JobTimeout:           int64(jobTimeout.Seconds()),
+		MaxAPIRequestsPerMin: maxAPIRequestsPerMin,
+		DownloadTimeout:      int64(downloadTimeout.Seconds()),
+		UploadTimeout:        int64(uploadTimeout.Seconds()),
+		MaxCacheSize:         maxCacheSize,
+		CacheCleanupAge:      int64(cacheCleanupAge.Seconds()),
+		BandwidthLimit:       defaults.BandwidthLimit,
+		EnableResumeDownload: defaults.EnableResumeDownload,
+		UseVulkan:            defaults.UseVulkan,
+		FFmpegTimeout:        int64(ffmpegTimeout.Seconds()),
+		Conversion:           *conversionSettings,
+		LogLevel:             logLevel,
+		LogFormat:            logFormat,
 	}
 }
 
