@@ -345,28 +345,28 @@ func validateConfig(cfg *ActiveConfig) error {
 	}
 
 	// Validate worker settings
-	if cfg.Worker.Concurrency < 0 {
+	if cfg.Worker.Concurrency < 1 {
 		errors = append(errors, ValidationError{
 			Field:   "worker.concurrency",
-			Message: "must be a non-negative integer",
+			Message: "must be at least 1",
 		})
 	}
-	if cfg.Worker.HeartbeatInterval < 0 {
+	if cfg.Worker.HeartbeatInterval < 1 {
 		errors = append(errors, ValidationError{
 			Field:   "worker.heartbeat_interval",
-			Message: "must be a non-negative integer",
+			Message: "must be at least 1 second",
 		})
 	}
-	if cfg.Worker.JobCheckInterval < 0 {
+	if cfg.Worker.JobCheckInterval < 1 {
 		errors = append(errors, ValidationError{
 			Field:   "worker.job_check_interval",
-			Message: "must be a non-negative integer",
+			Message: "must be at least 1 second",
 		})
 	}
-	if cfg.Worker.JobTimeout < 0 {
+	if cfg.Worker.JobTimeout < 60 {
 		errors = append(errors, ValidationError{
 			Field:   "worker.job_timeout",
-			Message: "must be a non-negative integer",
+			Message: "must be at least 60 seconds",
 		})
 	}
 	validLogLevels := map[string]bool{
