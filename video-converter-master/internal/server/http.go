@@ -193,6 +193,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/download-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo))))
 	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
+	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.GetWorkerConfig))) // No auth - workers need this before they have API key
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 
@@ -1964,4 +1965,123 @@ func (s *Server) updateQueueDepthMetric() {
 	if err == nil {
 		s.metrics.SetQueueDepth(float64(count))
 	}
+}
+
+// GetWorkerConfig returns the worker configuration from the master.
+// This endpoint allows workers to be started with just a -url flag and fetch
+// all their configuration from the master, similar to FileFlows architecture.
+func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get worker defaults from master config, with sensible fallback defaults
+	defaults := s.masterCfg.WorkerDefaults
+
+	// Apply sensible defaults if not configured
+	concurrency := defaults.Concurrency
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
+	heartbeatInterval := defaults.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 30 * time.Second
+	}
+
+	jobCheckInterval := defaults.JobCheckInterval
+	if jobCheckInterval <= 0 {
+		jobCheckInterval = 5 * time.Second
+	}
+
+	jobTimeout := defaults.JobTimeout
+	if jobTimeout <= 0 {
+		jobTimeout = 2 * time.Hour
+	}
+
+	maxAPIRequestsPerMin := defaults.MaxAPIRequestsPerMin
+	if maxAPIRequestsPerMin <= 0 {
+		maxAPIRequestsPerMin = 60
+	}
+
+	maxBackoffInterval := defaults.MaxBackoffInterval
+	if maxBackoffInterval <= 0 {
+		maxBackoffInterval = 30 * time.Second
+	}
+
+	initialBackoffInterval := defaults.InitialBackoffInterval
+	if initialBackoffInterval <= 0 {
+		initialBackoffInterval = 1 * time.Second
+	}
+
+	downloadTimeout := defaults.DownloadTimeout
+	if downloadTimeout <= 0 {
+		downloadTimeout = 30 * time.Minute
+	}
+
+	uploadTimeout := defaults.UploadTimeout
+	if uploadTimeout <= 0 {
+		uploadTimeout = 30 * time.Minute
+	}
+
+	maxCacheSize := defaults.MaxCacheSize
+	if maxCacheSize <= 0 {
+		maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
+	}
+
+	cacheCleanupAge := defaults.CacheCleanupAge
+	if cacheCleanupAge <= 0 {
+		cacheCleanupAge = 24 * time.Hour
+	}
+
+	ffmpegTimeout := defaults.FFmpegTimeout
+	if ffmpegTimeout <= 0 {
+		ffmpegTimeout = 2 * time.Hour
+	}
+
+	logLevel := defaults.LogLevel
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	logFormat := defaults.LogFormat
+	if logFormat == "" {
+		logFormat = "json"
+	}
+
+	// Get conversion settings from config manager
+	conversionSettings := s.configMgr.GetConversionSettings()
+
+	// Build the remote worker config response
+	response := models.RemoteWorkerConfig{
+		Concurrency:            concurrency,
+		HeartbeatInterval:      int64(heartbeatInterval.Seconds()),
+		JobCheckInterval:       int64(jobCheckInterval.Seconds()),
+		JobTimeout:             int64(jobTimeout.Seconds()),
+		MaxAPIRequestsPerMin:   maxAPIRequestsPerMin,
+		MaxBackoffInterval:     int64(maxBackoffInterval.Seconds()),
+		InitialBackoffInterval: int64(initialBackoffInterval.Seconds()),
+		DownloadTimeout:        int64(downloadTimeout.Seconds()),
+		UploadTimeout:          int64(uploadTimeout.Seconds()),
+		MaxCacheSize:           maxCacheSize,
+		CacheCleanupAge:        int64(cacheCleanupAge.Seconds()),
+		BandwidthLimit:         defaults.BandwidthLimit,
+		EnableResumeDownload:   defaults.EnableResumeDownload,
+		UseVulkan:              defaults.UseVulkan,
+		FFmpegTimeout:          int64(ffmpegTimeout.Seconds()),
+		Conversion:             *conversionSettings,
+		LogLevel:               logLevel,
+		LogFormat:              logFormat,
+		APIKey:                 s.apiKey,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode worker config", "error", err)
+		return
+	}
+
+	slog.Debug("Worker configuration requested")
 }
