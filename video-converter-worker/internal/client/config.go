@@ -239,3 +239,60 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 
 	return cfg, nil
 }
+
+// FetchRemoteWorkerConfig fetches the complete worker configuration from the master.
+// This is used when a worker starts with just a -url flag and needs to get all
+// configuration from the master (FileFlows-style architecture).
+func FetchRemoteWorkerConfig(masterURL string) (*models.RemoteWorkerConfig, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	url := fmt.Sprintf("%s/api/worker/config", masterURL)
+
+	var lastErr error
+	for attempt := 0; attempt < DefaultMaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := DefaultRetryBaseDelay * time.Duration(1<<(attempt-1))
+			slog.Info("Retrying worker config fetch", "attempt", attempt+1, "delay", delay)
+			time.Sleep(delay)
+		}
+
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to request worker config: %w", err)
+			slog.Warn("Worker config fetch attempt failed", "attempt", attempt+1, "error", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			cerr := resp.Body.Close()
+			if cerr != nil {
+				slog.Warn("Failed to close response body", "error", cerr)
+			}
+			lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+			slog.Warn("Worker config fetch attempt failed", "attempt", attempt+1, "error", lastErr)
+			continue
+		}
+
+		var cfg models.RemoteWorkerConfig
+		err = json.NewDecoder(resp.Body).Decode(&cfg)
+		cerr := resp.Body.Close()
+		if cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("failed to decode worker config: %w", err)
+			slog.Warn("Worker config fetch attempt failed", "attempt", attempt+1, "error", err)
+			continue
+		}
+
+		slog.Info("Worker configuration fetched from master",
+			"concurrency", cfg.Concurrency,
+			"use_vulkan", cfg.UseVulkan,
+			"log_level", cfg.LogLevel,
+		)
+
+		return &cfg, nil
+	}
+
+	return nil, fmt.Errorf("failed to fetch worker config after %d attempts: %w", DefaultMaxRetries, lastErr)
+}

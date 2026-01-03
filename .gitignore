@@ -8,6 +8,8 @@
 !video-converter-master/
 !video-converter-cli/
 /cli
+video-converter-master/master
+video-converter-worker/worker
 *.exe
 *.dll
 *.so

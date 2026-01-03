@@ -59,6 +59,28 @@ type MasterConfig struct {
 
 	Conversion ConversionSettings `yaml:"conversion"`
 	Logging    LoggingSettings    `yaml:"logging"`
+
+	// WorkerDefaults contains default settings that are provided to workers when they
+	// fetch their configuration from the master. These can be overridden by local worker config.
+	WorkerDefaults struct {
+		Concurrency            int           `yaml:"concurrency"`              // Default: 3
+		HeartbeatInterval      time.Duration `yaml:"heartbeat_interval"`       // Default: 30s
+		JobCheckInterval       time.Duration `yaml:"job_check_interval"`       // Default: 5s
+		JobTimeout             time.Duration `yaml:"job_timeout"`              // Default: 2h
+		MaxAPIRequestsPerMin   int           `yaml:"max_api_requests_per_min"` // Default: 60
+		MaxBackoffInterval     time.Duration `yaml:"max_backoff_interval"`     // Default: 30s
+		InitialBackoffInterval time.Duration `yaml:"initial_backoff_interval"` // Default: 1s
+		DownloadTimeout        time.Duration `yaml:"download_timeout"`         // Default: 30m
+		UploadTimeout          time.Duration `yaml:"upload_timeout"`           // Default: 30m
+		MaxCacheSize           int64         `yaml:"max_cache_size"`           // Default: 10GB
+		CacheCleanupAge        time.Duration `yaml:"cache_cleanup_age"`        // Default: 24h
+		BandwidthLimit         int64         `yaml:"bandwidth_limit"`          // Default: 0 (unlimited)
+		EnableResumeDownload   bool          `yaml:"enable_resume_download"`   // Default: true
+		UseVulkan              bool          `yaml:"use_vulkan"`               // Default: true
+		FFmpegTimeout          time.Duration `yaml:"ffmpeg_timeout"`           // Default: 2h
+		LogLevel               string        `yaml:"log_level"`                // Default: info
+		LogFormat              string        `yaml:"log_format"`               // Default: json
+	} `yaml:"worker_defaults"`
 }
 
 // WorkerConfig holds the configuration for worker processes.
@@ -101,4 +123,40 @@ type WorkerConfig struct {
 
 	Logging    LoggingSettings    `yaml:"logging"`
 	Conversion ConversionSettings `yaml:"conversion"`
+}
+
+// RemoteWorkerConfig is the configuration that workers fetch from the master at startup.
+// This allows workers to be started with just a -url flag and receive all configuration
+// from the master, similar to FileFlows architecture.
+type RemoteWorkerConfig struct {
+	// Worker settings
+	Concurrency            int   `json:"concurrency"`
+	HeartbeatInterval      int64 `json:"heartbeat_interval"`       // Duration in seconds
+	JobCheckInterval       int64 `json:"job_check_interval"`       // Duration in seconds
+	JobTimeout             int64 `json:"job_timeout"`              // Duration in seconds
+	MaxAPIRequestsPerMin   int   `json:"max_api_requests_per_min"` // Rate limit for API calls
+	MaxBackoffInterval     int64 `json:"max_backoff_interval"`     // Duration in seconds
+	InitialBackoffInterval int64 `json:"initial_backoff_interval"` // Duration in seconds
+
+	// Storage settings
+	DownloadTimeout      int64 `json:"download_timeout"`        // Duration in seconds
+	UploadTimeout        int64 `json:"upload_timeout"`          // Duration in seconds
+	MaxCacheSize         int64 `json:"max_cache_size"`          // Maximum cache size in bytes
+	CacheCleanupAge      int64 `json:"cache_cleanup_age"`       // Duration in seconds
+	BandwidthLimit       int64 `json:"bandwidth_limit"`         // Bandwidth limit in bytes per second
+	EnableResumeDownload bool  `json:"enable_resume_download"`  // Enable resume support for downloads
+
+	// FFmpeg settings
+	UseVulkan    bool  `json:"use_vulkan"`     // Whether to use Vulkan hardware acceleration
+	FFmpegTimeout int64 `json:"ffmpeg_timeout"` // Duration in seconds
+
+	// Conversion settings (already fetched via /api/config, but included for completeness)
+	Conversion ConversionSettings `json:"conversion"`
+
+	// Logging settings
+	LogLevel  string `json:"log_level"`  // debug, info, warn, error
+	LogFormat string `json:"log_format"` // json, text
+
+	// API key for authentication (if required)
+	APIKey string `json:"api_key,omitempty"`
 }

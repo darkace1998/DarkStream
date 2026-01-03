@@ -2,3 +2,8 @@ github.com/darkace1998/golang-vulkan-api v1.0.2 h1:u6X5OWqeJBS4sFBLstZvJLU4cvgrU
 github.com/darkace1998/golang-vulkan-api v1.0.2/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
 github.com/darkace1998/golang-vulkan-api v1.0.3 h1:d8iIsOnzFjx5Utb74hPr3NdjJOkF7kh3bZTzr7Z40fY=
 github.com/darkace1998/golang-vulkan-api v1.0.3/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
+github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
+github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
+github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
+github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
+github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=

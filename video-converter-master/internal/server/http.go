@@ -137,6 +137,7 @@ type Server struct {
 	addr        string
 	server      *http.Server
 	configMgr   *config.Manager
+	masterCfg   *models.MasterConfig // Master configuration for worker defaults
 	rateLimiter *rateLimiter
 	apiKey      string
 	allowedDirs []string // Allowed directories for file operations (source and output)
@@ -157,6 +158,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		db:          tracker,
 		addr:        addr,
 		configMgr:   configMgr,
+		masterCfg:   cfg,
 		rateLimiter: newRateLimiter(),
 		apiKey:      apiKey,
 		allowedDirs: allowedDirs,
@@ -191,6 +193,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/download-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo))))
 	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
+	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.GetWorkerConfig))) // No auth - workers need this before they have API key
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 
@@ -1961,5 +1964,119 @@ func (s *Server) updateQueueDepthMetric() {
 	count, err := s.db.CountPendingJobs()
 	if err == nil {
 		s.metrics.SetQueueDepth(float64(count))
+	}
+}
+
+// GetWorkerConfig returns the worker configuration from the master.
+// This endpoint allows workers to be started with just a -url flag and fetch
+// all their configuration from the master, similar to FileFlows architecture.
+func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Use the shared helper to build worker config with defaults
+	response := s.buildRemoteWorkerConfig()
+
+	// Add API key to the response (not included in webui display version)
+	response.APIKey = s.apiKey
+
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode worker config", "error", err)
+		return
+	}
+
+	slog.Debug("Worker configuration requested")
+}
+
+// buildRemoteWorkerConfig constructs the RemoteWorkerConfig from the config manager.
+// This is shared between GetWorkerConfig endpoint and the web UI display.
+func (s *Server) buildRemoteWorkerConfig() *models.RemoteWorkerConfig {
+	workerCfg := s.configMgr.GetWorkerConfig()
+	conversionSettings := s.configMgr.GetConversionSettings()
+
+	// Apply sensible defaults if not configured
+	concurrency := workerCfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
+	heartbeatInterval := workerCfg.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 30
+	}
+
+	jobCheckInterval := workerCfg.JobCheckInterval
+	if jobCheckInterval <= 0 {
+		jobCheckInterval = 5
+	}
+
+	jobTimeout := workerCfg.JobTimeout
+	if jobTimeout <= 0 {
+		jobTimeout = 7200 // 2 hours
+	}
+
+	maxAPIRequestsPerMin := workerCfg.MaxAPIRequestsPerMin
+	if maxAPIRequestsPerMin <= 0 {
+		maxAPIRequestsPerMin = 60
+	}
+
+	downloadTimeout := workerCfg.DownloadTimeout
+	if downloadTimeout <= 0 {
+		downloadTimeout = 1800 // 30 minutes
+	}
+
+	uploadTimeout := workerCfg.UploadTimeout
+	if uploadTimeout <= 0 {
+		uploadTimeout = 1800 // 30 minutes
+	}
+
+	maxCacheSize := workerCfg.MaxCacheSize
+	if maxCacheSize <= 0 {
+		maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
+	}
+
+	cacheCleanupAge := workerCfg.CacheCleanupAge
+	if cacheCleanupAge <= 0 {
+		cacheCleanupAge = 86400 // 24 hours
+	}
+
+	ffmpegTimeout := workerCfg.FFmpegTimeout
+	if ffmpegTimeout <= 0 {
+		ffmpegTimeout = 7200 // 2 hours
+	}
+
+	logLevel := workerCfg.LogLevel
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	logFormat := workerCfg.LogFormat
+	if logFormat == "" {
+		logFormat = "json"
+	}
+
+	return &models.RemoteWorkerConfig{
+		Concurrency:            concurrency,
+		HeartbeatInterval:      int64(heartbeatInterval),
+		JobCheckInterval:       int64(jobCheckInterval),
+		JobTimeout:             int64(jobTimeout),
+		MaxAPIRequestsPerMin:   maxAPIRequestsPerMin,
+		MaxBackoffInterval:     30,  // Fixed default
+		InitialBackoffInterval: 1,   // Fixed default
+		DownloadTimeout:        int64(downloadTimeout),
+		UploadTimeout:          int64(uploadTimeout),
+		MaxCacheSize:           maxCacheSize,
+		CacheCleanupAge:        int64(cacheCleanupAge),
+		BandwidthLimit:         workerCfg.BandwidthLimit,
+		EnableResumeDownload:   workerCfg.EnableResumeDownload,
+		UseVulkan:              workerCfg.UseVulkan,
+		FFmpegTimeout:          int64(ffmpegTimeout),
+		Conversion:             *conversionSettings,
+		LogLevel:               logLevel,
+		LogFormat:              logFormat,
 	}
 }

@@ -34,6 +34,28 @@ conversion:
   audio_bitrate: 128k
   output_format: mp4  # mp4, mkv, webm, avi
 
+# Worker defaults - these settings are provided to workers when they connect
+# Workers can be started with just: worker -url http://master:8080
+# and they will receive all these settings from the master
+worker_defaults:
+  concurrency: 3               # Number of concurrent jobs per worker
+  heartbeat_interval: 30s      # How often workers send heartbeat
+  job_check_interval: 5s       # How often workers check for new jobs
+  job_timeout: 2h              # Maximum time for a single job
+  max_api_requests_per_min: 60 # Rate limit for API calls to master
+  max_backoff_interval: 30s    # Maximum backoff when no jobs available
+  initial_backoff_interval: 1s # Initial backoff when no jobs available
+  download_timeout: 30m        # Timeout for downloading source videos
+  upload_timeout: 30m          # Timeout for uploading converted videos
+  max_cache_size: 10737418240  # 10GB maximum cache size
+  cache_cleanup_age: 24h       # Age after which cached files are cleaned up
+  bandwidth_limit: 0           # Bandwidth limit in bytes per second (0 = unlimited)
+  enable_resume_download: true # Enable resume support for downloads
+  use_vulkan: true             # Enable Vulkan GPU acceleration if available
+  ffmpeg_timeout: 2h           # FFmpeg conversion timeout
+  log_level: info              # Worker log level (debug, info, warn, error)
+  log_format: json             # Worker log format (json, text)
+
 logging:
   level: info
   format: json
