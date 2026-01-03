@@ -243,7 +243,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 <div style="background: #0f0f23; padding: 15px; border-radius: 4px; font-family: monospace; color: #00d9ff; margin-bottom: 20px;">
                     worker -url {{.MasterURL}}
                 </div>
-                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive all configuration settings from this master.</p>
+                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive all configuration settings from this master. Configure worker settings in the Configuration tab.</p>
             </div>
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
@@ -275,30 +275,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 {{else}}
                 <div class="no-data">No workers connected</div>
                 {{end}}
-            </div>
-            <div class="card" style="margin-top: 20px;">
-                <h2>⚙️ Worker Default Settings</h2>
-                <p style="color: #888; margin-bottom: 15px; font-size: 0.9em;">These settings are provided to workers when they connect. Configure them in the master's config.yaml file under <code>worker_defaults:</code></p>
-                <div class="grid">
-                    <div>
-                        <table class="table">
-                            <tr><td style="color: #aaa;">Concurrency</td><td>{{.WorkerDefaults.Concurrency}} jobs</td></tr>
-                            <tr><td style="color: #aaa;">Heartbeat Interval</td><td>{{.WorkerDefaults.HeartbeatInterval}}s</td></tr>
-                            <tr><td style="color: #aaa;">Job Check Interval</td><td>{{.WorkerDefaults.JobCheckInterval}}s</td></tr>
-                            <tr><td style="color: #aaa;">Job Timeout</td><td>{{.WorkerDefaults.JobTimeout}}s</td></tr>
-                            <tr><td style="color: #aaa;">Use Vulkan GPU</td><td>{{if .WorkerDefaults.UseVulkan}}Yes{{else}}No{{end}}</td></tr>
-                        </table>
-                    </div>
-                    <div>
-                        <table class="table">
-                            <tr><td style="color: #aaa;">Download Timeout</td><td>{{.WorkerDefaults.DownloadTimeout}}s</td></tr>
-                            <tr><td style="color: #aaa;">Upload Timeout</td><td>{{.WorkerDefaults.UploadTimeout}}s</td></tr>
-                            <tr><td style="color: #aaa;">Max Cache Size</td><td>{{.WorkerDefaults.MaxCacheSize}} bytes</td></tr>
-                            <tr><td style="color: #aaa;">Log Level</td><td>{{.WorkerDefaults.LogLevel}}</td></tr>
-                            <tr><td style="color: #aaa;">Resume Download</td><td>{{if .WorkerDefaults.EnableResumeDownload}}Enabled{{else}}Disabled{{end}}</td></tr>
-                        </table>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -373,6 +349,90 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
+                
+                <h2 style="margin-top: 30px;">⚙️ Worker Settings</h2>
+                <div class="grid">
+                    <div class="card">
+                        <h2>Processing</h2>
+                        <div class="form-group">
+                            <label for="concurrency">Concurrent Jobs per Worker</label>
+                            <input type="number" id="concurrency" name="concurrency" value="{{.Config.Worker.Concurrency}}" min="1" max="16" />
+                        </div>
+                        <div class="form-group">
+                            <label for="heartbeatInterval">Heartbeat Interval (seconds)</label>
+                            <input type="number" id="heartbeatInterval" name="heartbeatInterval" value="{{.Config.Worker.HeartbeatInterval}}" min="5" max="300" />
+                        </div>
+                        <div class="form-group">
+                            <label for="jobCheckInterval">Job Check Interval (seconds)</label>
+                            <input type="number" id="jobCheckInterval" name="jobCheckInterval" value="{{.Config.Worker.JobCheckInterval}}" min="1" max="60" />
+                        </div>
+                        <div class="form-group">
+                            <label for="jobTimeout">Job Timeout (seconds)</label>
+                            <input type="number" id="jobTimeout" name="jobTimeout" value="{{.Config.Worker.JobTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="ffmpegTimeout">FFmpeg Timeout (seconds)</label>
+                            <input type="number" id="ffmpegTimeout" name="ffmpegTimeout" value="{{.Config.Worker.FFmpegTimeout}}" min="60" max="86400" />
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Transfers &amp; Storage</h2>
+                        <div class="form-group">
+                            <label for="downloadTimeout">Download Timeout (seconds)</label>
+                            <input type="number" id="downloadTimeout" name="downloadTimeout" value="{{.Config.Worker.DownloadTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="uploadTimeout">Upload Timeout (seconds)</label>
+                            <input type="number" id="uploadTimeout" name="uploadTimeout" value="{{.Config.Worker.UploadTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="maxCacheSize">Max Cache Size (bytes)</label>
+                            <input type="number" id="maxCacheSize" name="maxCacheSize" value="{{.Config.Worker.MaxCacheSize}}" min="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="bandwidthLimit">Bandwidth Limit (bytes/s, 0=unlimited)</label>
+                            <input type="number" id="bandwidthLimit" name="bandwidthLimit" value="{{.Config.Worker.BandwidthLimit}}" min="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="enableResumeDownload">Resume Downloads</label>
+                            <select id="enableResumeDownload" name="enableResumeDownload">
+                                <option value="true" {{if .Config.Worker.EnableResumeDownload}}selected{{end}}>Enabled</option>
+                                <option value="false" {{if not .Config.Worker.EnableResumeDownload}}selected{{end}}>Disabled</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Hardware &amp; Logging</h2>
+                        <div class="form-group">
+                            <label for="useVulkan">Use Vulkan GPU Acceleration</label>
+                            <select id="useVulkan" name="useVulkan">
+                                <option value="true" {{if .Config.Worker.UseVulkan}}selected{{end}}>Enabled</option>
+                                <option value="false" {{if not .Config.Worker.UseVulkan}}selected{{end}}>Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="logLevel">Log Level</label>
+                            <select id="logLevel" name="logLevel">
+                                <option value="debug" {{if eq .Config.Worker.LogLevel "debug"}}selected{{end}}>Debug</option>
+                                <option value="info" {{if eq .Config.Worker.LogLevel "info"}}selected{{end}}>Info</option>
+                                <option value="warn" {{if eq .Config.Worker.LogLevel "warn"}}selected{{end}}>Warn</option>
+                                <option value="error" {{if eq .Config.Worker.LogLevel "error"}}selected{{end}}>Error</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="logFormat">Log Format</label>
+                            <select id="logFormat" name="logFormat">
+                                <option value="json" {{if eq .Config.Worker.LogFormat "json"}}selected{{end}}>JSON</option>
+                                <option value="text" {{if eq .Config.Worker.LogFormat "text"}}selected{{end}}>Text</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="maxAPIRequestsPerMin">Max API Requests/Minute</label>
+                            <input type="number" id="maxAPIRequestsPerMin" name="maxAPIRequestsPerMin" value="{{.Config.Worker.MaxAPIRequestsPerMin}}" min="1" max="1000" />
+                        </div>
+                    </div>
+                </div>
+                
                 <div style="margin-top: 20px;">
                     <button type="submit" class="btn btn-primary" id="saveBtn">💾 Save Configuration</button>
                     <div class="loading" id="loading"><span class="spinner"></span></div>
@@ -413,7 +473,24 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     codec: document.getElementById('audioCodec').value,
                     bitrate: document.getElementById('audioBitrate').value
                 },
-                output: { format: document.getElementById('format').value }
+                output: { format: document.getElementById('format').value },
+                worker: {
+                    concurrency: parseInt(document.getElementById('concurrency').value) || 3,
+                    heartbeat_interval: parseInt(document.getElementById('heartbeatInterval').value) || 30,
+                    job_check_interval: parseInt(document.getElementById('jobCheckInterval').value) || 5,
+                    job_timeout: parseInt(document.getElementById('jobTimeout').value) || 7200,
+                    max_api_requests_per_min: parseInt(document.getElementById('maxAPIRequestsPerMin').value) || 60,
+                    download_timeout: parseInt(document.getElementById('downloadTimeout').value) || 1800,
+                    upload_timeout: parseInt(document.getElementById('uploadTimeout').value) || 1800,
+                    max_cache_size: parseInt(document.getElementById('maxCacheSize').value) || 10737418240,
+                    cache_cleanup_age: 86400,
+                    bandwidth_limit: parseInt(document.getElementById('bandwidthLimit').value) || 0,
+                    enable_resume_download: document.getElementById('enableResumeDownload').value === 'true',
+                    use_vulkan: document.getElementById('useVulkan').value === 'true',
+                    ffmpeg_timeout: parseInt(document.getElementById('ffmpegTimeout').value) || 7200,
+                    log_level: document.getElementById('logLevel').value,
+                    log_format: document.getElementById('logFormat').value
+                }
             };
             
             try {

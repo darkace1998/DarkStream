@@ -1992,100 +1992,89 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("Worker configuration requested")
 }
 
-// buildRemoteWorkerConfig constructs the RemoteWorkerConfig with sensible defaults.
+// buildRemoteWorkerConfig constructs the RemoteWorkerConfig from the config manager.
 // This is shared between GetWorkerConfig endpoint and the web UI display.
 func (s *Server) buildRemoteWorkerConfig() *models.RemoteWorkerConfig {
-	defaults := s.masterCfg.WorkerDefaults
+	workerCfg := s.configMgr.GetWorkerConfig()
+	conversionSettings := s.configMgr.GetConversionSettings()
 
 	// Apply sensible defaults if not configured
-	concurrency := defaults.Concurrency
+	concurrency := workerCfg.Concurrency
 	if concurrency <= 0 {
 		concurrency = 3
 	}
 
-	heartbeatInterval := defaults.HeartbeatInterval
+	heartbeatInterval := workerCfg.HeartbeatInterval
 	if heartbeatInterval <= 0 {
-		heartbeatInterval = 30 * time.Second
+		heartbeatInterval = 30
 	}
 
-	jobCheckInterval := defaults.JobCheckInterval
+	jobCheckInterval := workerCfg.JobCheckInterval
 	if jobCheckInterval <= 0 {
-		jobCheckInterval = 5 * time.Second
+		jobCheckInterval = 5
 	}
 
-	jobTimeout := defaults.JobTimeout
+	jobTimeout := workerCfg.JobTimeout
 	if jobTimeout <= 0 {
-		jobTimeout = 2 * time.Hour
+		jobTimeout = 7200 // 2 hours
 	}
 
-	maxAPIRequestsPerMin := defaults.MaxAPIRequestsPerMin
+	maxAPIRequestsPerMin := workerCfg.MaxAPIRequestsPerMin
 	if maxAPIRequestsPerMin <= 0 {
 		maxAPIRequestsPerMin = 60
 	}
 
-	maxBackoffInterval := defaults.MaxBackoffInterval
-	if maxBackoffInterval <= 0 {
-		maxBackoffInterval = 30 * time.Second
-	}
-
-	initialBackoffInterval := defaults.InitialBackoffInterval
-	if initialBackoffInterval <= 0 {
-		initialBackoffInterval = 1 * time.Second
-	}
-
-	downloadTimeout := defaults.DownloadTimeout
+	downloadTimeout := workerCfg.DownloadTimeout
 	if downloadTimeout <= 0 {
-		downloadTimeout = 30 * time.Minute
+		downloadTimeout = 1800 // 30 minutes
 	}
 
-	uploadTimeout := defaults.UploadTimeout
+	uploadTimeout := workerCfg.UploadTimeout
 	if uploadTimeout <= 0 {
-		uploadTimeout = 30 * time.Minute
+		uploadTimeout = 1800 // 30 minutes
 	}
 
-	maxCacheSize := defaults.MaxCacheSize
+	maxCacheSize := workerCfg.MaxCacheSize
 	if maxCacheSize <= 0 {
 		maxCacheSize = 10 * 1024 * 1024 * 1024 // 10GB
 	}
 
-	cacheCleanupAge := defaults.CacheCleanupAge
+	cacheCleanupAge := workerCfg.CacheCleanupAge
 	if cacheCleanupAge <= 0 {
-		cacheCleanupAge = 24 * time.Hour
+		cacheCleanupAge = 86400 // 24 hours
 	}
 
-	ffmpegTimeout := defaults.FFmpegTimeout
+	ffmpegTimeout := workerCfg.FFmpegTimeout
 	if ffmpegTimeout <= 0 {
-		ffmpegTimeout = 2 * time.Hour
+		ffmpegTimeout = 7200 // 2 hours
 	}
 
-	logLevel := defaults.LogLevel
+	logLevel := workerCfg.LogLevel
 	if logLevel == "" {
 		logLevel = "info"
 	}
 
-	logFormat := defaults.LogFormat
+	logFormat := workerCfg.LogFormat
 	if logFormat == "" {
 		logFormat = "json"
 	}
 
-	conversionSettings := s.configMgr.GetConversionSettings()
-
 	return &models.RemoteWorkerConfig{
 		Concurrency:            concurrency,
-		HeartbeatInterval:      int64(heartbeatInterval.Seconds()),
-		JobCheckInterval:       int64(jobCheckInterval.Seconds()),
-		JobTimeout:             int64(jobTimeout.Seconds()),
+		HeartbeatInterval:      int64(heartbeatInterval),
+		JobCheckInterval:       int64(jobCheckInterval),
+		JobTimeout:             int64(jobTimeout),
 		MaxAPIRequestsPerMin:   maxAPIRequestsPerMin,
-		MaxBackoffInterval:     int64(maxBackoffInterval.Seconds()),
-		InitialBackoffInterval: int64(initialBackoffInterval.Seconds()),
-		DownloadTimeout:        int64(downloadTimeout.Seconds()),
-		UploadTimeout:          int64(uploadTimeout.Seconds()),
+		MaxBackoffInterval:     30,  // Fixed default
+		InitialBackoffInterval: 1,   // Fixed default
+		DownloadTimeout:        int64(downloadTimeout),
+		UploadTimeout:          int64(uploadTimeout),
 		MaxCacheSize:           maxCacheSize,
-		CacheCleanupAge:        int64(cacheCleanupAge.Seconds()),
-		BandwidthLimit:         defaults.BandwidthLimit,
-		EnableResumeDownload:   defaults.EnableResumeDownload,
-		UseVulkan:              defaults.UseVulkan,
-		FFmpegTimeout:          int64(ffmpegTimeout.Seconds()),
+		CacheCleanupAge:        int64(cacheCleanupAge),
+		BandwidthLimit:         workerCfg.BandwidthLimit,
+		EnableResumeDownload:   workerCfg.EnableResumeDownload,
+		UseVulkan:              workerCfg.UseVulkan,
+		FFmpegTimeout:          int64(ffmpegTimeout),
 		Conversion:             *conversionSettings,
 		LogLevel:               logLevel,
 		LogFormat:              logFormat,

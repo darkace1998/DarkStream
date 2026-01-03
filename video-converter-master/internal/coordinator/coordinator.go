@@ -57,7 +57,30 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	// Initialize configuration manager
 	// Config file will be stored next to the database file
 	configPath := filepath.Join(filepath.Dir(cfg.Database.Path), "active-config.json")
-	configMgr, err := config.NewManager(configPath, &cfg.Conversion)
+	
+	// Convert YAML worker defaults to config.WorkerConfig format
+	var workerDefaults *config.WorkerConfig
+	if cfg.WorkerDefaults.Concurrency > 0 || cfg.WorkerDefaults.HeartbeatInterval > 0 {
+		workerDefaults = &config.WorkerConfig{
+			Concurrency:          cfg.WorkerDefaults.Concurrency,
+			HeartbeatInterval:    int(cfg.WorkerDefaults.HeartbeatInterval.Seconds()),
+			JobCheckInterval:     int(cfg.WorkerDefaults.JobCheckInterval.Seconds()),
+			JobTimeout:           int(cfg.WorkerDefaults.JobTimeout.Seconds()),
+			MaxAPIRequestsPerMin: cfg.WorkerDefaults.MaxAPIRequestsPerMin,
+			DownloadTimeout:      int(cfg.WorkerDefaults.DownloadTimeout.Seconds()),
+			UploadTimeout:        int(cfg.WorkerDefaults.UploadTimeout.Seconds()),
+			MaxCacheSize:         cfg.WorkerDefaults.MaxCacheSize,
+			CacheCleanupAge:      int(cfg.WorkerDefaults.CacheCleanupAge.Seconds()),
+			BandwidthLimit:       cfg.WorkerDefaults.BandwidthLimit,
+			EnableResumeDownload: cfg.WorkerDefaults.EnableResumeDownload,
+			UseVulkan:            cfg.WorkerDefaults.UseVulkan,
+			FFmpegTimeout:        int(cfg.WorkerDefaults.FFmpegTimeout.Seconds()),
+			LogLevel:             cfg.WorkerDefaults.LogLevel,
+			LogFormat:            cfg.WorkerDefaults.LogFormat,
+		}
+	}
+	
+	configMgr, err := config.NewManager(configPath, &cfg.Conversion, workerDefaults)
 	if err != nil {
 		_ = tracker.Close()
 		return nil, fmt.Errorf("failed to create config manager: %w", err)

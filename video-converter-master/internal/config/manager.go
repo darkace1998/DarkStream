@@ -17,6 +17,7 @@ type ActiveConfig struct {
 	Video     VideoConfig  `json:"video"`
 	Audio     AudioConfig  `json:"audio"`
 	Output    OutputConfig `json:"output"`
+	Worker    WorkerConfig `json:"worker"`
 	UpdatedAt time.Time    `json:"updated_at"`
 	Version   int          `json:"version"`
 }
@@ -40,6 +41,25 @@ type OutputConfig struct {
 	Format string `json:"format"`
 }
 
+// WorkerConfig holds worker-related settings
+type WorkerConfig struct {
+	Concurrency          int    `json:"concurrency"`
+	HeartbeatInterval    int    `json:"heartbeat_interval"`    // seconds
+	JobCheckInterval     int    `json:"job_check_interval"`    // seconds
+	JobTimeout           int    `json:"job_timeout"`           // seconds
+	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
+	DownloadTimeout      int    `json:"download_timeout"`      // seconds
+	UploadTimeout        int    `json:"upload_timeout"`        // seconds
+	MaxCacheSize         int64  `json:"max_cache_size"`        // bytes
+	CacheCleanupAge      int    `json:"cache_cleanup_age"`     // seconds
+	BandwidthLimit       int64  `json:"bandwidth_limit"`       // bytes per second
+	EnableResumeDownload bool   `json:"enable_resume_download"`
+	UseVulkan            bool   `json:"use_vulkan"`
+	FFmpegTimeout        int    `json:"ffmpeg_timeout"`        // seconds
+	LogLevel             string `json:"log_level"`
+	LogFormat            string `json:"log_format"`
+}
+
 // Manager handles configuration state with thread-safe access
 type Manager struct {
 	mu       sync.RWMutex
@@ -49,7 +69,7 @@ type Manager struct {
 
 // NewManager creates a new configuration manager
 // It loads existing config from JSON file or falls back to YAML defaults
-func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Manager, error) {
+func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings, workerDefaults *WorkerConfig) (*Manager, error) {
 	m := &Manager{
 		filePath: jsonPath,
 	}
@@ -67,6 +87,12 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 		}
 	}
 
+	// Get worker defaults (use defaults if not provided)
+	worker := getDefaultWorkerConfig()
+	if workerDefaults != nil {
+		worker = *workerDefaults
+	}
+
 	// Fall back to YAML defaults
 	m.config = &ActiveConfig{
 		Video: VideoConfig{
@@ -82,6 +108,7 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 		Output: OutputConfig{
 			Format: getDefaultFormat(yamlDefaults.OutputFormat),
 		},
+		Worker:    worker,
 		UpdatedAt: time.Now(),
 		Version:   1,
 	}
@@ -93,6 +120,27 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings) (*Mana
 	}
 
 	return m, nil
+}
+
+// getDefaultWorkerConfig returns sensible default worker configuration
+func getDefaultWorkerConfig() WorkerConfig {
+	return WorkerConfig{
+		Concurrency:          3,
+		HeartbeatInterval:    30,
+		JobCheckInterval:     5,
+		JobTimeout:           7200,  // 2 hours
+		MaxAPIRequestsPerMin: 60,
+		DownloadTimeout:      1800,  // 30 minutes
+		UploadTimeout:        1800,  // 30 minutes
+		MaxCacheSize:         10737418240, // 10GB
+		CacheCleanupAge:      86400, // 24 hours
+		BandwidthLimit:       0,     // unlimited
+		EnableResumeDownload: true,
+		UseVulkan:            true,
+		FFmpegTimeout:        7200,  // 2 hours
+		LogLevel:             "info",
+		LogFormat:            "json",
+	}
 }
 
 // getDefaultFormat returns a default format if none specified
@@ -127,6 +175,15 @@ func (m *Manager) GetConversionSettings() *models.ConversionSettings {
 		AudioBitrate:     m.config.Audio.Bitrate,
 		OutputFormat:     m.config.Output.Format,
 	}
+}
+
+// GetWorkerConfig returns a copy of the worker configuration
+func (m *Manager) GetWorkerConfig() *WorkerConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cfg := m.config.Worker
+	return &cfg
 }
 
 // Update updates the configuration with validation
@@ -284,6 +341,50 @@ func validateConfig(cfg *ActiveConfig) error {
 		errors = append(errors, ValidationError{
 			Field:   "output.format",
 			Message: "must be one of: mp4, mkv, webm, avi",
+		})
+	}
+
+	// Validate worker settings
+	if cfg.Worker.Concurrency < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "worker.concurrency",
+			Message: "must be a non-negative integer",
+		})
+	}
+	if cfg.Worker.HeartbeatInterval < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "worker.heartbeat_interval",
+			Message: "must be a non-negative integer",
+		})
+	}
+	if cfg.Worker.JobCheckInterval < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "worker.job_check_interval",
+			Message: "must be a non-negative integer",
+		})
+	}
+	if cfg.Worker.JobTimeout < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "worker.job_timeout",
+			Message: "must be a non-negative integer",
+		})
+	}
+	validLogLevels := map[string]bool{
+		"debug": true, "info": true, "warn": true, "error": true,
+	}
+	if cfg.Worker.LogLevel != "" && !validLogLevels[cfg.Worker.LogLevel] {
+		errors = append(errors, ValidationError{
+			Field:   "worker.log_level",
+			Message: "must be one of: debug, info, warn, error",
+		})
+	}
+	validLogFormats := map[string]bool{
+		"json": true, "text": true,
+	}
+	if cfg.Worker.LogFormat != "" && !validLogFormats[cfg.Worker.LogFormat] {
+		errors = append(errors, ValidationError{
+			Field:   "worker.log_format",
+			Message: "must be one of: json, text",
 		})
 	}
 
