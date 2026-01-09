@@ -194,6 +194,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
 	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.GetWorkerConfig))) // No auth - workers need this before they have API key
+	mux.HandleFunc("/api/worker/settings", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleWorkerSettings))) // Per-worker settings management
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 
@@ -1970,14 +1971,26 @@ func (s *Server) updateQueueDepthMetric() {
 // GetWorkerConfig returns the worker configuration from the master.
 // This endpoint allows workers to be started with just a -url flag and fetch
 // all their configuration from the master, similar to FileFlows architecture.
+// If worker_id query parameter is provided, returns worker-specific config if available.
 func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Use the shared helper to build worker config with defaults
-	response := s.buildRemoteWorkerConfig()
+	// Check if worker_id is provided for per-worker config
+	workerID := r.URL.Query().Get("worker_id")
+
+	var response *models.RemoteWorkerConfig
+	if workerID != "" {
+		// Get worker-specific config (or defaults if no custom config)
+		response = s.buildRemoteWorkerConfigForWorker(workerID)
+		slog.Debug("Worker-specific configuration requested", "worker_id", workerID)
+	} else {
+		// Use global defaults
+		response = s.buildRemoteWorkerConfig()
+		slog.Debug("Global worker configuration requested")
+	}
 
 	// Add API key to the response (not included in webui display version)
 	response.APIKey = s.apiKey
@@ -1988,8 +2001,6 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to encode worker config", "error", err)
 		return
 	}
-
-	slog.Debug("Worker configuration requested")
 }
 
 // buildRemoteWorkerConfig constructs the RemoteWorkerConfig from the config manager.
@@ -2079,4 +2090,159 @@ func (s *Server) buildRemoteWorkerConfig() *models.RemoteWorkerConfig {
 		LogLevel:               logLevel,
 		LogFormat:              logFormat,
 	}
+}
+
+// buildRemoteWorkerConfigForWorker constructs RemoteWorkerConfig for a specific worker.
+// If the worker has custom settings, those are used; otherwise global defaults apply.
+func (s *Server) buildRemoteWorkerConfigForWorker(workerID string) *models.RemoteWorkerConfig {
+	conversionSettings := s.configMgr.GetConversionSettings()
+
+	// Check if worker has custom settings
+	workerSettings, err := s.db.GetWorkerConfig(workerID)
+	if err == nil && workerSettings != nil {
+		// Use worker-specific settings
+		return &models.RemoteWorkerConfig{
+			Concurrency:            workerSettings.Concurrency,
+			HeartbeatInterval:      int64(workerSettings.HeartbeatInterval),
+			JobCheckInterval:       int64(workerSettings.JobCheckInterval),
+			JobTimeout:             int64(workerSettings.JobTimeout),
+			MaxAPIRequestsPerMin:   workerSettings.MaxAPIRequestsPerMin,
+			MaxBackoffInterval:     30,  // Fixed default
+			InitialBackoffInterval: 1,   // Fixed default
+			DownloadTimeout:        int64(workerSettings.DownloadTimeout),
+			UploadTimeout:          int64(workerSettings.UploadTimeout),
+			MaxCacheSize:           workerSettings.MaxCacheSize,
+			CacheCleanupAge:        int64(workerSettings.CacheCleanupAge),
+			BandwidthLimit:         workerSettings.BandwidthLimit,
+			EnableResumeDownload:   workerSettings.EnableResumeDownload,
+			UseVulkan:              workerSettings.UseVulkan,
+			FFmpegTimeout:          int64(workerSettings.FFmpegTimeout),
+			Conversion:             *conversionSettings,
+			LogLevel:               workerSettings.LogLevel,
+			LogFormat:              workerSettings.LogFormat,
+		}
+	}
+
+	// Fall back to global defaults
+	return s.buildRemoteWorkerConfig()
+}
+
+// HandleWorkerSettings handles GET/POST for per-worker settings
+func (s *Server) HandleWorkerSettings(w http.ResponseWriter, r *http.Request) {
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id is required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.getWorkerSettings(w, workerID)
+	case http.MethodPost:
+		s.saveWorkerSettings(w, r, workerID)
+	case http.MethodDelete:
+		s.deleteWorkerSettings(w, workerID)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// getWorkerSettings retrieves settings for a specific worker
+func (s *Server) getWorkerSettings(w http.ResponseWriter, workerID string) {
+	settings, err := s.db.GetWorkerConfig(workerID)
+	if err != nil {
+		// No custom settings - return defaults
+		globalCfg := s.configMgr.GetWorkerConfig()
+		settings = &models.WorkerSettings{
+			WorkerID:             workerID,
+			Concurrency:          globalCfg.Concurrency,
+			HeartbeatInterval:    globalCfg.HeartbeatInterval,
+			JobCheckInterval:     globalCfg.JobCheckInterval,
+			JobTimeout:           globalCfg.JobTimeout,
+			MaxAPIRequestsPerMin: globalCfg.MaxAPIRequestsPerMin,
+			DownloadTimeout:      globalCfg.DownloadTimeout,
+			UploadTimeout:        globalCfg.UploadTimeout,
+			MaxCacheSize:         globalCfg.MaxCacheSize,
+			CacheCleanupAge:      globalCfg.CacheCleanupAge,
+			BandwidthLimit:       globalCfg.BandwidthLimit,
+			EnableResumeDownload: globalCfg.EnableResumeDownload,
+			UseVulkan:            globalCfg.UseVulkan,
+			FFmpegTimeout:        globalCfg.FFmpegTimeout,
+			LogLevel:             globalCfg.LogLevel,
+			LogFormat:            globalCfg.LogFormat,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(settings)
+	if err != nil {
+		slog.Error("Failed to encode worker settings", "error", err)
+	}
+}
+
+// saveWorkerSettings saves settings for a specific worker
+func (s *Server) saveWorkerSettings(w http.ResponseWriter, r *http.Request, workerID string) {
+	var settings models.WorkerSettings
+	err := json.NewDecoder(r.Body).Decode(&settings)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure the worker ID matches
+	settings.WorkerID = workerID
+
+	// Validate settings
+	if settings.Concurrency < 1 {
+		http.Error(w, "Concurrency must be at least 1", http.StatusBadRequest)
+		return
+	}
+	if settings.HeartbeatInterval < 1 {
+		http.Error(w, "Heartbeat interval must be at least 1 second", http.StatusBadRequest)
+		return
+	}
+	if settings.JobCheckInterval < 1 {
+		http.Error(w, "Job check interval must be at least 1 second", http.StatusBadRequest)
+		return
+	}
+	if settings.JobTimeout < 60 {
+		http.Error(w, "Job timeout must be at least 60 seconds", http.StatusBadRequest)
+		return
+	}
+	if settings.DownloadTimeout < 60 {
+		http.Error(w, "Download timeout must be at least 60 seconds", http.StatusBadRequest)
+		return
+	}
+	if settings.UploadTimeout < 60 {
+		http.Error(w, "Upload timeout must be at least 60 seconds", http.StatusBadRequest)
+		return
+	}
+
+	err = s.db.SaveWorkerConfig(&settings)
+	if err != nil {
+		slog.Error("Failed to save worker settings", "error", err, "worker_id", workerID)
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Worker settings saved", "worker_id", workerID)
+
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(settings)
+	if err != nil {
+		slog.Error("Failed to encode worker settings", "error", err)
+	}
+}
+
+// deleteWorkerSettings removes custom settings for a worker (revert to defaults)
+func (s *Server) deleteWorkerSettings(w http.ResponseWriter, workerID string) {
+	err := s.db.DeleteWorkerConfig(workerID)
+	if err != nil {
+		slog.Error("Failed to delete worker settings", "error", err, "worker_id", workerID)
+		http.Error(w, "Failed to delete settings", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Worker settings deleted, will use defaults", "worker_id", workerID)
+	w.WriteHeader(http.StatusNoContent)
 }

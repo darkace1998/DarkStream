@@ -894,6 +894,84 @@ func (t *Tracker) DeleteJobProgress(jobID string) error {
 	return nil
 }
 
+// GetWorkerConfig retrieves the configuration for a specific worker
+func (t *Tracker) GetWorkerConfig(workerID string) (*models.WorkerSettings, error) {
+	var config models.WorkerSettings
+	err := t.db.QueryRow(`
+		SELECT worker_id, concurrency, heartbeat_interval, job_check_interval,
+			job_timeout, max_api_requests_per_min, download_timeout, upload_timeout,
+			max_cache_size, cache_cleanup_age, bandwidth_limit, enable_resume_download,
+			use_vulkan, ffmpeg_timeout, log_level, log_format
+		FROM worker_configs WHERE worker_id = ?
+	`, workerID).Scan(
+		&config.WorkerID, &config.Concurrency, &config.HeartbeatInterval,
+		&config.JobCheckInterval, &config.JobTimeout, &config.MaxAPIRequestsPerMin,
+		&config.DownloadTimeout, &config.UploadTimeout, &config.MaxCacheSize,
+		&config.CacheCleanupAge, &config.BandwidthLimit, &config.EnableResumeDownload,
+		&config.UseVulkan, &config.FFmpegTimeout, &config.LogLevel, &config.LogFormat,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get worker config: %w", err)
+	}
+	return &config, nil
+}
+
+// SaveWorkerConfig saves or updates the configuration for a specific worker
+func (t *Tracker) SaveWorkerConfig(config *models.WorkerSettings) error {
+	_, err := t.db.Exec(`
+		INSERT INTO worker_configs (
+			worker_id, concurrency, heartbeat_interval, job_check_interval,
+			job_timeout, max_api_requests_per_min, download_timeout, upload_timeout,
+			max_cache_size, cache_cleanup_age, bandwidth_limit, enable_resume_download,
+			use_vulkan, ffmpeg_timeout, log_level, log_format, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(worker_id) DO UPDATE SET
+			concurrency = excluded.concurrency,
+			heartbeat_interval = excluded.heartbeat_interval,
+			job_check_interval = excluded.job_check_interval,
+			job_timeout = excluded.job_timeout,
+			max_api_requests_per_min = excluded.max_api_requests_per_min,
+			download_timeout = excluded.download_timeout,
+			upload_timeout = excluded.upload_timeout,
+			max_cache_size = excluded.max_cache_size,
+			cache_cleanup_age = excluded.cache_cleanup_age,
+			bandwidth_limit = excluded.bandwidth_limit,
+			enable_resume_download = excluded.enable_resume_download,
+			use_vulkan = excluded.use_vulkan,
+			ffmpeg_timeout = excluded.ffmpeg_timeout,
+			log_level = excluded.log_level,
+			log_format = excluded.log_format,
+			updated_at = datetime('now')
+	`, config.WorkerID, config.Concurrency, config.HeartbeatInterval,
+		config.JobCheckInterval, config.JobTimeout, config.MaxAPIRequestsPerMin,
+		config.DownloadTimeout, config.UploadTimeout, config.MaxCacheSize,
+		config.CacheCleanupAge, config.BandwidthLimit, config.EnableResumeDownload,
+		config.UseVulkan, config.FFmpegTimeout, config.LogLevel, config.LogFormat)
+	if err != nil {
+		return fmt.Errorf("failed to save worker config: %w", err)
+	}
+	return nil
+}
+
+// DeleteWorkerConfig removes the configuration for a specific worker
+func (t *Tracker) DeleteWorkerConfig(workerID string) error {
+	_, err := t.db.Exec(`DELETE FROM worker_configs WHERE worker_id = ?`, workerID)
+	if err != nil {
+		return fmt.Errorf("failed to delete worker config: %w", err)
+	}
+	return nil
+}
+
+// HasWorkerConfig checks if a worker has a custom configuration
+func (t *Tracker) HasWorkerConfig(workerID string) (bool, error) {
+	var count int
+	err := t.db.QueryRow(`SELECT COUNT(*) FROM worker_configs WHERE worker_id = ?`, workerID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check worker config: %w", err)
+	}
+	return count > 0, nil
+}
+
 // initSchema initializes the database schema
 func (t *Tracker) initSchema() error {
 	schema := `
@@ -936,6 +1014,26 @@ func (t *Tracker) initSchema() error {
 		stage TEXT DEFAULT 'pending',
 		updated_at TIMESTAMP NOT NULL,
 		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS worker_configs (
+		worker_id TEXT PRIMARY KEY,
+		concurrency INTEGER DEFAULT 3,
+		heartbeat_interval INTEGER DEFAULT 30,
+		job_check_interval INTEGER DEFAULT 5,
+		job_timeout INTEGER DEFAULT 7200,
+		max_api_requests_per_min INTEGER DEFAULT 60,
+		download_timeout INTEGER DEFAULT 1800,
+		upload_timeout INTEGER DEFAULT 1800,
+		max_cache_size INTEGER DEFAULT 10737418240,
+		cache_cleanup_age INTEGER DEFAULT 86400,
+		bandwidth_limit INTEGER DEFAULT 0,
+		enable_resume_download BOOLEAN DEFAULT 1,
+		use_vulkan BOOLEAN DEFAULT 1,
+		ffmpeg_timeout INTEGER DEFAULT 7200,
+		log_level TEXT DEFAULT 'info',
+		log_format TEXT DEFAULT 'json',
+		updated_at TIMESTAMP
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

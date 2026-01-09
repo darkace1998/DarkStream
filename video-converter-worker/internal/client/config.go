@@ -243,9 +243,13 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 // FetchRemoteWorkerConfig fetches the complete worker configuration from the master.
 // This is used when a worker starts with just a -url flag and needs to get all
 // configuration from the master (FileFlows-style architecture).
-func FetchRemoteWorkerConfig(masterURL string) (*models.RemoteWorkerConfig, error) {
+// If workerID is provided, fetches worker-specific config if available.
+func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteWorkerConfig, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	url := fmt.Sprintf("%s/api/worker/config", masterURL)
+	if workerID != "" {
+		url = fmt.Sprintf("%s?worker_id=%s", url, workerID)
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < DefaultMaxRetries; attempt++ {
@@ -286,6 +290,7 @@ func FetchRemoteWorkerConfig(masterURL string) (*models.RemoteWorkerConfig, erro
 		}
 
 		slog.Info("Worker configuration fetched from master",
+			"worker_id", workerID,
 			"concurrency", cfg.Concurrency,
 			"use_vulkan", cfg.UseVulkan,
 			"log_level", cfg.LogLevel,
