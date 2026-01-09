@@ -70,13 +70,7 @@ func main() {
 // loadConfigFromMaster fetches the worker configuration from the master server
 // and builds a complete WorkerConfig with local defaults for paths
 func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, error) {
-	// Fetch remote configuration from master
-	remoteCfg, err := client.FetchRemoteWorkerConfig(masterURL)
-	if err != nil {
-		return nil, err
-	}
-
-	// Generate worker ID if not provided
+	// Generate worker ID if not provided (need this before fetching config for per-worker settings)
 	if workerID == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
@@ -87,6 +81,12 @@ func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, err
 			hostname = "worker"
 		}
 		workerID = hostname + "-" + uuid.New().String()[:8]
+	}
+
+	// Fetch remote configuration from master (with worker ID for per-worker settings)
+	remoteCfg, err := client.FetchRemoteWorkerConfig(masterURL, workerID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build complete WorkerConfig from remote config and local defaults

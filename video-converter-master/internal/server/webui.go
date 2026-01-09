@@ -243,7 +243,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 <div style="background: #0f0f23; padding: 15px; border-radius: 4px; font-family: monospace; color: #00d9ff; margin-bottom: 20px;">
                     worker -url {{.MasterURL}}
                 </div>
-                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive all configuration settings from this master. Configure worker settings in the Configuration tab.</p>
+                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive their configuration from the master. Use the "Configure" button to set per-worker settings.</p>
             </div>
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
@@ -257,6 +257,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Active Jobs</th>
                             <th>Status</th>
                             <th>Last Seen</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -268,6 +269,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td>{{.ActiveJobs}}</td>
                             <td><span class="badge {{if .IsOnline}}badge-online{{else}}badge-offline{{end}}">{{if .IsOnline}}Online{{else}}Offline{{end}}</span></td>
                             <td>{{.LastHeartbeat.Format "15:04:05"}}</td>
+                            <td><button class="btn btn-primary btn-sm" onclick="openWorkerSettings('{{.WorkerID}}')">⚙️ Configure</button></td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -275,6 +277,76 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 {{else}}
                 <div class="no-data">No workers connected</div>
                 {{end}}
+            </div>
+        </div>
+
+        <!-- Worker Settings Modal -->
+        <div id="workerModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #16213e; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                <h2 style="margin-bottom: 20px;">⚙️ Worker Settings: <span id="modalWorkerId" style="color: #00d9ff;"></span></h2>
+                <form id="workerSettingsForm">
+                    <input type="hidden" id="wsWorkerId" />
+                    <div class="grid">
+                        <div>
+                            <div class="form-group">
+                                <label for="wsConcurrency">Concurrency</label>
+                                <input type="number" id="wsConcurrency" min="1" max="16" value="3" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsHeartbeat">Heartbeat Interval (s)</label>
+                                <input type="number" id="wsHeartbeat" min="5" max="300" value="30" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsJobCheck">Job Check Interval (s)</label>
+                                <input type="number" id="wsJobCheck" min="1" max="60" value="5" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsJobTimeout">Job Timeout (s)</label>
+                                <input type="number" id="wsJobTimeout" min="60" max="86400" value="7200" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsUseVulkan">Use Vulkan GPU</label>
+                                <select id="wsUseVulkan">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="form-group">
+                                <label for="wsDownloadTimeout">Download Timeout (s)</label>
+                                <input type="number" id="wsDownloadTimeout" min="60" max="86400" value="1800" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsUploadTimeout">Upload Timeout (s)</label>
+                                <input type="number" id="wsUploadTimeout" min="60" max="86400" value="1800" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsMaxCacheSize">Max Cache Size (bytes)</label>
+                                <input type="number" id="wsMaxCacheSize" min="0" value="10737418240" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsLogLevel">Log Level</label>
+                                <select id="wsLogLevel">
+                                    <option value="debug">Debug</option>
+                                    <option value="info" selected>Info</option>
+                                    <option value="warn">Warn</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="wsBandwidthLimit">Bandwidth Limit (bytes/s)</label>
+                                <input type="number" id="wsBandwidthLimit" min="0" value="0" />
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+                        <button type="button" class="btn btn-danger" onclick="resetWorkerSettings()">🔄 Reset to Defaults</button>
+                        <button type="button" class="btn" style="background: #555;" onclick="closeWorkerModal()">Cancel</button>
+                    </div>
+                </form>
+                <div id="workerModalStatus" class="status" style="display: none; margin-top: 15px;"></div>
             </div>
         </div>
 
@@ -575,6 +647,104 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
         }
         setInterval(updateStats, 5000);
+
+        // Worker settings modal functions
+        async function openWorkerSettings(workerId) {
+            document.getElementById('modalWorkerId').textContent = workerId;
+            document.getElementById('wsWorkerId').value = workerId;
+            document.getElementById('workerModal').style.display = 'block';
+            
+            try {
+                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId));
+                if (resp.ok) {
+                    const settings = await resp.json();
+                    document.getElementById('wsConcurrency').value = settings.concurrency || 3;
+                    document.getElementById('wsHeartbeat').value = settings.heartbeat_interval || 30;
+                    document.getElementById('wsJobCheck').value = settings.job_check_interval || 5;
+                    document.getElementById('wsJobTimeout').value = settings.job_timeout || 7200;
+                    document.getElementById('wsUseVulkan').value = settings.use_vulkan ? 'true' : 'false';
+                    document.getElementById('wsDownloadTimeout').value = settings.download_timeout || 1800;
+                    document.getElementById('wsUploadTimeout').value = settings.upload_timeout || 1800;
+                    document.getElementById('wsMaxCacheSize').value = settings.max_cache_size || 10737418240;
+                    document.getElementById('wsLogLevel').value = settings.log_level || 'info';
+                    document.getElementById('wsBandwidthLimit').value = settings.bandwidth_limit || 0;
+                }
+            } catch (err) {
+                console.error('Failed to load worker settings:', err);
+            }
+        }
+
+        function closeWorkerModal() {
+            document.getElementById('workerModal').style.display = 'none';
+        }
+
+        document.getElementById('workerSettingsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const workerId = document.getElementById('wsWorkerId').value;
+            const status = document.getElementById('workerModalStatus');
+            
+            const settings = {
+                worker_id: workerId,
+                concurrency: parseInt(document.getElementById('wsConcurrency').value) || 3,
+                heartbeat_interval: parseInt(document.getElementById('wsHeartbeat').value) || 30,
+                job_check_interval: parseInt(document.getElementById('wsJobCheck').value) || 5,
+                job_timeout: parseInt(document.getElementById('wsJobTimeout').value) || 7200,
+                max_api_requests_per_min: 60,
+                download_timeout: parseInt(document.getElementById('wsDownloadTimeout').value) || 1800,
+                upload_timeout: parseInt(document.getElementById('wsUploadTimeout').value) || 1800,
+                max_cache_size: parseInt(document.getElementById('wsMaxCacheSize').value) || 10737418240,
+                cache_cleanup_age: 86400,
+                bandwidth_limit: parseInt(document.getElementById('wsBandwidthLimit').value) || 0,
+                enable_resume_download: true,
+                use_vulkan: document.getElementById('wsUseVulkan').value === 'true',
+                ffmpeg_timeout: 7200,
+                log_level: document.getElementById('wsLogLevel').value,
+                log_format: 'json'
+            };
+            
+            try {
+                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                if (resp.ok) {
+                    status.className = 'status status-success';
+                    status.textContent = 'Worker settings saved! The worker will use these settings on next config refresh.';
+                    status.style.display = 'block';
+                    setTimeout(function() { closeWorkerModal(); }, 2000);
+                } else {
+                    const data = await resp.json();
+                    status.className = 'status status-error';
+                    status.textContent = 'Error: ' + (data.error || 'Failed to save settings');
+                    status.style.display = 'block';
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+                status.style.display = 'block';
+            }
+        });
+
+        async function resetWorkerSettings() {
+            const workerId = document.getElementById('wsWorkerId').value;
+            if (!confirm('Reset settings for ' + workerId + ' to defaults?')) return;
+            
+            try {
+                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                    method: 'DELETE'
+                });
+                if (resp.ok) {
+                    const status = document.getElementById('workerModalStatus');
+                    status.className = 'status status-success';
+                    status.textContent = 'Worker settings reset to defaults!';
+                    status.style.display = 'block';
+                    setTimeout(function() { closeWorkerModal(); }, 2000);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
     </script>
 </body>
 </html>
