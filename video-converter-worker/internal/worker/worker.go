@@ -592,8 +592,8 @@ func (w *Worker) sendHeartbeats() {
 				Status:          constants.WorkerStatusOnline,
 				Timestamp:       time.Now(),
 				GPU:             gpuName,
-				CPUUsage:        0.0, // TODO: Get actual CPU usage
-				MemoryUsage:     0.0, // TODO: Get actual memory usage
+				CPUUsage:        getSystemCPUUsage(),
+				MemoryUsage:     getSystemMemoryUsage(),
 			}
 
 			w.masterClient.SendHeartbeat(hb)
