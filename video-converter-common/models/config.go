@@ -24,9 +24,11 @@ type ConversionSettings struct {
 // MasterConfig holds the configuration for the master coordinator service.
 type MasterConfig struct {
 	Server struct {
-		Port   int    `yaml:"port"`
-		Host   string `yaml:"host"`
-		APIKey string `yaml:"api_key"` // API key for worker authentication
+		Port    int    `yaml:"port"`
+		Host    string `yaml:"host"`
+		APIKey  string `yaml:"api_key"`  // API key for worker authentication
+		TLSCert string `yaml:"tls_cert"` // Path to TLS certificate file (enables HTTPS when set)
+		TLSKey  string `yaml:"tls_key"`  // Path to TLS private key file
 	} `yaml:"server"`
 
 	Scanner struct {

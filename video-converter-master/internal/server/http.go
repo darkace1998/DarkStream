@@ -219,6 +219,17 @@ func (s *Server) Start() error {
 	}
 
 	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics", "health_endpoints", "/healthz, /readyz, /api/health")
+
+	// Use TLS if certificate and key are configured
+	if s.masterCfg.Server.TLSCert != "" && s.masterCfg.Server.TLSKey != "" {
+		slog.Info("TLS enabled", "cert", s.masterCfg.Server.TLSCert, "key", s.masterCfg.Server.TLSKey)
+		err := s.server.ListenAndServeTLS(s.masterCfg.Server.TLSCert, s.masterCfg.Server.TLSKey)
+		if err != nil {
+			return fmt.Errorf("failed to start TLS server: %w", err)
+		}
+		return nil
+	}
+
 	err := s.server.ListenAndServe()
 	if err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
@@ -683,9 +694,28 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get worker metrics for stats
+	workers, workerErr := s.db.GetWorkers()
+	workerMetrics := make([]map[string]any, 0)
+	if workerErr == nil {
+		for _, wk := range workers {
+			workerMetrics = append(workerMetrics, map[string]any{
+				"worker_id":   wk.WorkerID,
+				"hostname":    wk.Hostname,
+				"cpu_usage":   wk.CPUUsage,
+				"memory_usage": wk.MemoryUsage,
+				"active_jobs": wk.ActiveJobs,
+				"gpu":         wk.GPU,
+				"status":      wk.Status,
+				"last_seen":   wk.Timestamp,
+			})
+		}
+	}
+
 	response := map[string]any{
 		"timestamp": time.Now(),
 		"jobs":      stats,
+		"workers":   workerMetrics,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
