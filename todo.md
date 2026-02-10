@@ -3,19 +3,21 @@
 ## High Priority
 
 ### Security & Authentication
-- [ ] Add worker authentication (e.g. token-based auth) — currently workers connect without any authentication; only IP-based rate limiting is in place
-- [ ] Implement HTTPS/TLS support for master–worker communication to protect video data and credentials in transit
-- [ ] Add checksum verification on file transfers — SHA256 fields exist in the `Job` struct but are never validated after download/upload
+- [x] Add worker authentication (e.g. token-based auth) — Bearer token auth via `api_key` in master/worker configs with `authMiddleware` on all worker API endpoints
+- [x] Implement HTTPS/TLS support for master–worker communication — `tls_cert`/`tls_key` config fields added; server uses `ListenAndServeTLS` when configured
+- [x] Add checksum verification on file transfers — source SHA256 computed during scanning, verified after worker download; output SHA256 computed on upload and stored in DB
+- [ ] Strengthen authentication with per-worker tokens, token rotation, and expiration
+- [ ] Add audit logging for authentication events and sensitive API operations
 
 ### System Metrics
-- [ ] Implement real CPU/memory usage collection in worker heartbeats — currently hardcoded to `0.0` (`video-converter-worker/internal/worker/worker.go:595-596`)
-- [ ] Surface collected system metrics in the master dashboard and `/api/stats` endpoint
+- [x] Implement real CPU/memory usage collection in worker heartbeats — reads `/proc/meminfo` and `/proc/stat` on Linux, falls back to Go runtime stats
+- [x] Surface collected system metrics in the master dashboard and `/api/stats` endpoint — CPU/Memory columns in Workers table, worker metrics in stats API response
 
 ### Testing
-- [ ] Add unit tests for CLI commands (`video-converter-cli/commands/`) — no `_test.go` files exist for any command handler
-- [ ] Add unit tests for the master HTTP server and API endpoints (`video-converter-master/internal/server/`)
+- [x] Add unit tests for CLI commands (`video-converter-cli/commands/`) — validate_test.go and formatter_test.go added
+- [x] Add unit tests for the master HTTP server and API endpoints (`video-converter-master/internal/server/`) — http_test.go with health, status, stats, auth, validation tests
 - [ ] Add unit tests for the master coordinator (`video-converter-master/internal/coordinator/`)
-- [ ] Add unit tests for the master config loader (`video-converter-master/internal/config/`)
+- [x] Add unit tests for the master config loader (`video-converter-master/internal/config/`) — config_test.go and manager_test.go added
 - [ ] Increase test coverage for the worker client package (only `progress_test.go` exists in `video-converter-worker/internal/client/`)
 
 ## Medium Priority
