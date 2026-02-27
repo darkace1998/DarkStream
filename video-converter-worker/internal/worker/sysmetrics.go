@@ -51,8 +51,18 @@ func getSystemMemoryUsage() float64 {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		slog.Debug("Failed to read /proc/meminfo", "error", err)
+	}
+
 	if memTotal == 0 {
 		return getGoMemoryUsage()
+	}
+
+	if memAvailable > memTotal {
+		slog.Debug("MemAvailable > MemTotal, clamping to zero",
+			"total", memTotal, "available", memAvailable)
+		return 0.0
 	}
 
 	used := memTotal - memAvailable
@@ -72,7 +82,8 @@ func parseMemInfoValue(line string) uint64 {
 	return val
 }
 
-// getGoMemoryUsage returns Go process memory usage as a percentage of system memory obtained from OS
+// getGoMemoryUsage returns Go process memory usage as a percentage of memory obtained from the OS by the Go runtime.
+// This is not system-wide memory usage; it is used as a fallback on non-Linux platforms.
 func getGoMemoryUsage() float64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -153,6 +164,10 @@ func readCPUStats() cpuStats {
 		}
 
 		return cpuStats{total: total, idle: idle}
+	}
+
+	if err := scanner.Err(); err != nil {
+		slog.Debug("Failed to read /proc/stat", "error", err)
 	}
 
 	return cpuStats{}

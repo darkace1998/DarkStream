@@ -222,12 +222,26 @@ func (s *Server) Start() error {
 
 	// Use TLS if certificate and key are configured
 	if s.masterCfg.Server.TLSCert != "" && s.masterCfg.Server.TLSKey != "" {
+		// Validate TLS files exist and are readable before starting
+		if _, err := os.Stat(s.masterCfg.Server.TLSCert); err != nil {
+			return fmt.Errorf("TLS certificate file not accessible: %w", err)
+		}
+		if _, err := os.Stat(s.masterCfg.Server.TLSKey); err != nil {
+			return fmt.Errorf("TLS key file not accessible: %w", err)
+		}
 		slog.Info("TLS enabled", "cert", s.masterCfg.Server.TLSCert, "key", s.masterCfg.Server.TLSKey)
 		err := s.server.ListenAndServeTLS(s.masterCfg.Server.TLSCert, s.masterCfg.Server.TLSKey)
 		if err != nil {
 			return fmt.Errorf("failed to start TLS server: %w", err)
 		}
 		return nil
+	}
+
+	// Warn if TLS is partially configured
+	if (s.masterCfg.Server.TLSCert != "") != (s.masterCfg.Server.TLSKey != "") {
+		slog.Warn("TLS partially configured - both tls_cert and tls_key must be set. Falling back to HTTP",
+			"has_cert", s.masterCfg.Server.TLSCert != "",
+			"has_key", s.masterCfg.Server.TLSKey != "")
 	}
 
 	err := s.server.ListenAndServe()
