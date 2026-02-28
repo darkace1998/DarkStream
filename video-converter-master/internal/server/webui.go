@@ -255,6 +255,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Hostname</th>
                             <th>GPU</th>
                             <th>Active Jobs</th>
+                            <th>CPU</th>
+                            <th>Memory</th>
                             <th>Status</th>
                             <th>Last Seen</th>
                             <th>Actions</th>
@@ -267,6 +269,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td>{{.Hostname}}</td>
                             <td>{{.GPU}}</td>
                             <td>{{.ActiveJobs}}</td>
+                            <td>{{printf "%.1f" .CPUUsage}}%</td>
+                            <td>{{printf "%.1f" .MemoryUsage}}%</td>
                             <td><span class="badge {{if .IsOnline}}badge-online{{else}}badge-offline{{end}}">{{if .IsOnline}}Online{{else}}Offline{{end}}</span></td>
                             <td>{{.LastHeartbeat.Format "15:04:05"}}</td>
                             <td><button class="btn btn-primary btn-sm" onclick="openWorkerSettings('{{.WorkerID}}')">⚙️ Configure</button></td>
@@ -758,6 +762,8 @@ type WorkerInfo struct {
 	ActiveJobs    int
 	IsOnline      bool
 	LastHeartbeat time.Time
+	CPUUsage      float64
+	MemoryUsage   float64
 }
 
 // DashboardStats holds statistics for the dashboard
@@ -819,6 +825,8 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 			ActiveJobs:    wk.ActiveJobs,
 			IsOnline:      isOnline,
 			LastHeartbeat: wk.Timestamp,
+			CPUUsage:      wk.CPUUsage,
+			MemoryUsage:   wk.MemoryUsage,
 		})
 	}
 
