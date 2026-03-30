@@ -4,7 +4,7 @@ go 1.24
 
 require (
 	github.com/darkace1998/video-converter-common v0.1.0
-	github.com/mattn/go-sqlite3 v1.14.34
+	github.com/mattn/go-sqlite3 v1.14.38
 	github.com/prometheus/client_golang v1.23.2
 	gopkg.in/yaml.v3 v3.0.1
 )
