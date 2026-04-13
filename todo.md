@@ -1,7 +1,7 @@
 # DarkStream — TODO
 
 ## Current Status
-- [x] Recent bug fixes were applied and validated.
+- [x] Recent bug fixes (scanner EOF handling, tracker duplicate sentinel, config update race fix, FFmpeg stderr draining, Vulkan mapping, cache cleanup accounting) were applied and validated.
 - [x] All modules build and the full test suite passes as of 2026-04-13.
 
 ## High Priority

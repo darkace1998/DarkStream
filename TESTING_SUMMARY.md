@@ -211,5 +211,6 @@ The DarkStream video converter application works correctly with the provided tes
 
 ---
 
-*Testing completed on: 2025-11-08*
+*Original testing completed on: 2025-11-08*
+*Current validation updated on: 2026-04-13*
 *Tester: GitHub Copilot Agent*

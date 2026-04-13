@@ -2,6 +2,8 @@
 
 This directory contains tests to verify the distributed file transfer functionality with 1 master and 2 workers.
 
+Current status: the distributed file transfer path is validated by the current build/test pass. FFmpeg is still optional for infrastructure-only checks.
+
 ## Automated Integration Test
 
 The Go integration test automatically tests the complete workflow:

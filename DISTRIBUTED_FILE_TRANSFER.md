@@ -4,6 +4,8 @@
 
 This implementation adds explicit file transfer mechanisms to the video converter system, allowing workers to download source videos from the master and upload converted videos back. This eliminates the dependency on shared storage (NFS/SMB) and enables true distributed processing.
 
+Current status: checksum verification, transfer retries, and cache cleanup are implemented and validated. The remaining roadmap items are compression, chunked/parallel uploads, bandwidth limiting, and resume support.
+
 ## Architecture
 
 ### Workflow
@@ -163,6 +165,7 @@ curl -X POST \
 
 ### Validation
 - Job status validation before download
+- Source and output checksum verification is enforced in the current implementation
 - Worker ID validation (future enhancement)
 - File path sanitization to prevent traversal
 
@@ -173,13 +176,12 @@ curl -X POST \
 
 ## Future Enhancements
 
-1. **Checksums**: Add MD5/SHA256 validation for uploads
-2. **Compression**: Compress video during transfer
-3. **Streaming**: Implement chunked streaming for progress tracking
-4. **Authentication**: Add worker authentication tokens
-5. **Bandwidth Limiting**: Rate limiting for network transfers
-6. **Resume Support**: Resume interrupted downloads/uploads
-7. **Parallel Uploads**: Upload chunks in parallel
+1. **Compression**: Compress video during transfer
+2. **Streaming**: Implement chunked streaming for progress tracking
+3. **Authentication**: Add worker authentication tokens
+4. **Bandwidth Limiting**: Rate limiting for network transfers
+5. **Resume Support**: Resume interrupted downloads/uploads
+6. **Parallel Uploads**: Upload chunks in parallel
 
 ## Migration Guide
 

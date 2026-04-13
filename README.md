@@ -56,7 +56,7 @@ A distributed video converter system that:
 - **Fault Tolerant:** Automatic retry logic, worker heartbeats, state recovery
 - **Scalable:** Add compute servers on-demand
 - **Observable:** CLI monitoring, detailed logging, progress tracking
-- **File-Based Job Queue:** Simple, no external database needed initially
+- **SQLite-backed Job Queue:** Persistent job tracking without external services
 
 ---
 
