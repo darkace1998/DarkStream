@@ -6,6 +6,8 @@ Shared library for the distributed video converter system.
 
 This package provides common types, models, and utility functions used by both the master coordinator (`video-converter-master`) and worker processes (`video-converter-worker`).
 
+Status: aligned with the audited 2026-04-13 release; shared models and utilities support the auth/TLS hardening, reliability fixes, and observability updates, and the Go suites are green.
+
 ## Structure
 
 ```

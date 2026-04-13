@@ -2,6 +2,8 @@
 
 This guide explains how to build and run the DarkStream distributed video converter using Docker and Docker Compose.
 
+Current behavior: the master performs an initial scan on startup, and periodic rescans only run when `scanner.scan_interval` is set (set it to `0` to disable). Workers also start a loopback diagnostics server and log the exact `/healthz` and `/metrics` URLs.
+
 ## Quick Start
 
 ### Using Docker Compose (Recommended)
@@ -26,11 +28,17 @@ docker-compose down -v
 ### Verify Services Are Running
 
 ```bash
-# Check master health
+# Check master liveness
 curl http://localhost:8080/healthz
+
+# Check master readiness
+curl http://localhost:8080/readyz
 
 # Check detailed health status
 curl http://localhost:8080/api/health
+
+# View metrics
+curl http://localhost:8080/metrics
 
 # View master logs
 docker-compose logs master
@@ -41,6 +49,8 @@ docker-compose logs worker1
 # Execute CLI commands inside the container
 docker-compose exec cli ./video-converter-cli status --master-url http://master:8080
 ```
+
+Worker diagnostics bind to `127.0.0.1` on an ephemeral port; check the worker startup logs for the exact URLs.
 
 ## Building Individual Services
 
@@ -208,6 +218,8 @@ sudo systemctl restart docker
 
 Edit the YAML configuration files and mount them as volumes:
 
+The master scanner supports periodic rescans via `scanner.scan_interval`; set it to `0` to keep startup-only discovery.
+
 ```bash
 # Copy example configs to customize them
 cp video-converter-master/config.yaml.example config-master.yaml
@@ -240,7 +252,9 @@ Services communicate via the `darkstream` bridge network:
 
 ### Check service health endpoints
 ```bash
-docker-compose ps
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl http://localhost:8080/api/health
 docker-compose logs -f master
 docker-compose logs -f worker1
 ```

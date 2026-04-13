@@ -2,7 +2,7 @@
 
 ## Overview
 
-The golangci-lint configuration was updated to disable overly strict or impractical linters while maintaining code quality standards. The previous configuration produced a large number of issues, many of which were either too opinionated or not practical for this project.
+Current status: the golangci-lint configuration is tuned to the repo's current codebase, and CI keeps linting separate from security scanning. The previous configuration produced a large number of issues, many of which were either too opinionated or not practical for this project.
 
 ## Disabled Linters and Rationale
 
@@ -12,12 +12,10 @@ The golangci-lint configuration was updated to disable overly strict or impracti
 
 ### Error Handling
 - **err113** (goerr113): Disabled to allow dynamic errors. While static errors are good practice, requiring them everywhere is not always practical.
-- **noinlineerr**: Disabled to allow inline error handling (e.g., `if err := ...; err != nil`), which is more concise and idiomatic Go.
 
 ### Code Structure
 - **exhaustruct**: Disabled - requiring all struct fields to be explicitly set is too verbose and impractical.
 - **exhaustive**: Disabled - don't require all switch cases; allow default handling.
-- **funcorder**: Disabled - don't enforce specific function ordering.
 - **nestif**: Disabled - don't flag nested if statements (some nesting is acceptable).
 
 ### Style and Formatting
@@ -47,6 +45,10 @@ The golangci-lint configuration was updated to disable overly strict or impracti
 
 ### Security
 - **gochecknoglobals**: Disabled - allow globals when needed (e.g., sync.Once patterns).
+- **gosec**: Disabled in golangci-lint; security scanning runs separately in CI to avoid SSA panics in golangci-lint v2.x.
+
+### Naming Rules
+- **revive var-naming**: Disabled to allow package names like `utils`.
 
 ## Adjusted Settings
 
@@ -56,13 +58,13 @@ The golangci-lint configuration was updated to disable overly strict or impracti
 - **funlen**: 200 lines, 100 statements
 
 ### Other Settings
-- **gofumpt**: Disabled extra rules for less strict formatting
 - **errcheck**: Check type assertions but not blank identifiers
 - **goconst**: Minimum 3 characters, 3 occurrences
+- **formatters**: `gofmt` and `goimports` are enabled in `.golangci.yml`
 
 ## Code Fixes Applied
 
-### Formatting (gofumpt)
+### Formatting (gofmt/goimports)
 1. Fixed unnecessary blank lines in `master_client.go`
 2. Fixed unnecessary blank lines in `ffmpeg.go`
 
@@ -75,12 +77,20 @@ The configuration now focuses on meaningful code quality issues while allowing c
 - Unused variables
 - Actual complexity issues (when functions exceed complexity of 20)
 
+## CI Behavior
+
+- `golangci/golangci-lint-action@v8` runs separately for `video-converter-common`, `video-converter-master`, `video-converter-worker`, and `video-converter-cli`
+- CI uses `version: latest` with `--timeout=5m` for each module
+- A separate `securego/gosec` job scans each module because `gosec` is disabled in `.golangci.yml`
+
 ## Running the Linter
 
 To run the linter on all modules:
 ```bash
 ./lint.sh
 ```
+
+The helper runs the module list sequentially and exits non-zero if any module fails.
 
 To run on a specific module:
 ```bash

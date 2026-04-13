@@ -8,6 +8,8 @@ The master coordinator service for the distributed video converter system. This 
 - Tracks worker health via heartbeats
 - Coordinates retry logic for failed jobs
 
+Status: audited with worker auth/TLS hardening, reliability/race fixes, CI/test hardening, observability updates, and green Go suites as of 2026-04-13.
+
 ## Building
 
 ```bash

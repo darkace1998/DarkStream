@@ -3,17 +3,17 @@
 ## Overview
 This document summarizes the testing performed on the DarkStream distributed video converter application using the provided test videos (`testvideo1.mp4` and `testvideo2.mp4`).
 
-Current status: the repository builds successfully and the full Go test suite passes as of 2026-04-13. The latest fixes include EOF handling in the scanner, a proper job-exists sentinel, a config update race fix, FFmpeg stderr draining, Vulkan device-type mapping corrections, and cache cleanup accounting.
+Current status: all four Go modules build, the full Go test suite passes, and CI now runs race, vet, lint, Gosec, and Docker checks on Go 1.24/1.25 as of 2026-04-13. The latest fixes include auth/TLS hardening, atomic job claiming, worker diagnostics/metrics, stricter config parsing, rate-limit spoofing protection, config update race fixes, FFmpeg stderr draining, Vulkan device-type mapping corrections, and cache cleanup accounting.
 
 ## Test Environment
 - **Platform**: Ubuntu Linux
 - **FFmpeg Version**: 6.1.1
-- **Go Version**: 1.24
+- **Go Version**: 1.24 (module baseline; CI also exercises 1.25)
 - **Test Videos**: 
   - testvideo1.mp4 (7.3MB, 720x1280, 19.99s)
   - testvideo2.mp4 (2.6MB, similar properties)
 
-## Issues Found
+## Validated Fixes
 
 ### 1. CRITICAL: No Runtime File Detection
 **Status**: ✅ FIXED
@@ -59,17 +59,19 @@ $ sqlite3 jobs.db "SELECT COUNT(*) FROM jobs;"
 ## Testing Results
 
 ### Unit Tests
-✅ All existing unit tests pass:
-- `video-converter-master/internal/scanner`: Scanner test passes
-- `video-converter-master/internal/db`: All 5 tracker tests pass
+✅ All module test suites pass:
+- `video-converter-common`: utility tests
+- `video-converter-master`: config, coordinator, db, scanner, server, and integration packages
+- `video-converter-worker`: client, config, converter, and worker packages
+- `video-converter-cli`: command and formatter packages
 
 ### Integration Tests  
-✅ Created new integration test using actual test videos:
-- Tests master server startup
-- Verifies video discovery
-- Confirms job creation in database
-- Uses real testvideo1.mp4 and testvideo2.mp4 files
-- Test passes in 3 seconds
+✅ The master integration suite passes with real test videos and temp directories:
+- `TestDistributedFileTransfer` validates the 1 master + 2 worker workflow
+- `TestFileTransferWorkflow` validates download/upload endpoints, including Range handling
+- `TestDownloadRetryLogic`, `TestUploadMultipartForm`, and `TestJobStatusTransitions` pass
+- `TestGetNextJob_AtomicClaim`, auth/TLS checks, and worker config redaction tests also pass
+- FFmpeg is required for the worker execution path; local runs without it still validate startup and API wiring
 
 ### End-to-End Manual Testing
 ✅ Successfully tested complete workflow:
@@ -120,10 +122,7 @@ Audio: aac (LC), 48000 Hz, stereo, 128 kb/s
 ```
 
 ## Security Scan
-✅ CodeQL analysis completed:
-- **Result**: No security vulnerabilities found
-- **Languages analyzed**: Go
-- **Alerts**: 0
+✅ CI runs Gosec across all modules (common, master, worker, cli) as part of the hardened pipeline.
 
 ## Configuration Used
 
@@ -203,6 +202,7 @@ The DarkStream video converter application works correctly with the provided tes
 - Discovers and queues video files at startup
 - Detects new files added during runtime
 - Processes videos using FFmpeg
+- Validates download/upload transfer paths, including Range/resume support
 - Tracks job status in SQLite database
 - Provides REST API for monitoring
 - Scales with multiple workers

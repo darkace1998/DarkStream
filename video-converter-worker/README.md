@@ -11,6 +11,8 @@ The worker:
 - Reports job status (completion/failure) back to the master
 - Sends periodic heartbeats to maintain health status
 
+Status: audited with bearer-token/TLS hardening, reliability/race fixes in the conversion path, observability updates, and green Go suites as of 2026-04-13.
+
 ## Building
 
 ```bash

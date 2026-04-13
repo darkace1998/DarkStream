@@ -2,6 +2,8 @@
 
 Command-line interface for the DarkStream distributed video converter system.
 
+Status: audited against the hardened master/worker APIs; CI/test hardening is in place and the Go suites are green as of 2026-04-13.
+
 ## Overview
 
 The `video-converter-cli` provides a unified interface to:

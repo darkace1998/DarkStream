@@ -2,7 +2,7 @@
 
 ## Testing
 
-Current status: the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
+Current status: security/auth hardening, reliability/race fixes, CI/test hardening, and observability improvements are in place; the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
 
 ### Running Race Detector Tests (Local)
 
@@ -55,7 +55,7 @@ A distributed video converter system that:
 - **Pure Golang:** Minimal dependencies, single compiled binary per component
 - **Fault Tolerant:** Automatic retry logic, worker heartbeats, state recovery
 - **Scalable:** Add compute servers on-demand
-- **Observable:** CLI monitoring, detailed logging, progress tracking
+- **Observable:** CLI monitoring, detailed logging, worker metrics, progress tracking
 - **SQLite-backed Job Queue:** Persistent job tracking without external services
 
 ---

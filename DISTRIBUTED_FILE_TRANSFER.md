@@ -4,7 +4,7 @@
 
 This implementation adds explicit file transfer mechanisms to the video converter system, allowing workers to download source videos from the master and upload converted videos back. This eliminates the dependency on shared storage (NFS/SMB) and enables true distributed processing.
 
-Current status: checksum verification, transfer retries, and cache cleanup are implemented and validated. The remaining roadmap items are compression, chunked/parallel uploads, bandwidth limiting, and resume support.
+Current status: checksum verification, transfer retries, resumable downloads, bandwidth limiting, auth-aware requests, and cache cleanup are implemented and validated. The remaining roadmap items are compression and chunked/parallel uploads.
 
 ## Architecture
 
@@ -14,9 +14,9 @@ Current status: checksum verification, transfer retries, and cache cleanup are i
 Worker Workflow:
 1. Poll master for job → Get {JobID, SourcePath, OutputPath}
 2. Download source video from master via HTTP
-3. Store in local cache: /tmp/converter-cache/job_{JOB_ID}/source.{ext}
+3. Store in local cache: {cache_path}/job_{JOB_ID}/source.{ext}
 4. Convert using FFmpeg with Vulkan acceleration
-5. Save output to: /tmp/converter-cache/job_{JOB_ID}/output.{ext}
+5. Save output to: {cache_path}/job_{JOB_ID}/output.{ext}
 6. Upload converted video back to master via HTTP
 7. Master saves to storage: {OutputPath}
 8. Job marked as "completed"
@@ -29,8 +29,9 @@ Worker Workflow:
 
 **GET /api/worker/download-video?job_id=<id>**
 - Validates job exists and is in "processing" status
+- Supports Range requests for resume
 - Streams source video file to worker
-- Sets appropriate Content-Type and Content-Disposition headers
+- Sets appropriate Content-Type, Accept-Ranges, and Content-Range headers
 - Returns 404 if file not found
 - Returns 400 if job not in processing status
 
@@ -38,18 +39,20 @@ Worker Workflow:
 - Receives multipart file upload from worker
 - Validates job exists and is in "processing" status
 - Creates output directory if needed
-- Writes to temporary file first, then atomically renames
+- Writes to a temp file in the output directory, then atomically renames
 - Updates job status to "completed"
-- Returns file size in response
+- Returns file size in response and logs the output checksum
 
 #### Worker Client Methods
 
 **DownloadSourceVideo(jobID, outputPath string) error**
 - Downloads video file from master
+- Supports resume and optional bandwidth throttling
 - Streams to local file
 - Validates Content-Length header
 - Implements retry logic (3 attempts with exponential backoff)
 - Cleans up partial downloads on failure
+- Sends Authorization when an API key is configured
 
 **UploadConvertedVideo(jobID, filePath string) error**
 - Reads converted video file
@@ -66,8 +69,10 @@ storage:
   mount_path: /mnt/storage          # Not used in distributed mode
   download_timeout: 30m              # Timeout for downloading source videos
   upload_timeout: 30m                # Timeout for uploading converted videos
-  cache_path: /tmp/converter-cache   # Local cache for video processing
-  chunk_size: 10485760              # 10MB chunks (for future streaming)
+  cache_path: /path/to/local/cache   # Local cache for video processing
+  chunk_size: 10485760               # Reserved for future chunked streaming
+  bandwidth_limit: 0                 # Bytes per second (0 = unlimited)
+  enable_resume_download: true       # Enable resume support for downloads
 ```
 
 ## Error Handling
@@ -91,16 +96,20 @@ storage:
 ### Cleanup
 - Local cache is cleaned up after successful upload
 - Partial downloads removed on error
-- Cache directory structure: `/tmp/converter-cache/job_{JOB_ID}/`
+- Cache directory structure: `{cache_path}/job_{JOB_ID}/`
 
 ## Testing
 
 ### Integration Tests
 
+**TestDistributedFileTransfer**
+- Validates the 1 master + 2 worker end-to-end workflow
+- Verifies worker registration, transfers, job completion, and cache cleanup
+
 **TestFileTransferWorkflow**
 - Tests download/upload endpoint setup
 - Verifies database state management
-- Validates file size handling
+- Validates file size handling and Range responses
 
 **TestDownloadRetryLogic**
 - Validates exponential backoff calculation
@@ -119,10 +128,10 @@ storage:
 ```bash
 # Run all integration tests
 cd video-converter-master
-go test ./integration/... -v
+go test ./integration/... -v -timeout 10m
 
-# Run specific test
-go test ./integration/file_transfer_test.go -v
+# Run a specific test
+go test ./integration/... -run TestFileTransferWorkflow -v
 
 # Skip integration tests in short mode
 go test ./... -short
@@ -148,13 +157,15 @@ curl -X POST \
 
 ### Network Transfer
 - Streaming transfer to minimize memory usage
+- Bandwidth limiting is available via worker config
+- Resume support is available for interrupted downloads
 - Progress logging for monitoring
-- Configurable chunk sizes for future optimization
+- Chunk sizes are reserved for future chunked uploads
 
 ### Storage
 - Local cache on fast SSD recommended
 - Cache cleanup prevents disk space issues
-- Temporary files use system temp directory
+- Uploaded files are written to a temp file in the output directory and atomically renamed
 
 ### Concurrency
 - Workers can process multiple jobs concurrently
@@ -168,6 +179,7 @@ curl -X POST \
 - Source and output checksum verification is enforced in the current implementation
 - Worker ID validation (future enhancement)
 - File path sanitization to prevent traversal
+- API-key auth is enforced for transfer calls when configured
 
 ### Error Handling
 - Proper cleanup of sensitive data
@@ -177,23 +189,21 @@ curl -X POST \
 ## Future Enhancements
 
 1. **Compression**: Compress video during transfer
-2. **Streaming**: Implement chunked streaming for progress tracking
-3. **Authentication**: Add worker authentication tokens
-4. **Bandwidth Limiting**: Rate limiting for network transfers
-5. **Resume Support**: Resume interrupted downloads/uploads
-6. **Parallel Uploads**: Upload chunks in parallel
+2. **Chunked/Parallel Uploads**: Upload chunks in parallel for large files
 
 ## Migration Guide
 
 ### From Shared Storage to Distributed Transfer
 
 1. Update worker configuration:
-   ```yaml
-   storage:
-     cache_path: /tmp/converter-cache  # Add local cache path
-     download_timeout: 30m              # Add timeouts
-     upload_timeout: 30m
-   ```
+    ```yaml
+    storage:
+      cache_path: /path/to/local/cache
+      download_timeout: 30m              # Add timeouts
+      upload_timeout: 30m
+      bandwidth_limit: 0
+      enable_resume_download: true
+    ```
 
 2. Workers will automatically use new transfer mechanism
 3. No changes needed to master configuration

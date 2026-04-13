@@ -2,7 +2,7 @@
 
 This directory contains tests to verify the distributed file transfer functionality with 1 master and 2 workers.
 
-Current status: the distributed file transfer path is validated by the current build/test pass. FFmpeg is still optional for infrastructure-only checks.
+Current status: the distributed file transfer path is validated by the current build/test pass. CI installs FFmpeg, so the full worker path runs there; local runs without FFmpeg still validate master startup and job discovery before the worker phase is skipped.
 
 ## Automated Integration Test
 
@@ -10,20 +10,23 @@ The Go integration test automatically tests the complete workflow:
 
 ```bash
 cd video-converter-master
-go test ./integration/distributed_test.go -v -timeout 5m
+go test ./integration/... -v -timeout 10m
 ```
 
 **What it tests:**
 - ✓ Master server starts and is accessible
 - ✓ Jobs are created from source videos
 - ✓ Workers connect and send heartbeats
-- ✓ Workers download source videos from master
+- ✓ Job claiming is atomic, so workers do not double-claim pending jobs
+- ✓ Workers download source videos from master, including Range/resume support
 - ✓ Workers process videos locally
 - ✓ Workers upload converted videos to master
+- ✓ Upload responses return file size and completion status
 - ✓ Jobs are marked as completed
 - ✓ Cache directories are cleaned up
+- ✓ When API keys are configured, workers and CLI commands send the expected auth headers
 
-**Note:** The test will skip worker execution if FFmpeg is not installed, but will still verify that the master and workers can start and communicate.
+**Note:** The test skips worker execution if FFmpeg is not installed, after verifying master startup and job discovery.
 
 ## Manual Testing Script
 
@@ -43,8 +46,8 @@ This script:
 7. Shows final results and cache status
 
 **Requirements:**
-- Go 1.21+
-- FFmpeg (optional, for actual video conversion)
+- Go 1.24+
+- FFmpeg (required for the full conversion path)
 - sqlite3 CLI (for monitoring)
 
 ### Example Output (illustrative)
@@ -129,6 +132,8 @@ To verify that file transfer is working correctly:
    ls -lah <test-dir>/converted/
    ```
 
+   Partial downloads can also be verified with a Range request while the test is running.
+
 4. **Monitor logs:**
    ```bash
    tail -f <test-dir>/master.log
@@ -153,9 +158,7 @@ rm -rf <temporary-directory>
 ## Troubleshooting
 
 ### FFmpeg not found
-If FFmpeg is not installed, jobs will fail but the file transfer mechanism will still work. You can verify:
-- Downloads complete successfully (source.mp4 appears in cache)
-- Upload attempts occur (check logs)
+The automated integration test skips the worker execution path when FFmpeg is missing. The manual script still needs FFmpeg for actual conversion; without it, worker logs will show transfer setup but the jobs will not complete.
 
 ### Port already in use
 If port 48080 (or 38080 for Go test) is in use, edit the config files to use a different port.
@@ -187,7 +190,7 @@ The Go integration test can be run in CI/CD:
 - name: Test Distributed File Transfer
   run: |
     cd video-converter-master
-    go test ./integration/distributed_test.go -v -timeout 5m
+    go test ./integration/... -v -timeout 10m
 ```
 
-Note: The test will skip worker execution if FFmpeg is not available, but will still verify the infrastructure works correctly.
+Note: CI installs FFmpeg, so the full worker execution path is covered there.
