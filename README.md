@@ -1,5 +1,3 @@
----
-
 ## Testing
 
 Current status: security/auth hardening, reliability/race fixes, CI/test hardening, and observability improvements are in place; the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
