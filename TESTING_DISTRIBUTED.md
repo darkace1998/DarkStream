@@ -45,11 +45,11 @@ This script:
 - FFmpeg (optional, for actual video conversion)
 - sqlite3 CLI (for monitoring)
 
-### Example Output
+### Example Output (illustrative)
 
 ```
 === Distributed File Transfer Test ===
-Test directory: /tmp/tmp.XXXXXXXXXX
+Test directory: <temporary-directory>
 
 Creating test video files...
 ✓ Created 2 test video files (100KB each)
@@ -59,28 +59,28 @@ Building binaries...
 ✓ Built worker
 
 Starting master server...
-✓ Master started (PID: 12345)
+✓ Master started (PID: <master-pid>)
 
 Testing master API...
 ✓ Master API is accessible
 
 Starting worker 1...
-✓ Worker 1 started (PID: 12346)
+✓ Worker 1 started (PID: <worker1-pid>)
 
 Starting worker 2...
-✓ Worker 2 started (PID: 12347)
+✓ Worker 2 started (PID: <worker2-pid>)
 
 Monitoring job progress for 60 seconds...
-[19:45:00] Pending: 2 | Processing: 0 | Completed: 0 | Failed: 0
-[19:45:05] Pending: 0 | Processing: 2 | Completed: 0 | Failed: 0
-[19:45:10] Pending: 0 | Processing: 1 | Completed: 1 | Failed: 0
-[19:45:15] Pending: 0 | Processing: 0 | Completed: 2 | Failed: 0
+[<timestamp>] Pending: 2 | Processing: 0 | Completed: 0 | Failed: 0
+[<timestamp>] Pending: 0 | Processing: 2 | Completed: 0 | Failed: 0
+[<timestamp>] Pending: 0 | Processing: 1 | Completed: 1 | Failed: 0
+[<timestamp>] Pending: 0 | Processing: 0 | Completed: 2 | Failed: 0
 
 All jobs finished!
 
 === Final Results ===
-  job-1|worker-1|completed|45678
-  job-2|worker-2|completed|46789
+  <job-id>|<worker-id>|completed|<output-size-bytes>
+  <job-id>|<worker-id>|completed|<output-size-bytes>
 
 === Cache Status ===
 Worker 1 cache: 0 job directories
@@ -97,7 +97,7 @@ The test demonstrates the complete distributed workflow:
 2. Worker 1 polls master → Gets job-1
 3. Worker 2 polls master → Gets job-2
 4. Both workers download source videos via HTTP
-5. Both workers store in local cache: /tmp/workerN-cache/job_XXX/source.mp4
+5. Both workers store in local cache: <test-dir>/workerN-cache/job_XXX/source.mp4
 6. Both workers convert videos using FFmpeg
 7. Both workers upload results via HTTP multipart upload
 8. Master saves converted videos to output directory
@@ -118,20 +118,20 @@ To verify that file transfer is working correctly:
 2. **Check worker cache:**
    ```bash
    # During processing
-   ls -lah /tmp/workerN-cache/job_*/
+   ls -lah <test-dir>/workerN-cache/job_*/
    ```
 
 3. **Check uploaded files:**
    ```bash
    # After completion
-   ls -lah /tmp/tmp.XXXXXXXXXX/converted/
+   ls -lah <test-dir>/converted/
    ```
 
 4. **Monitor logs:**
    ```bash
-   tail -f /tmp/tmp.XXXXXXXXXX/master.log
-   tail -f /tmp/tmp.XXXXXXXXXX/worker1.log
-   tail -f /tmp/tmp.XXXXXXXXXX/worker2.log
+   tail -f <test-dir>/master.log
+   tail -f <test-dir>/worker1.log
+   tail -f <test-dir>/worker2.log
    ```
 
 ## Cleanup
@@ -145,7 +145,7 @@ kill <master_pid> <worker1_pid> <worker2_pid>
 
 The test directory can be cleaned up manually if needed:
 ```bash
-rm -rf /tmp/tmp.XXXXXXXXXX
+rm -rf <temporary-directory>
 ```
 
 ## Troubleshooting

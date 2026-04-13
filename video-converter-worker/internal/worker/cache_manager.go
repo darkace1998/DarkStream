@@ -110,6 +110,13 @@ func (cm *CacheManager) Cleanup() error {
 			return entries[i].ModTime.Before(entries[j].ModTime)
 		})
 
+		// Recalculate total size from actual disk state to account for
+		// files that failed to delete in the age-based cleanup pass.
+		totalSize = 0
+		for _, entry := range entries {
+			totalSize += entry.Size
+		}
+
 		// Calculate current size and remove files in a single pass
 		currentSize := totalSize
 		for _, entry := range entries {

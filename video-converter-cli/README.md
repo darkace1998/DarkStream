@@ -66,7 +66,7 @@ With real-time updates (watch mode):
 video-converter-cli status --watch --interval 5
 ```
 
-Example output:
+Example output (illustrative):
 ```
 📊 Conversion Progress
 ├─ Completed: 42
@@ -93,7 +93,7 @@ With worker details:
 video-converter-cli stats --detailed
 ```
 
-Example output:
+Example output (illustrative):
 ```
 📈 Detailed Statistics
 
@@ -111,7 +111,6 @@ Example output:
   ├─ Avg Active Jobs: 1.5
   └─ Avg CPU Usage: 45.2%
 
-Last updated: 2025-11-08 17:59:22
 ```
 
 ### List and Manage Jobs

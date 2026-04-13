@@ -3,6 +3,8 @@
 ## Overview
 This document summarizes the testing performed on the DarkStream distributed video converter application using the provided test videos (`testvideo1.mp4` and `testvideo2.mp4`).
 
+Current status: the repository builds successfully and the full Go test suite passes as of 2026-04-13. The latest fixes include EOF handling in the scanner, a proper job-exists sentinel, a config update race fix, FFmpeg stderr draining, Vulkan device-type mapping corrections, and cache cleanup accounting.
+
 ## Test Environment
 - **Platform**: Ubuntu Linux
 - **FFmpeg Version**: 6.1.1
@@ -27,14 +29,14 @@ The master coordinator only scanned for video files once at startup. Any files a
 **Solution Implemented**:
 1. Added `scan_interval` configuration parameter to MasterConfig
 2. Implemented `periodicScan()` goroutine in coordinator
-3. Modified `CreateJob()` in database tracker to return `sql.ErrNoRows` for existing jobs
+3. Modified `CreateJob()` in database tracker to return a dedicated `ErrJobAlreadyExists` sentinel for duplicate jobs
 4. Updated logging to accurately report newly discovered files
 5. Made periodic scanning optional (scan_interval: 0 disables it)
 
 **Code Changes**:
 - `video-converter-common/models/config.go`: Added `ScanInterval time.Duration` field
 - `video-converter-master/internal/coordinator/coordinator.go`: Added periodic scanning logic
-- `video-converter-master/internal/db/tracker.go`: Enhanced duplicate detection
+- `video-converter-master/internal/db/tracker.go`: Added `ErrJobAlreadyExists` duplicate sentinel
 - `video-converter-master/config.yaml.example`: Documented new configuration option
 
 **Testing**:

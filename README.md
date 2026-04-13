@@ -2,6 +2,8 @@
 
 ## Testing
 
+Current status: the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
+
 ### Running Race Detector Tests (Local)
 
 To run the race detector locally across all modules, use the included helper script:

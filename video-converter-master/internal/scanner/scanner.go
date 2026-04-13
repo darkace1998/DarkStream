@@ -4,7 +4,9 @@ package scanner
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -249,7 +251,7 @@ func computeFileHash(filePath string) (string, error) {
 			}
 		}
 		if readErr != nil {
-			if readErr.Error() == "EOF" {
+			if errors.Is(readErr, io.EOF) {
 				break
 			}
 			return "", fmt.Errorf("failed to read file: %w", readErr)

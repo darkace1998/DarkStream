@@ -76,7 +76,7 @@ func (me *MetadataExtractor) GetVideoMetadata(sourcePath string) (*models.VideoM
 
 	// Validate the path is clean (no directory traversal)
 	cleanPath := filepath.Clean(sourcePath)
-	if cleanPath != sourcePath && filepath.Clean(sourcePath) != cleanPath {
+	if cleanPath != sourcePath {
 		return nil, fmt.Errorf("invalid source path")
 	}
 

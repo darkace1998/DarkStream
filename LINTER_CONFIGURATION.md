@@ -2,7 +2,7 @@
 
 ## Overview
 
-The golangci-lint configuration has been updated to disable overly strict or impractical linters while maintaining code quality standards. The original configuration resulted in 295 issues, many of which were either too opinionated or not practical for this project.
+The golangci-lint configuration was updated to disable overly strict or impractical linters while maintaining code quality standards. The previous configuration produced a large number of issues, many of which were either too opinionated or not practical for this project.
 
 ## Disabled Linters and Rationale
 

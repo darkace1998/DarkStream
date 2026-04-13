@@ -3,7 +3,6 @@ package coordinator
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -134,7 +133,7 @@ func (c *Coordinator) Start() error {
 	for _, job := range jobs {
 		err := c.db.CreateJob(job)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, db.ErrJobAlreadyExists) {
 				// Job already exists, skip silently
 				continue
 			}
@@ -464,7 +463,7 @@ func (c *Coordinator) periodicScan() {
 				err := c.db.CreateJob(job)
 				if err == nil {
 					newJobsCount++
-				} else if !errors.Is(err, sql.ErrNoRows) {
+				} else if !errors.Is(err, db.ErrJobAlreadyExists) {
 					// Error other than "already exists"
 					slog.Error("Failed to create job during periodic scan", "job_id", job.ID, "error", err)
 				}

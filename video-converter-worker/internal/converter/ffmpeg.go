@@ -111,9 +111,14 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 		return fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
-	// Track progress if callback provided
+	// Track progress if callback provided and duration is known
 	if progressCallback != nil && duration > 0 {
 		go fc.trackProgress(stderr, duration, progressCallback)
+	} else {
+		// Always consume stderr to prevent FFmpeg from blocking when the pipe buffer fills
+		go func() {
+			_, _ = io.Copy(io.Discard, stderr)
+		}()
 	}
 
 	err = cmd.Wait()

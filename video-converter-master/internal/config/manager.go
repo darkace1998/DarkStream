@@ -197,10 +197,18 @@ func (m *Manager) Update(cfg *ActiveConfig) error {
 	cfg.UpdatedAt = time.Now()
 	cfg.Version = m.config.Version + 1
 	m.config = cfg
+	// Marshal config data while still holding the lock to avoid a data race
+	// with concurrent Update() calls that could change m.config.
+	configData, marshalErr := json.MarshalIndent(m.config, "", "  ")
 	m.mu.Unlock()
 
+	if marshalErr != nil {
+		slog.Error("Failed to marshal config", "error", marshalErr)
+		return fmt.Errorf("failed to marshal config: %w", marshalErr)
+	}
+
 	// Perform file I/O outside the critical section to reduce lock contention
-	saveErr := m.saveToFile()
+	saveErr := m.saveToFileData(configData)
 	if saveErr != nil {
 		// Log the error but don't fail - in-memory state is already updated
 		slog.Error("Failed to persist config to file", "error", saveErr)
@@ -234,9 +242,14 @@ func (m *Manager) saveToFile() error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
+	return m.saveToFileData(data)
+}
+
+// saveToFileData writes pre-marshaled config data to the JSON file atomically
+func (m *Manager) saveToFileData(data []byte) error {
 	// Write to temp file first for atomic operation
 	tempPath := m.filePath + ".tmp"
-	err = os.WriteFile(tempPath, data, 0o600)
+	err := os.WriteFile(tempPath, data, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to write temp config file: %w", err)
 	}

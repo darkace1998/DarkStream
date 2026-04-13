@@ -384,10 +384,10 @@ func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([
 // mapVulkanDeviceType converts Vulkan device type to our constant
 func mapVulkanDeviceType(vkType vk.PhysicalDeviceType) string {
 	switch vkType {
-	case 1: // VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
-		return constants.VulkanDeviceTypeDiscrete
-	case 2: // VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+	case 1: // VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
 		return constants.VulkanDeviceTypeIntegrated
+	case 2: // VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+		return constants.VulkanDeviceTypeDiscrete
 	case 3: // VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU
 		return constants.VulkanDeviceTypeVirtual
 	case 4: // VK_PHYSICAL_DEVICE_TYPE_CPU

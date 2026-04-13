@@ -26,8 +26,11 @@ docker-compose down -v
 ### Verify Services Are Running
 
 ```bash
-# Check master service
-curl http://localhost:8080/health
+# Check master health
+curl http://localhost:8080/healthz
+
+# Check detailed health status
+curl http://localhost:8080/api/health
 
 # View master logs
 docker-compose logs master
@@ -36,7 +39,7 @@ docker-compose logs master
 docker-compose logs worker1
 
 # Execute CLI commands inside the container
-docker-compose exec cli ./video-converter-cli status --master http://master:8080
+docker-compose exec cli ./video-converter-cli status --master-url http://master:8080
 ```
 
 ## Building Individual Services
@@ -91,7 +94,7 @@ docker run -d \
 docker run --rm -it \
   -v videos:/mnt/storage/videos \
   --link darkstream-master:master \
-  darkstream:cli status --master http://master:8080
+  darkstream:cli status --master-url http://master:8080
 ```
 
 ## GPU Support
@@ -235,7 +238,7 @@ Services communicate via the `darkstream` bridge network:
 
 ## Troubleshooting
 
-### Check service health
+### Check service health endpoints
 ```bash
 docker-compose ps
 docker-compose logs -f master
@@ -244,7 +247,7 @@ docker-compose logs -f worker1
 
 ### Test connectivity between services
 ```bash
-docker-compose exec worker1 curl http://master:8080/health
+docker-compose exec worker1 curl http://master:8080/healthz
 ```
 
 ### Rebuild services

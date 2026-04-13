@@ -18,6 +18,9 @@ type Tracker struct {
 	db *sql.DB
 }
 
+// ErrJobAlreadyExists is returned when attempting to create a job that already exists
+var ErrJobAlreadyExists = errors.New("job already exists")
+
 // ConnectionPoolConfig holds configuration for database connection pooling
 type ConnectionPoolConfig struct {
 	MaxOpenConnections int           // Maximum number of open connections to the database
@@ -111,7 +114,7 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 
 	// Return a sentinel error if job already existed
 	if rowsAffected == 0 {
-		return sql.ErrNoRows // Job already exists
+		return ErrJobAlreadyExists
 	}
 
 	return nil
