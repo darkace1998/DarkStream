@@ -13,9 +13,11 @@ import (
 	"time"
 )
 
+var cliBinaryPath string
+
 func TestCLIHelp(t *testing.T) {
 	// Test that CLI shows help when no command is provided
-	cmd := exec.Command("./video-converter-cli")
+	cmd := exec.Command(cliBinaryPath)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no command provided")
@@ -39,7 +41,21 @@ func TestCLIHelp(t *testing.T) {
 // TestMain builds the CLI binary before running tests and cleans up afterwards.
 func TestMain(m *testing.M) {
 	// Build the CLI binary used by the integration-style tests.
-	buildCmd := exec.Command("go", "build", "-o", "video-converter-cli", ".")
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get working directory: %v\n", err)
+		os.Exit(2)
+	}
+
+	binaryDir, err := os.MkdirTemp("", "darkstream-cli-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create temp dir for CLI binary: %v\n", err)
+		os.Exit(2)
+	}
+	cliBinaryPath = filepath.Join(binaryDir, "video-converter-cli")
+
+	buildCmd := exec.Command("go", "build", "-o", cliBinaryPath, ".")
+	buildCmd.Dir = wd
 	out, err := buildCmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to build CLI binary: %s: %v\n", string(out), err)
@@ -49,7 +65,8 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	// Clean up the built binary
-	_ = os.Remove("video-converter-cli")
+	_ = os.Remove(cliBinaryPath)
+	_ = os.Remove(binaryDir)
 	os.Exit(code)
 }
 
@@ -77,7 +94,7 @@ func waitForHTTPStatus(t *testing.T, url string, wantStatus int, timeout time.Du
 
 func TestDetectCommand(t *testing.T) {
 	// Test the detect command
-	cmd := exec.Command("./video-converter-cli", "detect")
+	cmd := exec.Command(cliBinaryPath, "detect")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("Detect command failed: %v", err)
@@ -94,7 +111,7 @@ func TestDetectCommand(t *testing.T) {
 
 func TestStatusCommandNoServer(t *testing.T) {
 	// Test status command when server is not running
-	cmd := exec.Command("./video-converter-cli", "status", "--master-url", "http://localhost:19999")
+	cmd := exec.Command(cliBinaryPath, "status", "--master-url", "http://localhost:19999")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when server is not running")
@@ -108,7 +125,7 @@ func TestStatusCommandNoServer(t *testing.T) {
 
 func TestMasterCommandNoConfig(t *testing.T) {
 	// Test master command without config file
-	cmd := exec.Command("./video-converter-cli", "master")
+	cmd := exec.Command(cliBinaryPath, "master")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no config provided")
@@ -122,7 +139,7 @@ func TestMasterCommandNoConfig(t *testing.T) {
 
 func TestWorkerCommandNoConfig(t *testing.T) {
 	// Test worker command without config file
-	cmd := exec.Command("./video-converter-cli", "worker")
+	cmd := exec.Command(cliBinaryPath, "worker")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no config provided")
@@ -136,11 +153,11 @@ func TestWorkerCommandNoConfig(t *testing.T) {
 
 func TestEndToEndWithMaster(t *testing.T) {
 	// This test requires the master and worker binaries to be built
-	// Skip if they don't exist
-	_, err := os.Stat("../video-converter-master/video-converter-master")
-	if os.IsNotExist(err) {
-		t.Skip("Master binary not found, skipping end-to-end test")
-	}
+	repoRoot := filepath.Join("..")
+	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
+	buildBinary(t, masterBinary, filepath.Join(repoRoot, "video-converter-master"))
+
+	var err error
 
 	// Create test directories
 	testDir := t.TempDir()
@@ -183,7 +200,7 @@ logging:
 	}
 
 	// Start master server
-	masterCmd := exec.Command("./video-converter-cli", "master", configPath)
+	masterCmd := exec.Command(cliBinaryPath, "master", configPath)
 	var masterOut bytes.Buffer
 	masterCmd.Stdout = &masterOut
 	masterCmd.Stderr = &masterOut
@@ -201,7 +218,7 @@ logging:
 	waitForHTTPStatus(t, "http://127.0.0.1:19876/api/status", http.StatusOK, 30*time.Second)
 
 	// Test status command
-	statusCmd := exec.Command("./video-converter-cli", "status", "--master-url", "http://127.0.0.1:19876")
+	statusCmd := exec.Command(cliBinaryPath, "status", "--master-url", "http://127.0.0.1:19876")
 	output, err := statusCmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("Status command failed: %v\nOutput: %s\nMaster output: %s", err, string(output), masterOut.String())
@@ -213,7 +230,7 @@ logging:
 	}
 
 	// Test stats command
-	statsCmd := exec.Command("./video-converter-cli", "stats", "--master-url", "http://127.0.0.1:19876")
+	statsCmd := exec.Command(cliBinaryPath, "stats", "--master-url", "http://127.0.0.1:19876")
 	output, err = statsCmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("Stats command failed: %v\nOutput: %s", err, string(output))
@@ -229,7 +246,7 @@ logging:
 
 func TestValidateCommandNoArgs(t *testing.T) {
 	// Test validate command without required arguments
-	cmd := exec.Command("./video-converter-cli", "validate")
+	cmd := exec.Command(cliBinaryPath, "validate")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no type provided")
@@ -243,7 +260,7 @@ func TestValidateCommandNoArgs(t *testing.T) {
 
 func TestValidateCommandNoFile(t *testing.T) {
 	// Test validate command without file argument
-	cmd := exec.Command("./video-converter-cli", "validate", "--type", "master")
+	cmd := exec.Command(cliBinaryPath, "validate", "--type", "master")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no file provided")
@@ -257,7 +274,7 @@ func TestValidateCommandNoFile(t *testing.T) {
 
 func TestValidateCommandInvalidType(t *testing.T) {
 	// Test validate command with invalid type
-	cmd := exec.Command("./video-converter-cli", "validate", "--type", "invalid")
+	cmd := exec.Command(cliBinaryPath, "validate", "--type", "invalid")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error for invalid type")
@@ -271,7 +288,7 @@ func TestValidateCommandInvalidType(t *testing.T) {
 
 func TestCancelCommandNoJobID(t *testing.T) {
 	// Test cancel command without job ID
-	cmd := exec.Command("./video-converter-cli", "cancel")
+	cmd := exec.Command(cliBinaryPath, "cancel")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when no job ID provided")
@@ -285,7 +302,7 @@ func TestCancelCommandNoJobID(t *testing.T) {
 
 func TestJobsCommandNoServer(t *testing.T) {
 	// Test jobs command when server is not running
-	cmd := exec.Command("./video-converter-cli", "jobs", "--master-url", "http://localhost:19999")
+	cmd := exec.Command(cliBinaryPath, "jobs", "--master-url", "http://localhost:19999")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when server is not running")
@@ -299,7 +316,7 @@ func TestJobsCommandNoServer(t *testing.T) {
 
 func TestWorkersCommandNoServer(t *testing.T) {
 	// Test workers command when server is not running
-	cmd := exec.Command("./video-converter-cli", "workers", "--master-url", "http://localhost:19999")
+	cmd := exec.Command(cliBinaryPath, "workers", "--master-url", "http://localhost:19999")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error when server is not running")
@@ -313,7 +330,7 @@ func TestWorkersCommandNoServer(t *testing.T) {
 
 func TestHelpCommand(t *testing.T) {
 	// Test help command shows usage
-	cmd := exec.Command("./video-converter-cli", "help")
+	cmd := exec.Command(cliBinaryPath, "help")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("Help command should not fail: %v", err)
@@ -369,7 +386,7 @@ logging:
 	}
 
 	// Test valid config
-	cmd := exec.Command("./video-converter-cli", "validate", "--type", "master", "--file", configPath, "--local")
+	cmd := exec.Command(cliBinaryPath, "validate", "--type", "master", "--file", configPath, "--local")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("Validate command failed for valid config: %v\nOutput: %s", err, string(output))
@@ -400,7 +417,7 @@ func TestLocalValidationInvalid(t *testing.T) {
 	}
 
 	// Test invalid config
-	cmd := exec.Command("./video-converter-cli", "validate", "--type", "master", "--file", configPath, "--local")
+	cmd := exec.Command(cliBinaryPath, "validate", "--type", "master", "--file", configPath, "--local")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected error for invalid config")
@@ -409,5 +426,16 @@ func TestLocalValidationInvalid(t *testing.T) {
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "validation failed") {
 		t.Errorf("Expected validation failed message, got: %s", outputStr)
+	}
+}
+
+func buildBinary(t *testing.T, binaryPath, sourceDir string) {
+	t.Helper()
+
+	buildCmd := exec.Command("go", "build", "-o", filepath.Base(binaryPath), "./main.go")
+	buildCmd.Dir = sourceDir
+	out, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to build binary %s: %v\n%s", binaryPath, err, out)
 	}
 }

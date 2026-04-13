@@ -48,7 +48,11 @@ func newTestServer(t *testing.T) *Server {
 	masterCfg.Scanner.RootPath = dir
 	masterCfg.Scanner.OutputBase = filepath.Join(dir, "output")
 
-	return New(tracker, "localhost:0", cfgMgr, masterCfg)
+	srv := New(tracker, "localhost:0", cfgMgr, masterCfg)
+	t.Cleanup(func() {
+		_ = srv.Shutdown(context.Background())
+	})
+	return srv
 }
 
 func TestHealthzLive(t *testing.T) {
@@ -154,6 +158,20 @@ func TestGetStats(t *testing.T) {
 	}
 }
 
+func TestGetStats_RequiresAuthWhenAPIKeyConfigured(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = "test-secret-key"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	rec := httptest.NewRecorder()
+
+	srv.GetStats(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GetStats status = %d, want %d when API key is configured", rec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestGetStats_MethodNotAllowed(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -164,6 +182,20 @@ func TestGetStats_MethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GetStats POST status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleWorkerSettings_RequiresAuthWhenAPIKeyConfigured(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = "test-secret-key"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/worker/settings?worker_id=worker-1", nil)
+	rec := httptest.NewRecorder()
+
+	srv.HandleWorkerSettings(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("HandleWorkerSettings status = %d, want %d when API key is configured", rec.Code, http.StatusUnauthorized)
 	}
 }
 
@@ -428,6 +460,16 @@ func TestValidateJobID(t *testing.T) {
 				t.Errorf("validateJobID(%q) = %v, want %v", tt.jobID, result, tt.valid)
 			}
 		})
+	}
+}
+
+func TestClientIPIgnoresForwardedFor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+
+	if got := clientIP(req); got != "192.0.2.10" {
+		t.Fatalf("clientIP() = %q, want %q", got, "192.0.2.10")
 	}
 }
 

@@ -99,6 +99,43 @@ func TestLoadMasterConfig_InvalidYAML(t *testing.T) {
 	}
 }
 
+func TestLoadMasterConfig_UnknownField(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := `
+server:
+  port: 8080
+  host: 0.0.0.0
+scanner:
+  root_path: /videos
+  output_base: /output
+  video_extensions:
+    - .mp4
+database:
+  path: ./jobs.db
+conversion:
+  target_resolution: 1920x1080
+  codec: h264
+  bitrate: 5M
+  preset: fast
+  audio_codec: aac
+  audio_bitrate: 128k
+logging:
+  level: info
+  format: json
+unexpected_field: true
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	_, err := LoadMasterConfig(cfgPath)
+	if err == nil {
+		t.Fatal("LoadMasterConfig() expected error for unknown field, got nil")
+	}
+}
+
 func TestLoadMasterConfig_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // runBinaryCommand is a shared helper to find and run a binary with a config file.
@@ -49,10 +50,17 @@ func runBinaryCommand(cmdName, binaryName string, args []string) {
 }
 
 func findBinary(name string) (string, error) {
+	candidates := []string{name}
+	if alias := strings.TrimPrefix(name, "video-converter-"); alias != "" && alias != name {
+		candidates = append(candidates, alias)
+	}
+
 	// Try to find in PATH
-	path, err := exec.LookPath(name)
-	if err == nil {
-		return path, nil
+	for _, candidate := range candidates {
+		path, err := exec.LookPath(candidate)
+		if err == nil {
+			return path, nil
+		}
 	}
 
 	// Try to find in parent directory structure
@@ -61,19 +69,21 @@ func findBinary(name string) (string, error) {
 		return "", fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	// Try current directory
-	localPath := filepath.Join(currentDir, name, name)
-	_, err = os.Stat(localPath)
-	if err == nil {
-		return localPath, nil
-	}
+	for _, candidate := range candidates {
+		// Try current directory
+		localPath := filepath.Join(currentDir, name, candidate)
+		_, err = os.Stat(localPath)
+		if err == nil {
+			return localPath, nil
+		}
 
-	// Try parent directory
-	parentDir := filepath.Dir(currentDir)
-	parentPath := filepath.Join(parentDir, name, name)
-	_, err = os.Stat(parentPath)
-	if err == nil {
-		return parentPath, nil
+		// Try parent directory
+		parentDir := filepath.Dir(currentDir)
+		parentPath := filepath.Join(parentDir, name, candidate)
+		_, err = os.Stat(parentPath)
+		if err == nil {
+			return parentPath, nil
+		}
 	}
 
 	return "", fmt.Errorf("binary %s not found in PATH or local directories", name)

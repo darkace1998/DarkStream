@@ -3,10 +3,13 @@ package integration
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,49 +46,8 @@ func TestFileTransferWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create test video: %v", err)
 	}
 
-	// Initialize database and create a test job
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer func() {
-		cerr := db.Close()
-		if cerr != nil {
-			t.Logf("Failed to close database: %v", cerr)
-		}
-	}()
-
-	// Create jobs table
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS jobs (
-		id TEXT PRIMARY KEY,
-		source_path TEXT NOT NULL,
-		output_path TEXT NOT NULL,
-		status TEXT NOT NULL,
-		worker_id TEXT,
-		started_at DATETIME,
-		completed_at DATETIME,
-		error_message TEXT,
-		retry_count INTEGER DEFAULT 0,
-		max_retries INTEGER DEFAULT 3,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		source_duration REAL DEFAULT 0,
-		output_size INTEGER DEFAULT 0
-	);
-	`
-	_, err = db.Exec(createTableSQL)
-	if err != nil {
-		t.Fatalf("Failed to create jobs table: %v", err)
-	}
-
-	// Insert a test job
 	jobID := "test-job-1"
 	outputPath := filepath.Join(convertedDir, "test-output.mp4")
-	insertSQL := `INSERT INTO jobs (id, source_path, output_path, status, worker_id) VALUES (?, ?, ?, ?, ?)`
-	_, err = db.Exec(insertSQL, jobID, testVideoPath, outputPath, "processing", "worker-test")
-	if err != nil {
-		t.Fatalf("Failed to insert test job: %v", err)
-	}
 
 	// Create master config
 	masterConfig := fmt.Sprintf(`server:
@@ -98,7 +60,7 @@ scanner:
     - .mp4
   output_base: %s
   recursive_depth: -1
-  scan_interval: 0
+  scan_interval: 0s
 
 database:
   path: %s
@@ -123,71 +85,172 @@ logging:
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
-	// Start master server
 	repoRoot := filepath.Join("..", "..")
 	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
+	buildBinary(t, masterBinary, filepath.Join(repoRoot, "video-converter-master"))
 
-	// Build master if not exists
-	_, err = os.Stat(masterBinary)
-	if os.IsNotExist(err) {
-		t.Skip("Master binary not found, skipping integration test")
+	masterCmd := exec.Command(masterBinary, "--config", masterConfigPath)
+	var masterOut bytes.Buffer
+	masterCmd.Stdout = &masterOut
+	masterCmd.Stderr = &masterOut
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("Master output:\n%s", masterOut.String())
+		}
+	})
+	if err := masterCmd.Start(); err != nil {
+		t.Fatalf("Failed to start master: %v", err)
+	}
+	defer func() {
+		if masterCmd.Process != nil {
+			if killErr := masterCmd.Process.Kill(); killErr != nil {
+				t.Logf("Failed to kill master process: %v", killErr)
+			}
+		}
+	}()
+
+	waitForHTTPStatus(t, "http://127.0.0.1:28080/api/status", http.StatusOK, 30*time.Second)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer func() {
+		cerr := db.Close()
+		if cerr != nil {
+			t.Logf("Failed to close database: %v", cerr)
+		}
+	}()
+
+	insertSQL := `INSERT INTO jobs (id, source_path, output_path, status, priority, retry_count, max_retries, created_at, source_checksum, worker_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = db.Exec(insertSQL, jobID, testVideoPath, outputPath, "processing", 5, 0, 3, time.Now(), "", "worker-test")
+	if err != nil {
+		t.Fatalf("Failed to insert test job: %v", err)
 	}
 
-	// We'll test the endpoints manually without starting a full server
-	// since we need to integrate with the database properly
-
-	// Test 1: Download endpoint
 	t.Run("DownloadVideo", func(t *testing.T) {
 		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
-
-		// Note: This test would require a running server
-		// For now, we'll verify the database state is correct
-		var status string
-		err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
-			t.Fatalf("Failed to query job status: %v", err)
+			t.Fatalf("Failed to create request: %v", err)
 		}
-		if status != "processing" {
-			t.Errorf("Expected job status 'processing', got '%s'", status)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Download request failed: %v", err)
 		}
-		t.Log("Download endpoint test setup complete")
-		t.Logf("Would download from: %s", url)
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Download status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read download body: %v", err)
+		}
+		if !bytes.Equal(body, testVideoContent) {
+			t.Fatalf("downloaded content mismatch")
+		}
+		if resp.Header.Get("Accept-Ranges") != "bytes" {
+			t.Fatalf("Accept-Ranges = %q, want %q", resp.Header.Get("Accept-Ranges"), "bytes")
+		}
+		if !bytes.Contains([]byte(resp.Header.Get("Content-Disposition")), []byte("source.mp4")) {
+			t.Fatalf("unexpected Content-Disposition: %q", resp.Header.Get("Content-Disposition"))
+		}
 	})
 
-	// Test 2: Upload endpoint
+	t.Run("DownloadRange", func(t *testing.T) {
+		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Range", "bytes=0-4")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Range download failed: %v", err)
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		if resp.StatusCode != http.StatusPartialContent {
+			t.Fatalf("Range status = %d, want %d", resp.StatusCode, http.StatusPartialContent)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read range body: %v", err)
+		}
+		if !bytes.Equal(body, testVideoContent[:5]) {
+			t.Fatalf("range response mismatch")
+		}
+	})
+
 	t.Run("UploadVideo", func(t *testing.T) {
-		// Create a fake converted video
 		convertedContent := []byte("fake converted video content")
-		convertedFile := filepath.Join(testDir, "converted-test.mp4")
-		err := os.WriteFile(convertedFile, convertedContent, 0o600)
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("video", filepath.Base(outputPath))
 		if err != nil {
-			t.Fatalf("Failed to create converted video: %v", err)
+			t.Fatalf("Failed to create form part: %v", err)
+		}
+		if _, err := io.Copy(part, bytes.NewReader(convertedContent)); err != nil {
+			t.Fatalf("Failed to copy upload content: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Failed to close multipart writer: %v", err)
 		}
 
-		// Verify job exists
-		var status string
-		err = db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status)
+		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/upload-video?job_id=%s", jobID)
+		req, err := http.NewRequest(http.MethodPost, url, body)
 		if err != nil {
+			t.Fatalf("Failed to create upload request: %v", err)
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Upload request failed: %v", err)
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Upload status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+
+		var uploadResponse struct {
+			FileSize int64  `json:"file_size"`
+			Status   string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&uploadResponse); err != nil {
+			t.Fatalf("Failed to decode upload response: %v", err)
+		}
+		if uploadResponse.FileSize != int64(len(convertedContent)) {
+			t.Fatalf("file_size = %d, want %d", uploadResponse.FileSize, len(convertedContent))
+		}
+		if uploadResponse.Status != "completed" {
+			t.Fatalf("status = %q, want completed", uploadResponse.Status)
+		}
+
+		savedContent, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatalf("Failed to read uploaded file: %v", err)
+		}
+		if !bytes.Equal(savedContent, convertedContent) {
+			t.Fatalf("uploaded file content mismatch")
+		}
+
+		var status string
+		if err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status); err != nil {
 			t.Fatalf("Failed to query job status: %v", err)
 		}
-
-		t.Logf("Job status before upload: %s", status)
-		t.Log("Upload endpoint test setup complete")
-	})
-
-	// Test 3: Verify file size validation
-	t.Run("FileSizeValidation", func(t *testing.T) {
-		// Verify test video size
-		info, err := os.Stat(testVideoPath)
-		if err != nil {
-			t.Fatalf("Failed to stat test video: %v", err)
+		if status != "completed" {
+			t.Fatalf("job status = %q, want completed", status)
 		}
-
-		expectedSize := int64(len(testVideoContent))
-		if info.Size() != expectedSize {
-			t.Errorf("Expected file size %d, got %d", expectedSize, info.Size())
-		}
-		t.Logf("Test video size: %d bytes", info.Size())
 	})
 
 	t.Log("File transfer workflow test completed")

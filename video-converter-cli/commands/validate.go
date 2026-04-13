@@ -8,7 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Validate validates a configuration file.
@@ -56,14 +59,18 @@ func Validate(args []string) {
 	}
 
 	// Remote validation via master server
-	url := fmt.Sprintf("%s/api/validate-config?type=%s", *masterURL, *configType)
-	req, err := newMasterRequest(http.MethodPost, url, bytes.NewReader(configData), "application/yaml")
+	requestURL, err := utils.BuildURL(*masterURL, "/api/validate-config", url.Values{"type": []string{*configType}})
 	if err != nil {
-		slog.Error("Error creating request", "error", err)
+		slog.Error("Error building request URL", "error", err)
 		return
 	}
+	req, err := newMasterRequest(http.MethodPost, requestURL, bytes.NewReader(configData), "application/yaml")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		os.Exit(1)
+	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info("Use --local flag to validate without master server")
@@ -79,20 +86,20 @@ func Validate(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Validation request failed", "status", resp.StatusCode)
 		slog.Info(string(body))
-		return
+		os.Exit(1)
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	var errors []string

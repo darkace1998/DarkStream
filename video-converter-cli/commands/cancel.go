@@ -7,9 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Cancel cancels a job on the master server.
@@ -26,14 +28,18 @@ func Cancel(args []string) {
 		os.Exit(1)
 	}
 
-	url := fmt.Sprintf("%s/api/job/cancel?job_id=%s", *masterURL, *jobID)
-	req, err := newMasterRequest(http.MethodPost, url, nil, "application/json")
+	requestURL, err := utils.BuildURL(*masterURL, "/api/job/cancel", url.Values{"job_id": []string{*jobID}})
 	if err != nil {
-		slog.Error("Error creating request", "error", err)
+		slog.Error("Error building request URL", "error", err)
 		return
 	}
+	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		os.Exit(1)
+	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
@@ -49,20 +55,20 @@ func Cancel(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Failed to cancel job", "status", resp.StatusCode)
 		slog.Info(fmt.Sprintf("Response: %s", string(body)))
-		return
+		os.Exit(1)
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))

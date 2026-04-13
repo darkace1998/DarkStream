@@ -139,7 +139,18 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 }
 
 // Start starts the worker process
-func (w *Worker) Start() error {
+func (w *Worker) Start() (err error) {
+	defer func() {
+		if err != nil {
+			if w.rateLimiterTicker != nil {
+				w.rateLimiterTicker.Stop()
+			}
+			if w.cacheManager != nil {
+				w.cacheManager.Stop()
+			}
+		}
+	}()
+
 	// Calculate rate limit for logging
 	maxAPIRequestsPerMin := w.config.Worker.MaxAPIRequestsPerMin
 	if maxAPIRequestsPerMin <= 0 {
@@ -161,16 +172,16 @@ func (w *Worker) Start() error {
 	}
 
 	// Fetch initial configuration from master
-	cfg, err := w.configFetcher.FetchConfig()
-	if err != nil {
+	cfg, fetchErr := w.configFetcher.FetchConfig()
+	if fetchErr != nil {
 		// If we have static config as fallback, use it
 		if w.config.Conversion.TargetResolution != "" {
 			slog.Warn("Failed to fetch config from master, using static config fallback",
-				"error", err,
+				"error", fetchErr,
 				"resolution", w.config.Conversion.TargetResolution,
 			)
 		} else {
-			return fmt.Errorf("failed to fetch initial configuration from master: %w", err)
+			return fmt.Errorf("failed to fetch initial configuration from master: %w", fetchErr)
 		}
 	} else {
 		slog.Info("Configuration fetched from master",
@@ -361,7 +372,9 @@ func (w *Worker) processJobs(workerIndex int) {
 		// Note: Concurrency is bounded by jobSemaphore - we only reach here after
 		// successfully acquiring a semaphore slot (line 279). The goroutine releases
 		// the slot when done, ensuring at most 'concurrency' jobs process concurrently.
+		w.wg.Add(1)
 		go func(job *models.Job) {
+			defer w.wg.Done()
 			defer func() { <-w.jobSemaphore }()
 			w.processJob(job)
 		}(job)

@@ -2,12 +2,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,6 +62,8 @@ type rateLimiter struct {
 	mu            sync.Mutex
 	requestCounts map[string]*bucketState
 	cleanupTicker *time.Ticker
+	stopCh        chan struct{}
+	stopOnce      sync.Once
 }
 
 type bucketState struct {
@@ -71,6 +75,7 @@ func newRateLimiter() *rateLimiter {
 	rl := &rateLimiter{
 		requestCounts: make(map[string]*bucketState),
 		cleanupTicker: time.NewTicker(5 * time.Minute),
+		stopCh:        make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -80,16 +85,21 @@ func newRateLimiter() *rateLimiter {
 }
 
 func (rl *rateLimiter) cleanup() {
-	for range rl.cleanupTicker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, state := range rl.requestCounts {
-			// Remove entries not accessed in last 10 minutes
-			if now.Sub(state.lastRefill) > 10*time.Minute {
-				delete(rl.requestCounts, ip)
+	for {
+		select {
+		case <-rl.cleanupTicker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			for ip, state := range rl.requestCounts {
+				// Remove entries not accessed in last 10 minutes
+				if now.Sub(state.lastRefill) > 10*time.Minute {
+					delete(rl.requestCounts, ip)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 
@@ -130,8 +140,19 @@ func (rl *rateLimiter) allow(ip string, maxTokens int, refillRate time.Duration)
 	return false
 }
 
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil || host == "" {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func (rl *rateLimiter) stop() {
-	rl.cleanupTicker.Stop()
+	rl.stopOnce.Do(func() {
+		close(rl.stopCh)
+		rl.cleanupTicker.Stop()
+	})
 }
 
 // Server handles HTTP API requests
@@ -170,7 +191,13 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 }
 
 // Start starts the HTTP server
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	defer func() {
+		if err != nil {
+			s.rateLimiter.stop()
+		}
+	}()
+
 	mux := http.NewServeMux()
 
 	// Web UI
@@ -215,7 +242,7 @@ func (s *Server) Start() error {
 
 	s.server = &http.Server{
 		Addr:         s.addr,
-		Handler:      mux,
+		Handler:      s.metricsMiddleware(mux),
 		ReadTimeout:  35 * time.Minute, // Extended for file downloads/uploads
 		WriteTimeout: 35 * time.Minute, // Extended for file downloads/uploads
 		IdleTimeout:  60 * time.Second,
@@ -237,9 +264,9 @@ func (s *Server) Start() error {
 			return fmt.Errorf("TLS key file not accessible: %w", err)
 		}
 		slog.Info("TLS enabled", "cert", s.masterCfg.Server.TLSCert, "key", s.masterCfg.Server.TLSKey)
-		err := s.server.ListenAndServeTLS(s.masterCfg.Server.TLSCert, s.masterCfg.Server.TLSKey)
-		if err != nil {
-			return fmt.Errorf("failed to start TLS server: %w", err)
+		listenErr := s.server.ListenAndServeTLS(s.masterCfg.Server.TLSCert, s.masterCfg.Server.TLSKey)
+		if listenErr != nil {
+			return fmt.Errorf("failed to start TLS server: %w", listenErr)
 		}
 		return nil
 	}
@@ -251,21 +278,20 @@ func (s *Server) Start() error {
 			"has_key", s.masterCfg.Server.TLSKey != "")
 	}
 
-	err := s.server.ListenAndServe()
-	if err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
+	listenErr := s.server.ListenAndServe()
+	if listenErr != nil {
+		return fmt.Errorf("failed to start server: %w", listenErr)
 	}
 	return nil
 }
 
 // Shutdown gracefully shuts down the HTTP server
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.rateLimiter.stop()
+
 	if s.server == nil {
 		return nil
 	}
-
-	// Stop rate limiter cleanup
-	s.rateLimiter.stop()
 
 	slog.Info("Shutting down HTTP server")
 	err := s.server.Shutdown(ctx)
@@ -497,23 +523,20 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update only the necessary fields
-	now := time.Now()
-	job.Status = "completed"
-	job.WorkerID = req.WorkerID
-	job.OutputSize = req.OutputSize
-	job.CompletedAt = &now
-
-	err = s.db.UpdateJob(job)
+	updated, err := s.db.MarkJobCompleted(job.ID, req.WorkerID, req.OutputSize, "", job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+	if !updated {
+		http.Error(w, "Job state changed while completing", http.StatusConflict)
+		return
+	}
 
 	// Record metrics
 	if job.StartedAt != nil {
-		duration := now.Sub(*job.StartedAt).Seconds()
+		duration := time.Since(*job.StartedAt).Seconds()
 		s.metrics.RecordJobCompleted(duration)
 	}
 	s.metrics.RecordJobFinished()
@@ -559,15 +582,14 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the job status and error message
-	job.Status = statusFailed
-	job.WorkerID = req.WorkerID
-	job.ErrorMessage = req.ErrorMessage
-
-	err = s.db.UpdateJob(job)
+	updated, err := s.db.MarkJobFailed(job.ID, req.WorkerID, req.ErrorMessage, job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while reporting failure", http.StatusConflict)
 		return
 	}
 
@@ -662,6 +684,9 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
 		return
 	}
 
@@ -1222,18 +1247,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update job status to completed (only after successful file write)
-	now := time.Now()
-	job.Status = "completed"
-	job.OutputSize = bytesWritten
-	job.CompletedAt = &now
-	job.OutputChecksum = outputChecksum
-
-	err = s.db.UpdateJob(job)
+	updated, err := s.db.MarkJobCompleted(job.ID, job.WorkerID, bytesWritten, outputChecksum, job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to update job", "job_id", jobID, "error", err)
 		// File is saved but status update failed - this is acceptable
 		// The job will remain in processing state and can be retried
 		http.Error(w, "Failed to update job status", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while uploading", http.StatusConflict)
 		return
 	}
 
@@ -1502,14 +1525,20 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		if i >= limit {
 			break
 		}
-		err := s.db.ResetJobToPending(job.ID, true)
+		updated, err := s.db.ResetJobToPending(job.ID, true, "failed", "", job.StartedAt)
 		if err != nil {
 			slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
 			continue
 		}
+		if !updated {
+			continue
+		}
 		retriedCount++
+		s.RecordJobRetry("cli")
 		slog.Info("Retried failed job via CLI", "job_id", job.ID)
 	}
+
+	s.RefreshQueueDepth()
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
@@ -1590,6 +1619,9 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
 
 	jobID := r.URL.Query().Get("job_id")
 	if !validateJobID(jobID) {
@@ -1615,12 +1647,14 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	previousStatus := job.Status
 
 	// Update job status to cancelled (using failed with specific error message)
-	job.Status = statusFailed
-	job.ErrorMessage = "Job cancelled by user"
-	err = s.db.UpdateJob(job)
+	updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user", job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
 		http.Error(w, "Failed to cancel job", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while cancelling", http.StatusConflict)
 		return
 	}
 
@@ -1643,6 +1677,9 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
 		return
 	}
 
@@ -1704,11 +1741,14 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		job.Status = statusFailed
-		job.ErrorMessage = "Job cancelled by user (batch cancellation)"
-		err := s.db.UpdateJob(job)
+		updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user (batch cancellation)", job.StartedAt)
 		if err != nil {
 			slog.Error("Failed to cancel job", "job_id", job.ID, "error", err)
+			failedCount++
+			continue
+		}
+		if !updated {
+			slog.Warn("Skipped cancellation for job that changed state", "job_id", job.ID)
 			failedCount++
 			continue
 		}
@@ -1841,7 +1881,9 @@ func validateConfigContent(configType string, content []byte) []string {
 	switch configType {
 	case "master":
 		var cfg models.MasterConfig
-		err := yaml.Unmarshal(content, &cfg)
+		dec := yaml.NewDecoder(bytes.NewReader(content))
+		dec.KnownFields(true)
+		err := dec.Decode(&cfg)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
 			return errors
@@ -1866,7 +1908,9 @@ func validateConfigContent(configType string, content []byte) []string {
 
 	case "worker":
 		var cfg models.WorkerConfig
-		err := yaml.Unmarshal(content, &cfg)
+		dec := yaml.NewDecoder(bytes.NewReader(content))
+		dec.KnownFields(true)
+		err := dec.Decode(&cfg)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("YAML parsing error: %v", err))
 			return errors
@@ -1890,11 +1934,7 @@ func validateConfigContent(configType string, content []byte) []string {
 // rateLimitMiddleware applies rate limiting to endpoints
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract client IP (considering X-Forwarded-For header)
-		ip := r.RemoteAddr
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			ip = forwarded
-		}
+		ip := clientIP(r)
 
 		// Apply rate limit: 100 requests per minute per IP
 		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
@@ -1916,24 +1956,12 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Extract Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			slog.Warn("Missing Authorization header", "path", r.URL.Path, "ip", r.RemoteAddr)
-			http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
-			return
-		}
-
-		// Validate API key format: "Bearer <api_key>"
-		const bearerPrefix = "Bearer "
-		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
-			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
-			return
-		}
-
-		providedKey := strings.TrimPrefix(authHeader, bearerPrefix)
-		if subtle.ConstantTimeCompare([]byte(providedKey), []byte(s.apiKey)) != 1 {
+		if !s.authenticateRequest(r) {
+			if r.Header.Get("Authorization") == "" {
+				slog.Warn("Missing Authorization header", "path", r.URL.Path, "ip", r.RemoteAddr)
+				http.Error(w, "Unauthorized: Missing Authorization header", http.StatusUnauthorized)
+				return
+			}
 			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
 			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
 			return
@@ -1947,6 +1975,35 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) authenticatedRequest(r *http.Request) bool {
 	v, ok := r.Context().Value(authContextKey{}).(bool)
 	return ok && v
+}
+
+func (s *Server) authenticateRequest(r *http.Request) bool {
+	if s.apiKey == "" {
+		return true
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return false
+	}
+
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		return false
+	}
+
+	providedKey := strings.TrimPrefix(authHeader, bearerPrefix)
+	return subtle.ConstantTimeCompare([]byte(providedKey), []byte(s.apiKey)) == 1
+}
+
+func (s *Server) requireAPIKeyAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.authenticateRequest(r) {
+		return true
+	}
+
+	slog.Warn("Unauthorized request", "path", r.URL.Path, "ip", r.RemoteAddr)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	return false
 }
 
 // correlationMiddleware adds a correlation ID to each request for tracing
@@ -1987,6 +2044,63 @@ func (s *Server) updateQueueDepthMetric() {
 	if err == nil {
 		s.metrics.SetQueueDepth(float64(count))
 	}
+}
+
+// RefreshQueueDepth updates the queue depth metric from the database.
+func (s *Server) RefreshQueueDepth() {
+	s.updateQueueDepthMetric()
+}
+
+// UpdateWorkerCounts updates the worker count metrics.
+func (s *Server) UpdateWorkerCounts(total, active int) {
+	s.metrics.SetWorkerCounts(total, active)
+}
+
+// RecordJobRetry increments the retry counter metric.
+func (s *Server) RecordJobRetry(reason string) {
+	s.metrics.RecordJobRetry(reason)
+}
+
+type metricsResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *metricsResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *metricsResponseWriter) Write(p []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *metricsResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (s *Server) metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		start := time.Now()
+		rw := &metricsResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(rw, r)
+
+		statusCode := rw.statusCode
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		s.metrics.RecordAPIRequest(r.URL.Path, r.Method, fmt.Sprintf("%d", statusCode), time.Since(start).Seconds())
+	})
 }
 
 // GetWorkerConfig returns the worker configuration from the master.
@@ -2155,6 +2269,9 @@ func (s *Server) HandleWorkerSettings(w http.ResponseWriter, r *http.Request) {
 	workerID := r.URL.Query().Get("worker_id")
 	if workerID == "" {
 		http.Error(w, "worker_id is required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
 		return
 	}
 

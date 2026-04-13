@@ -52,7 +52,7 @@ func main() {
 		}
 	}
 
-	logger.Init(cfg.Logging.Level, cfg.Logging.Format, "worker_id", cfg.Worker.ID)
+	logger.Init(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath, "worker_id", cfg.Worker.ID)
 
 	w, err := worker.New(cfg)
 	if err != nil {

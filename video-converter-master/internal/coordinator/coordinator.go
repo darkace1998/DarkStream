@@ -56,7 +56,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	// Initialize configuration manager
 	// Config file will be stored next to the database file
 	configPath := filepath.Join(filepath.Dir(cfg.Database.Path), "active-config.json")
-	
+
 	// Convert YAML worker defaults to config.WorkerConfig format
 	var workerDefaults *config.WorkerConfig
 	if cfg.WorkerDefaults.Concurrency > 0 || cfg.WorkerDefaults.HeartbeatInterval > 0 {
@@ -78,7 +78,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 			LogFormat:            cfg.WorkerDefaults.LogFormat,
 		}
 	}
-	
+
 	configMgr, err := config.NewManager(configPath, &cfg.Conversion, workerDefaults)
 	if err != nil {
 		_ = tracker.Close()
@@ -141,6 +141,7 @@ func (c *Coordinator) Start() error {
 			failedInsertions++
 		}
 	}
+	c.server.RefreshQueueDepth()
 	if failedInsertions > 0 {
 		slog.Warn("Some jobs failed to be inserted", "failed_count", failedInsertions, "total_jobs", len(jobs))
 	}
@@ -189,6 +190,15 @@ func (c *Coordinator) Start() error {
 
 	// Wait for HTTP server to exit
 	err = <-serverErrChan
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("HTTP server exited unexpectedly", "error", err)
+		c.cancel()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if shutdownErr := c.server.Shutdown(shutdownCtx); shutdownErr != nil {
+			slog.Error("HTTP server shutdown error", "err", shutdownErr)
+		}
+	}
 
 	// Wait for monitoring goroutines to stop before closing database
 	slog.Info("Waiting for monitoring goroutines to stop")
@@ -284,12 +294,15 @@ func (c *Coordinator) monitorWorkerHealth() {
 				for _, job := range jobs {
 					// Reset job to pending without incrementing retry count
 					// since worker failure is not job's fault
-					err := c.db.ResetJobToPending(job.ID, false)
+					updated, err := c.db.ResetJobToPending(job.ID, false, "processing", workerID, job.StartedAt)
 					if err != nil {
 						slog.Error("Failed to reset job from offline worker",
 							"job_id", job.ID, "worker_id", workerID, "error", err)
-					} else {
+					} else if updated {
 						slog.Info("Reassigned job from offline worker",
+							"job_id", job.ID, "worker_id", workerID)
+					} else {
+						slog.Warn("Skipped stale offline-worker reset",
 							"job_id", job.ID, "worker_id", workerID)
 					}
 				}
@@ -319,35 +332,44 @@ func (c *Coordinator) monitorWorkerHealth() {
 				// Check if job has exceeded max retries
 				if job.RetryCount >= job.MaxRetries {
 					// Mark job as failed permanently
-					job.Status = "failed"
-					job.ErrorMessage = fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)",
-						jobTimeout, job.RetryCount, job.MaxRetries)
 					completedAt := time.Now()
-					job.CompletedAt = &completedAt
-					err := c.db.UpdateJob(job)
+					updated, err := c.db.MarkJobFailedPermanently(job.ID, job.WorkerID,
+						fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)",
+							jobTimeout, job.RetryCount, job.MaxRetries),
+						completedAt, job.StartedAt)
 					if err != nil {
 						slog.Error("Failed to mark stale job as failed",
 							"job_id", job.ID, "error", err)
-					} else {
+					} else if updated {
 						slog.Info("Marked stale job as permanently failed",
 							"job_id", job.ID,
 							"retry_count", job.RetryCount,
 							"max_retries", job.MaxRetries)
+					} else {
+						slog.Warn("Skipped stale failure update for job that changed state",
+							"job_id", job.ID)
 					}
 				} else {
 					// Reset job to pending with retry count increment
-					err := c.db.ResetJobToPending(job.ID, true)
+					updated, err := c.db.ResetJobToPending(job.ID, true, "processing", job.WorkerID, job.StartedAt)
 					if err != nil {
 						slog.Error("Failed to reset stale job",
 							"job_id", job.ID, "error", err)
-					} else {
+					} else if updated {
+						c.server.RecordJobRetry("monitor")
 						slog.Info("Reset stale job to pending for retry",
 							"job_id", job.ID,
 							"retry_count", job.RetryCount+1,
 							"max_retries", job.MaxRetries)
+					} else {
+						slog.Warn("Skipped stale reset for job that changed state",
+							"job_id", job.ID)
 					}
 				}
 			}
+
+			c.server.UpdateWorkerCounts(len(allWorkers), len(activeWorkers))
+			c.server.RefreshQueueDepth()
 		}
 	}
 }
@@ -404,13 +426,18 @@ func (c *Coordinator) monitorFailedJobs() {
 				retryBackoff[job.ID] = time.Now()
 
 				// Reset job to pending with incremented retry count
-				err := c.db.ResetJobToPending(job.ID, true)
+				updated, err := c.db.ResetJobToPending(job.ID, true, "failed", "", job.StartedAt)
 				if err != nil {
 					slog.Error("Failed to reset job for retry",
 						"job_id", job.ID, "error", err)
 					continue
 				}
+				if !updated {
+					slog.Warn("Skipped retry for job that changed state", "job_id", job.ID)
+					continue
+				}
 
+				c.server.RecordJobRetry("monitor")
 				slog.Info("Retrying failed job",
 					"job_id", job.ID,
 					"retry_count", job.RetryCount+1,
@@ -433,6 +460,8 @@ func (c *Coordinator) monitorFailedJobs() {
 					delete(retryBackoff, jobID)
 				}
 			}
+
+			c.server.RefreshQueueDepth()
 		}
 	}
 }
@@ -471,6 +500,7 @@ func (c *Coordinator) periodicScan() {
 
 			if newJobsCount > 0 {
 				slog.Info("Found new video files during periodic scan", "new_jobs", newJobsCount, "total_scanned", len(jobs))
+				c.server.RefreshQueueDepth()
 			} else {
 				slog.Debug("No new video files found", "total_scanned", len(jobs))
 			}

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -18,10 +19,13 @@ func LoadWorkerConfig(path string) (*models.WorkerConfig, error) {
 	}
 
 	var cfg models.WorkerConfig
-	err = yaml.Unmarshal(data, &cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	if len(bytes.TrimSpace(data)) > 0 {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		err = dec.Decode(&cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
+		}
 	}
-
 	return &cfg, nil
 }

@@ -190,18 +190,16 @@ logging:
 `, workerID, cachePath, filepath.Join(logDir, fmt.Sprintf("%s.log", workerID)))
 }
 
-// buildBinaryIfNeeded builds a binary if it doesn't exist
-func buildBinaryIfNeeded(t *testing.T, binaryPath, sourceDir string) {
+// buildBinary builds a fresh binary from the current source tree.
+func buildBinary(t *testing.T, binaryPath, sourceDir string) {
 	t.Helper()
-	_, statErr := os.Stat(binaryPath)
-	if os.IsNotExist(statErr) {
-		t.Logf("Building binary at %s...", binaryPath)
-		buildCmd := exec.Command("go", "build", "-o", filepath.Base(binaryPath), "./main.go")
-		buildCmd.Dir = sourceDir
-		output, buildErr := buildCmd.CombinedOutput()
-		if buildErr != nil {
-			t.Fatalf("Failed to build binary: %v\n%s", buildErr, output)
-		}
+
+	t.Logf("Building binary at %s...", binaryPath)
+	buildCmd := exec.Command("go", "build", "-o", filepath.Base(binaryPath), "./main.go")
+	buildCmd.Dir = sourceDir
+	output, buildErr := buildCmd.CombinedOutput()
+	if buildErr != nil {
+		t.Fatalf("Failed to build binary: %v\n%s", buildErr, output)
 	}
 }
 
@@ -276,6 +274,25 @@ func waitForWorkerHeartbeats(t *testing.T, db *sql.DB, want int, timeout time.Du
 	}
 
 	t.Fatalf("timed out waiting for %d worker heartbeats; last count=%d", want, lastCount)
+}
+
+func waitForJobsTable(t *testing.T, db *sql.DB, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var tableName string
+
+	for time.Now().Before(deadline) {
+		err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").Scan(&tableName)
+		if err == nil {
+			return
+		}
+		if err != sql.ErrNoRows {
+			t.Fatalf("Failed to check jobs table: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatal("timed out waiting for jobs table to be created")
 }
 
 // queryJobStats queries job statistics from the database
@@ -418,7 +435,7 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Build and start master
 	masterBinary := filepath.Join(env.repoRoot, "video-converter-master", "master")
-	buildBinaryIfNeeded(t, masterBinary, filepath.Join(env.repoRoot, "video-converter-master"))
+	buildBinary(t, masterBinary, filepath.Join(env.repoRoot, "video-converter-master"))
 
 	t.Log("Starting master server...")
 	masterCmd := startProcess(t, "master", masterBinary, "--config", masterConfigPath)
@@ -439,6 +456,8 @@ func TestDistributedFileTransfer(t *testing.T) {
 		}
 	}()
 
+	waitForJobsTable(t, db, 30*time.Second)
+
 	var jobCount int
 	err = db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&jobCount)
 	if err != nil {
@@ -448,7 +467,7 @@ func TestDistributedFileTransfer(t *testing.T) {
 
 	// Build worker binary
 	workerBinary := filepath.Join(env.repoRoot, "video-converter-worker", "worker")
-	buildBinaryIfNeeded(t, workerBinary, filepath.Join(env.repoRoot, "video-converter-worker"))
+	buildBinary(t, workerBinary, filepath.Join(env.repoRoot, "video-converter-worker"))
 
 	// Create worker configs
 	worker1ConfigPath := filepath.Join(env.testDir, "worker1-config.yaml")

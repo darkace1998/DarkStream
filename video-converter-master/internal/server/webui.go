@@ -119,6 +119,19 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
         <div id="status" class="status" style="display: none;"></div>
 
+        {{if .APIKeyRequired}}
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>🔐 Admin Access</h2>
+            <div class="form-group">
+                <label for="apiKeyInput">API Key</label>
+                <input id="apiKeyInput" type="password" placeholder="Enter master API key" autocomplete="current-password" />
+            </div>
+            <button class="btn btn-primary" type="button" onclick="saveApiKey()">Save Key</button>
+            <button class="btn btn-danger" type="button" onclick="clearApiKey()">Clear</button>
+            <span class="meta">Stored locally in this browser.</span>
+        </div>
+        {{end}}
+
         <!-- Tab Navigation -->
         <div class="tabs">
             <div class="tab active" data-tab="queue">📋 Job Queue</div>
@@ -522,6 +535,58 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
     </div>
 
     <script>
+        const apiKeyStorageKey = 'darkstreamAdminApiKey';
+
+        function loadApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            if (!input) {
+                return;
+            }
+            const saved = localStorage.getItem(apiKeyStorageKey) || '';
+            input.value = saved;
+        }
+
+        function saveApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            if (!input) {
+                return;
+            }
+            const value = input.value.trim();
+            if (value) {
+                localStorage.setItem(apiKeyStorageKey, value);
+            } else {
+                localStorage.removeItem(apiKeyStorageKey);
+            }
+        }
+
+        function clearApiKey() {
+            localStorage.removeItem(apiKeyStorageKey);
+            const input = document.getElementById('apiKeyInput');
+            if (input) {
+                input.value = '';
+            }
+        }
+
+        function authHeaders(headers) {
+            const out = {};
+            if (headers) {
+                Object.keys(headers).forEach(function(key) {
+                    out[key] = headers[key];
+                });
+            }
+            const apiKey = localStorage.getItem(apiKeyStorageKey);
+            if (apiKey) {
+                out.Authorization = 'Bearer ' + apiKey;
+            }
+            return out;
+        }
+
+        async function authorizedFetch(url, options) {
+            const opts = options || {};
+            opts.headers = authHeaders(opts.headers);
+            return fetch(url, opts);
+        }
+
         // Tab switching
         document.querySelectorAll('.tab').forEach(function(tab) {
             tab.addEventListener('click', function() {
@@ -531,6 +596,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 document.getElementById(this.dataset.tab).classList.add('active');
             });
         });
+
+        loadApiKey();
 
         // Config form submission
         document.getElementById('configForm').addEventListener('submit', async function(e) {
@@ -574,7 +641,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             };
             
             try {
-                const resp = await fetch('/api/config', {
+                const resp = await authorizedFetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
@@ -597,7 +664,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         async function cancelJob(jobId) {
             if (!confirm('Cancel job ' + jobId + '?')) return;
             try {
-                const resp = await fetch('/api/job/cancel?job_id=' + jobId, { method: 'POST' });
+                const resp = await authorizedFetch('/api/job/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
                 if (resp.ok) {
                     location.reload();
                 } else {
@@ -612,7 +679,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         async function cancelAllPending() {
             if (!confirm('Cancel ALL pending jobs?')) return;
             try {
-                const resp = await fetch('/api/jobs/cancel?status=pending', { method: 'POST' });
+                const resp = await authorizedFetch('/api/jobs/cancel?status=pending', { method: 'POST' });
                 if (resp.ok) {
                     const data = await resp.json();
                     alert('Cancelled ' + data.cancelled_count + ' jobs');
@@ -638,7 +705,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         // Fetch stats periodically
         async function updateStats() {
             try {
-                const resp = await fetch('/api/stats');
+                const resp = await authorizedFetch('/api/stats');
                 if (resp.ok) {
                     const data = await resp.json();
                     if (data.pending !== undefined) document.getElementById('stat-pending').textContent = data.pending;
@@ -659,7 +726,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             document.getElementById('workerModal').style.display = 'block';
             
             try {
-                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId));
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId));
                 if (resp.ok) {
                     const settings = await resp.json();
                     document.getElementById('wsConcurrency').value = settings.concurrency || 3;
@@ -707,7 +774,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             };
             
             try {
-                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(settings)
@@ -735,7 +802,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             if (!confirm('Reset settings for ' + workerId + ' to defaults?')) return;
             
             try {
-                const resp = await fetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
                     method: 'DELETE'
                 });
                 if (resp.ok) {
@@ -783,8 +850,9 @@ type WebUIData struct {
 	PendingJobs    []*models.Job
 	ProcessingJobs []*models.Job
 	RecentJobs     []*models.Job
-	MasterURL      string                      // URL for workers to connect
-	WorkerDefaults *models.RemoteWorkerConfig  // Worker default settings
+	MasterURL      string                     // URL for workers to connect
+	WorkerDefaults *models.RemoteWorkerConfig // Worker default settings
+	APIKeyRequired bool
 }
 
 // ServeWebUI serves the web interface at the root path
@@ -880,6 +948,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		RecentJobs:     recentJobs,
 		MasterURL:      masterURL,
 		WorkerDefaults: workerDefaults,
+		APIKeyRequired: s.apiKey != "",
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -920,6 +989,9 @@ func (s *Server) GetConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
 		return
 	}
 

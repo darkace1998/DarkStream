@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Status displays the current conversion progress from the master server.
@@ -32,13 +33,18 @@ func Status(args []string) {
 }
 
 func displayStatus(masterURL, format string) {
-	req, err := newMasterRequest(http.MethodGet, masterURL+"/api/status", nil, "")
+	url, err := utils.BuildURL(masterURL, "/api/status", nil)
+	if err != nil {
+		slog.Error("Error building request URL", "error", err)
+		os.Exit(1)
+	}
+	req, err := newMasterRequest(http.MethodGet, url, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		return
+		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
@@ -52,21 +58,25 @@ func displayStatus(masterURL, format string) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
-		return
+		if len(body) > 0 {
+			slog.Info(string(body))
+		}
+		os.Exit(1)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	var stats map[string]any
 	err = json.Unmarshal(body, &stats)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))

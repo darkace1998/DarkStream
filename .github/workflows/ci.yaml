@@ -5,6 +5,8 @@ permissions:
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   schedule:
     # Run tests weekly on Sundays at 00:00 UTC
     - cron: '0 0 1-7 * 0'
@@ -29,7 +31,7 @@ jobs:
     - name: Install Vulkan development libraries
       run: |
         sudo apt-get update
-        sudo apt-get install -y libvulkan-dev pkg-config
+        sudo apt-get install -y ffmpeg libvulkan-dev pkg-config
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -94,7 +96,7 @@ jobs:
       uses: codecov/codecov-action@v4
       with:
         files: ./video-converter-common/coverage-common.out,./video-converter-master/coverage-master.out,./video-converter-worker/coverage-worker.out,./video-converter-cli/coverage-cli.out
-        fail_ci_if_error: false
+        fail_ci_if_error: true
 
   build:
     name: Build
@@ -131,8 +133,9 @@ jobs:
 
     - name: Test binaries
       run: |
-        ./bin/video-converter-cli --help || echo "CLI help succeeded or not available"
-        echo "Build test completed"
+        ./bin/video-converter-master --help
+        ./bin/video-converter-worker --help
+        ./bin/video-converter-cli --help
 
     - name: Upload built binaries
       if: always()

@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // ErrNoJobsAvailable is returned when no jobs are available from the master
@@ -78,8 +80,17 @@ func (mc *MasterClient) SetEnableResumeDownload(enable bool) {
 
 // GetNextJob requests the next available job from the master
 func (mc *MasterClient) GetNextJob() (*models.Job, error) {
-	url := fmt.Sprintf("%s/api/worker/next-job?worker_id=%s&gpu_available=%t",
-		mc.baseURL, mc.workerID, mc.gpuAvailable)
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return nil, err
+	}
+	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-job", url.Values{
+		"worker_id":     {mc.workerID},
+		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request URL: %w", err)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -131,8 +142,18 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		limit = 20
 	}
 
-	url := fmt.Sprintf("%s/api/worker/next-jobs?worker_id=%s&gpu_available=%t&limit=%d",
-		mc.baseURL, mc.workerID, mc.gpuAvailable, limit)
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return nil, err
+	}
+	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-jobs", url.Values{
+		"worker_id":     {mc.workerID},
+		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
+		"limit":         {fmt.Sprintf("%d", limit)},
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request URL: %w", err)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -181,6 +202,9 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
 	payload := map[string]any{
 		"job_id":      jobID,
 		"worker_id":   mc.workerID,
@@ -192,9 +216,11 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/api/worker/job-complete", mc.baseURL),
-		bytes.NewReader(body))
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-complete", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build request URL: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -225,6 +251,9 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
 	payload := map[string]any{
 		"job_id":        jobID,
 		"worker_id":     mc.workerID,
@@ -236,9 +265,11 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/api/worker/job-failed", mc.baseURL),
-		bytes.NewReader(body))
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-failed", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build request URL: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,15 +299,22 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		slog.Error("Refusing to send heartbeat", "error", err)
+		return
+	}
 	body, err := json.Marshal(hb)
 	if err != nil {
 		slog.Error("Failed to marshal heartbeat", "error", err)
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/api/worker/heartbeat", mc.baseURL),
-		bytes.NewReader(body))
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/heartbeat", nil)
+	if err != nil {
+		slog.Error("Failed to build heartbeat request URL", "error", err)
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create heartbeat request", "error", err)
 		return
@@ -309,15 +347,22 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		slog.Error("Refusing to send job progress", "error", err)
+		return
+	}
 	body, err := json.Marshal(progress)
 	if err != nil {
 		slog.Error("Failed to marshal job progress", "error", err)
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/api/worker/job-progress", mc.baseURL),
-		bytes.NewReader(body))
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-progress", nil)
+	if err != nil {
+		slog.Error("Failed to build job progress request URL", "error", err)
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create job progress request", "error", err)
 		return
@@ -604,12 +649,17 @@ func (mc *MasterClient) addAuthHeader(req *http.Request) {
 //
 //nolint:gocognit,cyclop // File download with resume support is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) error {
-	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/download-video", url.Values{"job_id": []string{jobID}})
+	if err != nil {
+		return fmt.Errorf("failed to build download URL: %w", err)
+	}
 
 	// Create output directory
 	outputDir := filepath.Dir(outputPath)
-	err := os.MkdirAll(outputDir, 0o750)
-	if err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -624,7 +674,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 	}
 
 	// Create HTTP request with Range header for resume
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
@@ -728,6 +778,9 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string) err
 
 // uploadConvertedVideoAttempt performs a single upload attempt
 func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) error {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
 	// Open the file
 	// filePath is derived from job metadata, not untrusted user input
 	// #nosec G304: filePath comes from job metadata
@@ -785,8 +838,11 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 	}()
 
 	// Create HTTP request
-	url := fmt.Sprintf("%s/api/worker/upload-video?job_id=%s", mc.baseURL, jobID)
-	req, err := http.NewRequest(http.MethodPost, url, pipeReader)
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/upload-video", url.Values{"job_id": []string{jobID}})
+	if err != nil {
+		return fmt.Errorf("failed to build upload URL: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, pipeReader)
 	if err != nil {
 		return fmt.Errorf("failed to create upload request: %w", err)
 	}
@@ -844,12 +900,17 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string) erro
 //
 //nolint:gocognit,cyclop // File download with resume support and progress tracking is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath string, progressCallback ProgressCallback) error {
-	url := fmt.Sprintf("%s/api/worker/download-video?job_id=%s", mc.baseURL, jobID)
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/download-video", url.Values{"job_id": []string{jobID}})
+	if err != nil {
+		return fmt.Errorf("failed to build download URL: %w", err)
+	}
 
 	// Create output directory
 	outputDir := filepath.Dir(outputPath)
-	err := os.MkdirAll(outputDir, 0o750)
-	if err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -864,7 +925,7 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 	}
 
 	// Create HTTP request with Range header for resume
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
@@ -978,6 +1039,9 @@ func (mc *MasterClient) downloadSourceVideoAttemptWithProgress(jobID, outputPath
 
 // uploadConvertedVideoAttemptWithProgress performs a single upload attempt with progress tracking
 func (mc *MasterClient) uploadConvertedVideoAttemptWithProgress(jobID, filePath string, progressCallback ProgressCallback) error {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
 	// Open the file
 	// filePath is derived from job metadata, not untrusted user input
 	// #nosec G304: filePath comes from job metadata
@@ -1042,8 +1106,11 @@ func (mc *MasterClient) uploadConvertedVideoAttemptWithProgress(jobID, filePath 
 	}()
 
 	// Create HTTP request
-	url := fmt.Sprintf("%s/api/worker/upload-video?job_id=%s", mc.baseURL, jobID)
-	req, err := http.NewRequest(http.MethodPost, url, pipeReader)
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/upload-video", url.Values{"job_id": []string{jobID}})
+	if err != nil {
+		return fmt.Errorf("failed to build upload URL: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, requestURL, pipeReader)
 	if err != nil {
 		return fmt.Errorf("failed to create upload request: %w", err)
 	}

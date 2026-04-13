@@ -6,11 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Default configuration values for ConfigFetcher
@@ -247,12 +249,25 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 // If workerID is provided, fetches worker-specific config if available.
 func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteWorkerConfig, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	url := fmt.Sprintf("%s/api/worker/config", masterURL)
+	requestURL, err := utils.BuildURL(masterURL, "/api/worker/config", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build worker config URL: %w", err)
+	}
 	if workerID != "" {
-		url = fmt.Sprintf("%s?worker_id=%s", url, workerID)
+		parsedURL, parseErr := url.Parse(requestURL)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse worker config URL: %w", parseErr)
+		}
+		query := parsedURL.Query()
+		query.Set("worker_id", workerID)
+		parsedURL.RawQuery = query.Encode()
+		requestURL = parsedURL.String()
 	}
 
 	apiKey := os.Getenv("DARKSTREAM_API_KEY")
+	if err := utils.ValidateSecureTransport(requestURL, apiKey != ""); err != nil {
+		return nil, err
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < DefaultMaxRetries; attempt++ {
@@ -262,7 +277,7 @@ func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteW
 			time.Sleep(delay)
 		}
 
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create worker config request: %w", err)
 		}

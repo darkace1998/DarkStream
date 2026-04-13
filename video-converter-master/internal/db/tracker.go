@@ -454,6 +454,21 @@ func (t *Tracker) GetJobStats() (map[string]any, error) {
 	return stats, nil
 }
 
+// execJobTransition executes a conditional job update and reports whether it matched any rows.
+func (t *Tracker) execJobTransition(query string, args ...any) (bool, error) {
+	result, err := t.db.Exec(query, args...)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rowsAffected > 0, nil
+}
+
 // GetWorkers returns all workers from the database
 func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	rows, err := t.db.Query(`
@@ -926,27 +941,131 @@ func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 	return t.scanJobsFromRows(rows)
 }
 
-// ResetJobToPending resets a job status to pending for retry
-func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool) error {
-	var err error
+// ResetJobToPending resets a job status to pending for retry.
+// The expected status, worker ID, and start time protect against stale retries racing with newer state.
+func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool, expectedStatus, expectedWorkerID string, expectedStartedAt *time.Time) (bool, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'pending',
+			worker_id = '',
+			started_at = NULL,
+			completed_at = NULL,
+			error_message = '',
+			output_size = NULL,
+			output_checksum = ''
+	`
 	if incrementRetry {
-		_, err = t.db.Exec(`
-			UPDATE jobs
-			SET status = 'pending', worker_id = '', error_message = '', retry_count = retry_count + 1
-			WHERE id = ?
-		`, jobID)
-	} else {
-		_, err = t.db.Exec(`
-			UPDATE jobs
-			SET status = 'pending', worker_id = '', error_message = ''
-			WHERE id = ?
-		`, jobID)
+		query += ", retry_count = retry_count + 1"
+	}
+	query += " WHERE id = ?"
+
+	args := []any{jobID}
+	if expectedStatus != "" {
+		query += " AND status = ?"
+		args = append(args, expectedStatus)
+	}
+	if expectedWorkerID != "" {
+		query += " AND worker_id = ?"
+		args = append(args, expectedWorkerID)
+	}
+	if expectedStartedAt != nil {
+		query += " AND started_at = ?"
+		args = append(args, *expectedStartedAt)
 	}
 
+	matched, err := t.execJobTransition(query, args...)
 	if err != nil {
-		return fmt.Errorf("failed to reset job to pending: %w", err)
+		return false, fmt.Errorf("failed to reset job to pending: %w", err)
 	}
-	return nil
+	return matched, nil
+}
+
+// MarkJobCompleted transitions a processing job to completed if it still belongs to the worker.
+func (t *Tracker) MarkJobCompleted(jobID, workerID string, outputSize int64, outputChecksum string, expectedStartedAt *time.Time) (bool, error) {
+	now := time.Now()
+	query := `
+		UPDATE jobs
+		SET status = 'completed',
+			worker_id = ?,
+			completed_at = ?,
+			output_size = ?,
+			output_checksum = ?,
+			error_message = ''
+		WHERE id = ? AND status = 'processing' AND worker_id = ?
+	`
+	args := []any{workerID, now, outputSize, outputChecksum, jobID, workerID}
+	if expectedStartedAt != nil {
+		query += " AND started_at = ?"
+		args = append(args, *expectedStartedAt)
+	}
+	matched, err := t.execJobTransition(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to complete job: %w", err)
+	}
+	return matched, nil
+}
+
+// MarkJobFailed transitions a processing job to failed if it still belongs to the worker.
+func (t *Tracker) MarkJobFailed(jobID, workerID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'failed',
+			worker_id = ?,
+			error_message = ?
+		WHERE id = ? AND status = 'processing' AND worker_id = ?
+	`
+	args := []any{workerID, errorMessage, jobID, workerID}
+	if expectedStartedAt != nil {
+		query += " AND started_at = ?"
+		args = append(args, *expectedStartedAt)
+	}
+	matched, err := t.execJobTransition(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark job as failed: %w", err)
+	}
+	return matched, nil
+}
+
+// MarkJobFailedPermanently transitions a stale processing job to failed and records completion time.
+func (t *Tracker) MarkJobFailedPermanently(jobID, workerID, errorMessage string, completedAt time.Time, expectedStartedAt *time.Time) (bool, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'failed',
+			worker_id = ?,
+			error_message = ?,
+			completed_at = ?
+		WHERE id = ? AND status = 'processing' AND worker_id = ?
+	`
+	args := []any{workerID, errorMessage, completedAt, jobID, workerID}
+	if expectedStartedAt != nil {
+		query += " AND started_at = ?"
+		args = append(args, *expectedStartedAt)
+	}
+	matched, err := t.execJobTransition(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark job as permanently failed: %w", err)
+	}
+	return matched, nil
+}
+
+// MarkJobCancelled cancels a job if it is still pending or processing.
+func (t *Tracker) MarkJobCancelled(jobID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'failed',
+			error_message = ?
+		WHERE id = ? AND status IN ('pending', 'processing')
+	`
+	args := []any{errorMessage, jobID}
+	if expectedStartedAt != nil {
+		query += " AND started_at = ?"
+		args = append(args, *expectedStartedAt)
+	}
+	matched, err := t.execJobTransition(query, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to cancel job: %w", err)
+	}
+	return matched, nil
 }
 
 // Close closes the database connection
@@ -1145,7 +1264,6 @@ func (t *Tracker) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
 	`
 
@@ -1170,6 +1288,11 @@ func (t *Tracker) initSchema() error {
 	err = t.migratePriorityColumn()
 	if err != nil {
 		return fmt.Errorf("failed to migrate priority column: %w", err)
+	}
+
+	_, err = t.db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)`)
+	if err != nil {
+		return fmt.Errorf("failed to create priority index: %w", err)
 	}
 
 	// Add video metadata columns if they don't exist (migration)

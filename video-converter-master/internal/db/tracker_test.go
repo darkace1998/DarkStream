@@ -862,15 +862,17 @@ func TestResetJobToPending(t *testing.T) {
 
 	// Create a failed job
 	failedJob := &models.Job{
-		ID:           "failed-job",
-		SourcePath:   "/source/failed.mp4",
-		OutputPath:   "/output/failed.mp4",
-		Status:       "failed",
-		WorkerID:     "worker-1",
-		ErrorMessage: "some error",
-		CreatedAt:    time.Now().Add(-1 * time.Hour),
-		RetryCount:   1,
-		MaxRetries:   3,
+		ID:             "failed-job",
+		SourcePath:     "/source/failed.mp4",
+		OutputPath:     "/output/failed.mp4",
+		Status:         "failed",
+		WorkerID:       "worker-1",
+		ErrorMessage:   "some error",
+		OutputSize:     42,
+		OutputChecksum: "old-checksum",
+		CreatedAt:      time.Now().Add(-1 * time.Hour),
+		RetryCount:     1,
+		MaxRetries:     3,
 	}
 	err = tracker.CreateJob(failedJob)
 	if err != nil {
@@ -882,9 +884,12 @@ func TestResetJobToPending(t *testing.T) {
 	}
 
 	// Reset job to pending with retry increment
-	err = tracker.ResetJobToPending("failed-job", true)
+	updated, err := tracker.ResetJobToPending("failed-job", true, "failed", "", nil)
 	if err != nil {
 		t.Fatalf("Failed to reset job: %v", err)
+	}
+	if !updated {
+		t.Fatal("Expected failed-job to be reset")
 	}
 
 	// Verify job was reset
@@ -903,6 +908,22 @@ func TestResetJobToPending(t *testing.T) {
 
 	if resetJob.ErrorMessage != "" {
 		t.Errorf("Expected empty error_message, got '%s'", resetJob.ErrorMessage)
+	}
+
+	if resetJob.StartedAt != nil {
+		t.Error("Expected started_at to be cleared")
+	}
+
+	if resetJob.CompletedAt != nil {
+		t.Error("Expected completed_at to be cleared")
+	}
+
+	if resetJob.OutputSize != 0 {
+		t.Errorf("Expected output_size 0, got %d", resetJob.OutputSize)
+	}
+
+	if resetJob.OutputChecksum != "" {
+		t.Errorf("Expected output_checksum to be cleared, got '%s'", resetJob.OutputChecksum)
 	}
 
 	if resetJob.RetryCount != 2 {
@@ -931,9 +952,12 @@ func TestResetJobToPending(t *testing.T) {
 	}
 
 	// Reset without increment (worker failure, not job's fault)
-	err = tracker.ResetJobToPending("failed-job-2", false)
+	updated, err = tracker.ResetJobToPending("failed-job-2", false, "processing", "worker-1", nil)
 	if err != nil {
 		t.Fatalf("Failed to reset job2: %v", err)
+	}
+	if !updated {
+		t.Fatal("Expected failed-job-2 to be reset")
 	}
 
 	resetJob2, err := tracker.GetJobByID("failed-job-2")
@@ -943,6 +967,120 @@ func TestResetJobToPending(t *testing.T) {
 
 	if resetJob2.RetryCount != 0 {
 		t.Errorf("Expected retry_count 0 (no increment), got %d", resetJob2.RetryCount)
+	}
+
+	// Reset should not apply when state has already changed
+	changedJob := &models.Job{
+		ID:         "changed-job",
+		SourcePath: "/source/changed.mp4",
+		OutputPath: "/output/changed.mp4",
+		Status:     "processing",
+		WorkerID:   "worker-9",
+		CreatedAt:  time.Now().Add(-1 * time.Hour),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	err = tracker.CreateJob(changedJob)
+	if err != nil {
+		t.Fatalf("Failed to create changed job: %v", err)
+	}
+	err = tracker.UpdateJob(changedJob)
+	if err != nil {
+		t.Fatalf("Failed to update changed job: %v", err)
+	}
+
+	updated, err = tracker.ResetJobToPending("changed-job", true, "processing", "worker-1", nil)
+	if err != nil {
+		t.Fatalf("Failed to reset changed job: %v", err)
+	}
+	if updated {
+		t.Fatal("Expected changed-job reset to be skipped")
+	}
+}
+
+func TestJobTransitionHelpers(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		err := tracker.Close()
+		if err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	job := &models.Job{
+		ID:         "transition-job",
+		SourcePath: "/source/transition.mp4",
+		OutputPath: "/output/transition.mp4",
+		Status:     "processing",
+		WorkerID:   "worker-1",
+		CreatedAt:  time.Now().Add(-1 * time.Hour),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	err = tracker.CreateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+	err = tracker.UpdateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to update job: %v", err)
+	}
+
+	updated, err := tracker.MarkJobCompleted(job.ID, "worker-1", 1234, "sum-1", nil)
+	if err != nil {
+		t.Fatalf("Failed to complete job: %v", err)
+	}
+	if !updated {
+		t.Fatal("Expected job to complete")
+	}
+
+	completedJob, err := tracker.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch completed job: %v", err)
+	}
+	if completedJob.Status != "completed" || completedJob.OutputSize != 1234 || completedJob.OutputChecksum != "sum-1" {
+		t.Fatalf("Unexpected completed job state: %+v", completedJob)
+	}
+
+	updated, err = tracker.MarkJobCancelled(job.ID, "cancelled", nil)
+	if err != nil {
+		t.Fatalf("Failed to cancel completed job: %v", err)
+	}
+	if updated {
+		t.Fatal("Expected completed job cancellation to be rejected")
+	}
+
+	otherJob := &models.Job{
+		ID:         "transition-job-2",
+		SourcePath: "/source/transition2.mp4",
+		OutputPath: "/output/transition2.mp4",
+		Status:     "processing",
+		WorkerID:   "worker-2",
+		CreatedAt:  time.Now().Add(-1 * time.Hour),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	err = tracker.CreateJob(otherJob)
+	if err != nil {
+		t.Fatalf("Failed to create second job: %v", err)
+	}
+	err = tracker.UpdateJob(otherJob)
+	if err != nil {
+		t.Fatalf("Failed to update second job: %v", err)
+	}
+
+	updated, err = tracker.MarkJobFailed(otherJob.ID, "worker-1", "stale failure", nil)
+	if err != nil {
+		t.Fatalf("Failed to mark job failed: %v", err)
+	}
+	if updated {
+		t.Fatal("Expected mismatched worker failure to be rejected")
 	}
 }
 

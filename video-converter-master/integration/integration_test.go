@@ -84,8 +84,8 @@ logging:
 		t.Fatalf("Failed to write master config: %v", err)
 	}
 
-	// Build master if needed
 	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
+	buildTestBinary(t, masterBinary, filepath.Join(repoRoot, "video-converter-master"))
 
 	// Start master server
 	// #nosec G204 - masterBinary is constructed from controlled paths, not user input
@@ -160,4 +160,15 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 	return nil
+}
+
+func buildTestBinary(t *testing.T, binaryPath, sourceDir string) {
+	t.Helper()
+
+	buildCmd := exec.Command("go", "build", "-o", filepath.Base(binaryPath), "./main.go")
+	buildCmd.Dir = sourceDir
+	output, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to build binary %s: %v\n%s", binaryPath, err, output)
+	}
 }

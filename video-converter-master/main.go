@@ -23,7 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+	logger.Init(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath)
 
 	coord, err := coordinator.New(cfg)
 	if err != nil {

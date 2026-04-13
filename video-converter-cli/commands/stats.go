@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Stats displays detailed statistics about jobs and workers from the master server.
@@ -25,13 +26,19 @@ func Stats(args []string) {
 }
 
 func displayStats(masterURL, format string, detailed bool) {
-	req, err := newMasterRequest(http.MethodGet, masterURL+"/api/stats", nil, "")
+	url, err := utils.BuildURL(masterURL, "/api/stats", nil)
 	if err != nil {
-		slog.Error("Error creating request", "error", err)
-		return
+		slog.Error("Error building request URL", "error", err)
+		os.Exit(1)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	req, err := newMasterRequest(http.MethodGet, url, nil, "")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		os.Exit(1)
+	}
+
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
@@ -45,38 +52,57 @@ func displayStats(masterURL, format string, detailed bool) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
-		return
+		if len(body) > 0 {
+			slog.Info(string(body))
+		}
+		os.Exit(1)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	var stats map[string]any
 	err = json.Unmarshal(body, &stats)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	// If detailed, also fetch workers
 	var workerData map[string]any
 	if detailed {
-		workerReq, err := newMasterRequest(http.MethodGet, masterURL+"/api/workers", nil, "")
+		workerURL, err := utils.BuildURL(masterURL, "/api/workers", nil)
+		if err != nil {
+			slog.Warn("Failed to build detailed worker stats URL", "error", err)
+			workerURL = ""
+		}
+		workerReq, err := newMasterRequest(http.MethodGet, workerURL, nil, "")
 		if err == nil {
-			workerResp, err := http.DefaultClient.Do(workerReq)
+			workerResp, err := doMasterRequest(workerReq)
 			if err == nil {
 				defer func() {
 					_ = workerResp.Body.Close()
 				}()
 				workerBody, err := io.ReadAll(workerResp.Body)
 				if err == nil {
-					_ = json.Unmarshal(workerBody, &workerData)
+					if workerResp.StatusCode == http.StatusOK {
+						_ = json.Unmarshal(workerBody, &workerData)
+					} else {
+						slog.Warn("Failed to fetch detailed worker stats", "status", workerResp.StatusCode, "body", string(workerBody))
+					}
+				} else {
+					slog.Warn("Failed to read detailed worker stats response", "error", err)
 				}
+			} else {
+				slog.Warn("Failed to fetch detailed worker stats", "error", err)
 			}
+		} else {
+			slog.Warn("Failed to create detailed worker stats request", "error", err)
 		}
 	}
 

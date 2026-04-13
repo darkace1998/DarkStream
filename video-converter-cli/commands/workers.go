@@ -7,10 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/darkace1998/video-converter-cli/commands/formatter"
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Workers displays information about workers from the master server.
@@ -31,18 +33,23 @@ func Workers(args []string) {
 }
 
 func displayWorkers(masterURL string, activeOnly bool, format string) {
-	url := masterURL + "/api/workers"
+	query := url.Values{}
 	if activeOnly {
-		url += "?active_only=true"
+		query.Set("active_only", "true")
 	}
-
-	req, err := newMasterRequest(http.MethodGet, url, nil, "")
+	requestURL, err := utils.BuildURL(masterURL, "/api/workers", query)
 	if err != nil {
-		slog.Error("Error creating request", "error", err)
+		slog.Error("Error building request URL", "error", err)
 		return
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	req, err := newMasterRequest(http.MethodGet, requestURL, nil, "")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		os.Exit(1)
+	}
+
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
@@ -56,21 +63,25 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
-		return
+		if len(body) > 0 {
+			slog.Info(string(body))
+		}
+		os.Exit(1)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
