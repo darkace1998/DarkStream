@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
@@ -164,6 +167,97 @@ func TestGetStats_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
+	srv := newTestServer(t)
+
+	jobs := []*models.Job{
+		{
+			ID:         "job-low",
+			SourcePath: "/source/low.mp4",
+			OutputPath: "/output/low.mp4",
+			Status:     "pending",
+			Priority:   1,
+			CreatedAt:  time.Now().Add(-3 * time.Minute),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+		{
+			ID:         "job-high",
+			SourcePath: "/source/high.mp4",
+			OutputPath: "/output/high.mp4",
+			Status:     "pending",
+			Priority:   10,
+			CreatedAt:  time.Now().Add(-2 * time.Minute),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+		{
+			ID:         "job-medium",
+			SourcePath: "/source/medium.mp4",
+			OutputPath: "/output/medium.mp4",
+			Status:     "pending",
+			Priority:   5,
+			CreatedAt:  time.Now().Add(-1 * time.Minute),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+	}
+
+	for _, job := range jobs {
+		if err := srv.db.CreateJob(job); err != nil {
+			t.Fatalf("Failed to create job %s: %v", job.ID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/worker/next-jobs?worker_id=worker-1&limit=2", nil)
+	rec := httptest.NewRecorder()
+
+	srv.GetNextJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetNextJobs status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Jobs  []models.Job `json:"jobs"`
+		Count int          `json:"count"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if body.Count != 2 {
+		t.Fatalf("count = %d, want 2", body.Count)
+	}
+	if len(body.Jobs) != 2 {
+		t.Fatalf("jobs length = %d, want 2", len(body.Jobs))
+	}
+	if body.Jobs[0].ID != "job-high" || body.Jobs[1].ID != "job-medium" {
+		t.Fatalf("jobs ordered as [%s, %s], want [job-high, job-medium]", body.Jobs[0].ID, body.Jobs[1].ID)
+	}
+
+	for _, id := range []string{"job-high", "job-medium"} {
+		job, err := srv.db.GetJobByID(id)
+		if err != nil {
+			t.Fatalf("Failed to fetch job %s: %v", id, err)
+		}
+		if job.Status != "processing" {
+			t.Fatalf("job %s status = %s, want processing", id, job.Status)
+		}
+		if job.WorkerID != "worker-1" {
+			t.Fatalf("job %s worker_id = %s, want worker-1", id, job.WorkerID)
+		}
+	}
+
+	lowJob, err := srv.db.GetJobByID("job-low")
+	if err != nil {
+		t.Fatalf("Failed to fetch low priority job: %v", err)
+	}
+	if lowJob.Status != "pending" {
+		t.Fatalf("job-low status = %s, want pending", lowJob.Status)
+	}
+}
+
 func TestAuthMiddleware_NoAPIKey(t *testing.T) {
 	srv := newTestServer(t)
 	// No API key configured = auth is skipped (backward compatibility)
@@ -239,6 +333,78 @@ func TestAuthMiddleware_WithAPIKey(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_SetsAuthenticatedContext(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = "test-secret-key"
+
+	handler := srv.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if !srv.authenticatedRequest(r) {
+			t.Error("expected authenticated request context to be set")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer test-secret-key")
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestGetWorkerConfigRedactsAPIKeyUnlessAuthenticated(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = "test-secret-key"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/worker/config", nil)
+	rec := httptest.NewRecorder()
+
+	srv.GetWorkerConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetWorkerConfig status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body models.RemoteWorkerConfig
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if body.APIKey != "" {
+		t.Fatalf("APIKey = %q, want empty for unauthenticated request", body.APIKey)
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/api/worker/config", nil)
+	authReq = authReq.WithContext(context.WithValue(authReq.Context(), authContextKey{}, true))
+	authRec := httptest.NewRecorder()
+
+	srv.GetWorkerConfig(authRec, authReq)
+
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("authenticated GetWorkerConfig status = %d, want %d", authRec.Code, http.StatusOK)
+	}
+
+	var authBody models.RemoteWorkerConfig
+	if err := json.NewDecoder(authRec.Body).Decode(&authBody); err != nil {
+		t.Fatalf("Failed to decode authenticated response: %v", err)
+	}
+	if authBody.APIKey != srv.apiKey {
+		t.Fatalf("APIKey = %q, want %q", authBody.APIKey, srv.apiKey)
+	}
+}
+
+func TestStartRequiresTLSWhenAPIKeyConfigured(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = "test-secret-key"
+
+	err := srv.Start()
+	if err == nil {
+		t.Fatal("Start() = nil, want error when API key is configured without TLS")
+	}
+}
+
 func TestValidateJobID(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -285,5 +451,96 @@ func TestListWorkers_Empty(t *testing.T) {
 	count, ok := body["count"].(float64)
 	if !ok || count != 0 {
 		t.Errorf("count = %v, want 0", body["count"])
+	}
+}
+
+func TestGetNextJob_AtomicClaim(t *testing.T) {
+	srv := newTestServer(t)
+
+	job := &models.Job{
+		ID:         "atomic-http-job",
+		SourcePath: "/source/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		Priority:   5,
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	if err := srv.db.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	start := make(chan struct{})
+	type result struct {
+		code int
+		job  *models.Job
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+
+	for _, workerID := range []string{"worker-a", "worker-b"} {
+		wg.Add(1)
+		go func(workerID string) {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodGet, "/api/worker/next-job?worker_id="+workerID, nil)
+			rec := httptest.NewRecorder()
+
+			srv.GetNextJob(rec, req)
+
+			var claimed *models.Job
+			if rec.Code == http.StatusOK {
+				var decoded models.Job
+				if err := json.NewDecoder(rec.Body).Decode(&decoded); err != nil {
+					t.Errorf("Failed to decode claimed job: %v", err)
+					return
+				}
+				claimed = &decoded
+			}
+
+			results <- result{code: rec.Code, job: claimed}
+		}(workerID)
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var okCount, noContentCount int
+	var claimedJobs []*models.Job
+	for res := range results {
+		switch res.code {
+		case http.StatusOK:
+			okCount++
+			if res.job != nil {
+				claimedJobs = append(claimedJobs, res.job)
+			}
+		case http.StatusNoContent:
+			noContentCount++
+		default:
+			t.Fatalf("Unexpected status code: %d", res.code)
+		}
+	}
+
+	if okCount != 1 || noContentCount != 1 {
+		t.Fatalf("Expected one 200 and one 204 response, got %d 200s and %d 204s", okCount, noContentCount)
+	}
+	if len(claimedJobs) != 1 {
+		t.Fatalf("Expected exactly one claimed job payload, got %d", len(claimedJobs))
+	}
+	if claimedJobs[0].ID != job.ID {
+		t.Fatalf("Expected claimed job %q, got %q", job.ID, claimedJobs[0].ID)
+	}
+	if claimedJobs[0].Status != "processing" {
+		t.Fatalf("Expected processing status, got %q", claimedJobs[0].Status)
+	}
+
+	pendingCount, err := srv.db.CountPendingJobs()
+	if err != nil {
+		t.Fatalf("Failed to count pending jobs: %v", err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("Expected 0 pending jobs after atomic claim, got %d", pendingCount)
 	}
 }

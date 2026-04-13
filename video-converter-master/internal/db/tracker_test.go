@@ -1,8 +1,10 @@
 package db
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -1100,6 +1102,179 @@ func TestConnectionPoolConfig(t *testing.T) {
 
 	if retrievedJob.ID != job.ID {
 		t.Errorf("Expected ID %s, got %s", job.ID, retrievedJob.ID)
+	}
+}
+
+func TestClaimNextPendingJobAtomic(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		err := tracker.Close()
+		if err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	job := &models.Job{
+		ID:         "atomic-claim-job",
+		SourcePath: "/source/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		Priority:   5,
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan *models.Job, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	for _, workerID := range []string{"worker-a", "worker-b"} {
+		wg.Add(1)
+		go func(workerID string) {
+			defer wg.Done()
+			<-start
+			claimed, err := tracker.ClaimNextPendingJob(context.Background(), workerID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- claimed
+		}(workerID)
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Claim failed: %v", err)
+		}
+	}
+
+	var claimedJobs []*models.Job
+	for claimed := range results {
+		if claimed != nil {
+			claimedJobs = append(claimedJobs, claimed)
+		}
+	}
+
+	if len(claimedJobs) != 1 {
+		t.Fatalf("Expected exactly 1 claimed job, got %d", len(claimedJobs))
+	}
+	if claimedJobs[0].ID != job.ID {
+		t.Fatalf("Expected claimed job %q, got %q", job.ID, claimedJobs[0].ID)
+	}
+	if claimedJobs[0].Status != "processing" {
+		t.Fatalf("Expected claimed job to be processing, got %q", claimedJobs[0].Status)
+	}
+	if claimedJobs[0].WorkerID == "" {
+		t.Fatal("Expected claimed job to have a worker ID")
+	}
+
+	pendingCount, err := tracker.CountPendingJobs()
+	if err != nil {
+		t.Fatalf("Failed to count pending jobs: %v", err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("Expected 0 pending jobs after claim, got %d", pendingCount)
+	}
+}
+
+func TestClaimNextPendingJobsBatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		err := tracker.Close()
+		if err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	jobs := []*models.Job{
+		{
+			ID:         "batch-low",
+			SourcePath: "/source/low.mp4",
+			OutputPath: "/output/low.mp4",
+			Status:     "pending",
+			Priority:   1,
+			CreatedAt:  time.Now(),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+		{
+			ID:         "batch-mid",
+			SourcePath: "/source/mid.mp4",
+			OutputPath: "/output/mid.mp4",
+			Status:     "pending",
+			Priority:   5,
+			CreatedAt:  time.Now().Add(1 * time.Second),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+		{
+			ID:         "batch-high",
+			SourcePath: "/source/high.mp4",
+			OutputPath: "/output/high.mp4",
+			Status:     "pending",
+			Priority:   10,
+			CreatedAt:  time.Now().Add(2 * time.Second),
+			RetryCount: 0,
+			MaxRetries: 3,
+		},
+	}
+
+	for _, job := range jobs {
+		if err := tracker.CreateJob(job); err != nil {
+			t.Fatalf("Failed to create job %q: %v", job.ID, err)
+		}
+	}
+
+	claimedJobs, err := tracker.ClaimNextPendingJobs(context.Background(), "worker-batch", 2)
+	if err != nil {
+		t.Fatalf("Failed to claim batch jobs: %v", err)
+	}
+	if len(claimedJobs) != 2 {
+		t.Fatalf("Expected 2 claimed jobs, got %d", len(claimedJobs))
+	}
+	if claimedJobs[0].ID != "batch-high" || claimedJobs[1].ID != "batch-mid" {
+		t.Fatalf("Unexpected claim order: got %q, %q", claimedJobs[0].ID, claimedJobs[1].ID)
+	}
+	for _, claimed := range claimedJobs {
+		if claimed.Status != "processing" {
+			t.Fatalf("Expected claimed job to be processing, got %q", claimed.Status)
+		}
+		if claimed.WorkerID != "worker-batch" {
+			t.Fatalf("Expected worker-batch, got %q", claimed.WorkerID)
+		}
+		if claimed.StartedAt == nil {
+			t.Fatal("Expected claimed job to have started_at set")
+		}
+	}
+
+	pendingCount, err := tracker.CountPendingJobs()
+	if err != nil {
+		t.Fatalf("Failed to count pending jobs: %v", err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("Expected 1 pending job after batch claim, got %d", pendingCount)
 	}
 }
 

@@ -421,7 +421,7 @@ func main() {
         return
     }
     
-    logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+    logger.Init(cfg.Logging.Level, cfg.Logging.Format, "worker_id", cfg.Worker.ID)
     
     coord, err := coordinator.New(cfg)
     if err != nil {

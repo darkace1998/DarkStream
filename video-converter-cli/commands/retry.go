@@ -22,7 +22,13 @@ func Retry(args []string) {
 
 	url := fmt.Sprintf("%s/api/retry?limit=%d", *masterURL, *limit)
 	// #nosec G107 - URL is from flag-parsed masterURL, not untrusted network input
-	resp, err := http.Post(url, "application/json", nil)
+	req, err := newMasterRequest(http.MethodPost, url, nil, "application/json")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))

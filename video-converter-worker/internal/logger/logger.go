@@ -7,7 +7,7 @@ import (
 )
 
 // Init initializes the logger with the specified level and format
-func Init(level, format string) {
+func Init(level, format string, attrs ...any) {
 	opts := &slog.HandlerOptions{
 		Level: parseLogLevel(level),
 	}
@@ -23,7 +23,12 @@ func Init(level, format string) {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 
-	slog.SetDefault(slog.New(handler))
+	base := slog.New(handler)
+	if len(attrs) > 0 {
+		base = base.With(attrs...)
+	}
+
+	slog.SetDefault(base)
 
 	if unsupportedFormat {
 		slog.Warn("Unsupported log format, defaulting to text", "format", format)

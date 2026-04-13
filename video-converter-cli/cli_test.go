@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,28 @@ func TestMain(m *testing.M) {
 	// Clean up the built binary
 	_ = os.Remove("video-converter-cli")
 	os.Exit(code)
+}
+
+func waitForHTTPStatus(t *testing.T, url string, wantStatus int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == wantStatus {
+				return
+			}
+			lastErr = fmt.Errorf("unexpected status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %s to return %d: %v", url, wantStatus, lastErr)
 }
 
 func TestDetectCommand(t *testing.T) {
@@ -119,32 +143,30 @@ func TestEndToEndWithMaster(t *testing.T) {
 	}
 
 	// Create test directories
-	testDir := "/tmp/cli-integration-test"
-	_ = os.RemoveAll(testDir)
-	err = os.MkdirAll(testDir+"/videos", 0o750)
+	testDir := t.TempDir()
+	videosDir := filepath.Join(testDir, "videos")
+	convertedDir := filepath.Join(testDir, "converted")
+	err = os.MkdirAll(videosDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create test directories: %v", err)
 	}
-	err = os.MkdirAll(testDir+"/converted", 0o750)
+	err = os.MkdirAll(convertedDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create test directories: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(testDir)
-	}()
 
 	// Create test config
 	config := `server:
   port: 19876
   host: 127.0.0.1
 scanner:
-  root_path: ` + testDir + `/videos
+  root_path: ` + videosDir + `
   video_extensions:
     - .mp4
-  output_base: ` + testDir + `/converted
+  output_base: ` + convertedDir + `
   scan_interval: 0s
 database:
-  path: ` + testDir + `/jobs.db
+  path: ` + filepath.Join(testDir, "jobs.db") + `
 conversion:
   target_resolution: 640x360
   codec: h264
@@ -176,8 +198,7 @@ logging:
 		}
 	}()
 
-	// Wait for server to start
-	time.Sleep(2 * time.Second)
+	waitForHTTPStatus(t, "http://127.0.0.1:19876/api/status", http.StatusOK, 30*time.Second)
 
 	// Test status command
 	statusCmd := exec.Command("./video-converter-cli", "status", "--master-url", "http://127.0.0.1:19876")
@@ -318,27 +339,26 @@ func TestHelpCommand(t *testing.T) {
 
 func TestLocalValidation(t *testing.T) {
 	// Create a temporary config file
-	testDir := "/tmp/cli-validate-test"
-	_ = os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	err := os.MkdirAll(testDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(testDir)
-	}()
 
 	// Create a valid master config
+	videosDir := filepath.Join(testDir, "videos")
+	outputDir := filepath.Join(testDir, "output")
+	dbPath := filepath.Join(testDir, "jobs.db")
 	validConfig := `server:
   port: 8080
   host: 0.0.0.0
 scanner:
-  root_path: /tmp/videos
+  root_path: ` + videosDir + `
   video_extensions:
     - .mp4
-  output_base: /tmp/output
+  output_base: ` + outputDir + `
 database:
-  path: /tmp/jobs.db
+  path: ` + dbPath + `
 logging:
   level: info
 `
@@ -363,15 +383,11 @@ logging:
 
 func TestLocalValidationInvalid(t *testing.T) {
 	// Create a temporary config file with missing required sections
-	testDir := "/tmp/cli-validate-invalid-test"
-	_ = os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	err := os.MkdirAll(testDir, 0o750)
 	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(testDir)
-	}()
 
 	// Create an invalid master config (missing required sections)
 	invalidConfig := `logging:

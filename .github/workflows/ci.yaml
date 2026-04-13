@@ -69,25 +69,25 @@ jobs:
       run: cd video-converter-common && go test -v -race -coverprofile=coverage-common.out ./... && cd ..
 
     - name: Run go vet (common)
-      run: cd video-converter-common && go vet ./... || true && cd ..
+      run: cd video-converter-common && go vet ./... && cd ..
 
     - name: Run tests (master)
       run: cd video-converter-master && go test -v -race -coverprofile=coverage-master.out ./... && cd ..
 
     - name: Run go vet (master)
-      run: cd video-converter-master && go vet ./... || true && cd ..
+      run: cd video-converter-master && go vet ./... && cd ..
 
     - name: Run tests (worker)
       run: cd video-converter-worker && go test -v -race -coverprofile=coverage-worker.out ./... && cd ..
 
     - name: Run go vet (worker)
-      run: cd video-converter-worker && go vet ./... || true && cd ..
+      run: cd video-converter-worker && go vet ./... && cd ..
 
     - name: Run tests (cli)
       run: cd video-converter-cli && go test -v -race -coverprofile=coverage-cli.out ./... && cd ..
 
     - name: Run go vet (cli)
-      run: cd video-converter-cli && go vet ./... || true && cd ..
+      run: cd video-converter-cli && go vet ./... && cd ..
 
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.24'

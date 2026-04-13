@@ -27,7 +27,13 @@ func Cancel(args []string) {
 	}
 
 	url := fmt.Sprintf("%s/api/job/cancel?job_id=%s", *masterURL, *jobID)
-	resp, err := http.Post(url, "application/json", nil)
+	req, err := newMasterRequest(http.MethodPost, url, nil, "application/json")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))

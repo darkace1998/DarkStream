@@ -2,10 +2,12 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -189,6 +191,107 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 	}
 
 	return &job, nil
+}
+
+// ClaimNextPendingJob atomically claims the next pending job for a worker.
+func (t *Tracker) ClaimNextPendingJob(ctx context.Context, workerID string) (*models.Job, error) {
+	jobs, err := t.ClaimNextPendingJobs(ctx, workerID, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return jobs[0], nil
+}
+
+// ClaimNextPendingJobs atomically claims up to limit pending jobs for a worker.
+func (t *Tracker) ClaimNextPendingJobs(ctx context.Context, workerID string, limit int) ([]*models.Job, error) {
+	if limit <= 0 {
+		return []*models.Job{}, nil
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	conn, err := t.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.Warn("Failed to close database connection", "error", closeErr)
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, fmt.Errorf("failed to begin claim transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, rollbackErr := conn.ExecContext(context.Background(), "ROLLBACK"); rollbackErr != nil {
+				slog.Warn("Failed to rollback claim transaction", "error", rollbackErr)
+			}
+		}
+	}()
+
+	rows, err := conn.QueryContext(ctx, `
+		SELECT id, source_path, output_path, status, COALESCE(priority, 5), created_at,
+			COALESCE(worker_id, ''), retry_count, max_retries,
+			started_at, completed_at, COALESCE(error_message, ''),
+			COALESCE(source_duration, 0), COALESCE(output_size, 0),
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+		FROM jobs WHERE status = 'pending'
+		ORDER BY priority DESC, created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending jobs for claim: %w", err)
+	}
+
+	jobs, scanErr := t.scanJobsFromRows(rows)
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	if len(jobs) == 0 {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return nil, fmt.Errorf("failed to commit empty claim transaction: %w", err)
+		}
+		committed = true
+		return []*models.Job{}, nil
+	}
+
+	now := time.Now()
+	for _, job := range jobs {
+		job.Status = "processing"
+		job.WorkerID = workerID
+		job.StartedAt = &now
+
+		_, err = conn.ExecContext(ctx, `
+			UPDATE jobs
+			SET status = 'processing', worker_id = ?, started_at = ?
+			WHERE id = ?
+		`, workerID, now, job.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update claimed job: %w", err)
+		}
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("failed to commit claim transaction: %w", err)
+	}
+	committed = true
+
+	sort.SliceStable(jobs, func(i, j int) bool {
+		if jobs[i].Priority != jobs[j].Priority {
+			return jobs[i].Priority > jobs[j].Priority
+		}
+		return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+	})
+
+	return jobs, nil
 }
 
 // GetNextPendingJobs retrieves multiple pending jobs from the queue for batch processing

@@ -102,22 +102,7 @@ logging:
 	}()
 
 	// Wait for master to start
-	time.Sleep(3 * time.Second)
-
-	// Verify master API is accessible
-	resp, err := http.Get("http://127.0.0.1:18080/api/status")
-	if err != nil {
-		t.Fatalf("Master API not accessible: %v", err)
-	}
-	defer func() {
-		err := resp.Body.Close()
-		if err != nil {
-			t.Logf("Failed to close response body: %v", err)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Master API returned status %d", resp.StatusCode)
-	}
+	waitForHTTPStatus(t, "http://127.0.0.1:18080/api/status", http.StatusOK, 30*time.Second)
 
 	// Verify jobs were created in database
 	db, err := sql.Open("sqlite3", dbPath)

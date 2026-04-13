@@ -32,7 +32,13 @@ func Status(args []string) {
 }
 
 func displayStatus(masterURL, format string) {
-	resp, err := http.Get(masterURL + "/api/status")
+	req, err := newMasterRequest(http.MethodGet, masterURL+"/api/status", nil, "")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))

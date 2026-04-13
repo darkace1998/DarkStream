@@ -25,7 +25,13 @@ func Stats(args []string) {
 }
 
 func displayStats(masterURL, format string, detailed bool) {
-	resp, err := http.Get(masterURL + "/api/stats")
+	req, err := newMasterRequest(http.MethodGet, masterURL+"/api/stats", nil, "")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
@@ -59,14 +65,17 @@ func displayStats(masterURL, format string, detailed bool) {
 	// If detailed, also fetch workers
 	var workerData map[string]any
 	if detailed {
-		workerResp, err := http.Get(masterURL + "/api/workers")
+		workerReq, err := newMasterRequest(http.MethodGet, masterURL+"/api/workers", nil, "")
 		if err == nil {
-			defer func() {
-				_ = workerResp.Body.Close()
-			}()
-			workerBody, err := io.ReadAll(workerResp.Body)
+			workerResp, err := http.DefaultClient.Do(workerReq)
 			if err == nil {
-				_ = json.Unmarshal(workerBody, &workerData)
+				defer func() {
+					_ = workerResp.Body.Close()
+				}()
+				workerBody, err := io.ReadAll(workerResp.Body)
+				if err == nil {
+					_ = json.Unmarshal(workerBody, &workerData)
+				}
 			}
 		}
 	}

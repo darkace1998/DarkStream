@@ -48,6 +48,7 @@ func TestCacheManager_Cleanup_SizeLimit(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Create test files totaling 3000 bytes
+	baseModTime := time.Now().Add(-3 * time.Hour)
 	for i := range 3 {
 		filePath := filepath.Join(tempDir, "test"+string(rune('A'+i))+".tmp")
 		data := make([]byte, 1000)
@@ -55,8 +56,11 @@ func TestCacheManager_Cleanup_SizeLimit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
-		// Stagger file times so we know which gets removed first
-		time.Sleep(10 * time.Millisecond)
+		modTime := baseModTime.Add(time.Duration(i) * time.Minute)
+		err = os.Chtimes(filePath, modTime, modTime)
+		if err != nil {
+			t.Fatalf("Failed to set file times: %v", err)
+		}
 	}
 
 	// Set max size to 2500 bytes (should remove oldest file)

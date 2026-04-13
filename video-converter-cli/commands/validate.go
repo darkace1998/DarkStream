@@ -57,7 +57,13 @@ func Validate(args []string) {
 
 	// Remote validation via master server
 	url := fmt.Sprintf("%s/api/validate-config?type=%s", *masterURL, *configType)
-	resp, err := http.Post(url, "application/yaml", bytes.NewReader(configData))
+	req, err := newMasterRequest(http.MethodPost, url, bytes.NewReader(configData), "application/yaml")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info("Use --local flag to validate without master server")

@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,8 @@ import (
 	"github.com/darkace1998/video-converter-master/internal/metrics"
 	"gopkg.in/yaml.v3"
 )
+
+type authContextKey struct{}
 
 // jobIDPattern validates job IDs to prevent injection attacks
 var jobIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -193,22 +196,22 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/worker/download-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo))))
 	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
-	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.GetWorkerConfig))) // No auth - workers need this before they have API key
+	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetWorkerConfig))))
 	mux.HandleFunc("/api/worker/settings", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleWorkerSettings))) // Per-worker settings management
-	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStatus)))
+	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetStatus))))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 
 	// Progress tracking endpoints
-	mux.HandleFunc("/api/job/progress", s.correlationMiddleware(s.rateLimitMiddleware(s.GetJobProgress)))
-	mux.HandleFunc("/api/job/progress/stream", s.correlationMiddleware(s.StreamJobProgress)) // SSE endpoint (no rate limit)
+	mux.HandleFunc("/api/job/progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJobProgress))))
+	mux.HandleFunc("/api/job/progress/stream", s.correlationMiddleware(s.authMiddleware(s.StreamJobProgress))) // SSE endpoint (no rate limit)
 
 	// CLI API endpoints - with correlation ID
-	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.RetryFailedJobs)))
-	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.ListJobs)))
+	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
+	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
-	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.ListWorkers)))
-	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.ValidateConfig)))
+	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListWorkers))))
+	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ValidateConfig))))
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -221,7 +224,11 @@ func (s *Server) Start() error {
 	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics", "health_endpoints", "/healthz, /readyz, /api/health")
 
 	// Use TLS if certificate and key are configured
-	if s.masterCfg.Server.TLSCert != "" && s.masterCfg.Server.TLSKey != "" {
+	tlsConfigured := s.masterCfg.Server.TLSCert != "" && s.masterCfg.Server.TLSKey != ""
+	if s.apiKey != "" && !tlsConfigured {
+		return fmt.Errorf("refusing to start without TLS when server api_key is configured; set both tls_cert and tls_key")
+	}
+	if tlsConfigured {
 		// Validate TLS files exist and are readable before starting
 		if _, err := os.Stat(s.masterCfg.Server.TLSCert); err != nil {
 			return fmt.Errorf("TLS certificate file not accessible: %w", err)
@@ -311,21 +318,9 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job, err := s.db.GetNextPendingJob()
-	if err != nil {
+	job, err := s.db.ClaimNextPendingJob(r.Context(), workerID)
+	if err != nil || job == nil {
 		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	job.Status = statusProcessing
-	job.WorkerID = workerID
-	now := time.Now()
-	job.StartedAt = &now
-
-	err = s.db.UpdateJob(job)
-	if err != nil {
-		slog.Error("Failed to update job", "error", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -413,7 +408,7 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch batch of pending jobs
-	pendingJobs, err := s.db.GetNextPendingJobs(availableSlots)
+	pendingJobs, err := s.db.ClaimNextPendingJobs(r.Context(), workerID, availableSlots)
 	if err != nil {
 		slog.Error("Failed to get pending jobs", "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -441,53 +436,22 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Assign all fetched jobs to the worker
-	// Note: Each job is assigned individually. If an assignment fails,
-	// that job remains in pending state and can be picked up later.
-	// Only successfully assigned jobs are returned to the worker.
-	now := time.Now()
-	assignedJobs := make([]*models.Job, 0, len(pendingJobs))
-	failedAssignments := 0
-
-	for _, job := range pendingJobs {
-		job.Status = statusProcessing
-		job.WorkerID = workerID
-		job.StartedAt = &now
-
-		err := s.db.UpdateJob(job)
-		if err != nil {
-			slog.Error("Failed to update job for batch assignment", "job_id", job.ID, "error", err)
-			failedAssignments++
-			continue
-		}
-		assignedJobs = append(assignedJobs, job)
-	}
-
-	if failedAssignments > 0 {
-		slog.Warn("Some jobs failed to assign in batch",
-			"worker_id", workerID,
-			"requested", len(pendingJobs),
-			"assigned", len(assignedJobs),
-			"failed", failedAssignments,
-		)
-	}
-
 	// Record metrics for batch jobs
-	if len(assignedJobs) > 0 {
-		s.metrics.RecordJobsStarted(len(assignedJobs))
+	if len(pendingJobs) > 0 {
+		s.metrics.RecordJobsStarted(len(pendingJobs))
 	}
 	s.updateQueueDepthMetric()
 
 	slog.Info("Batch job assignment",
 		"worker_id", workerID,
 		"requested", limit,
-		"assigned", len(assignedJobs),
+		"assigned", len(pendingJobs),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"jobs":  assignedJobs,
-		"count": len(assignedJobs),
+		"jobs":  pendingJobs,
+		"count": len(pendingJobs),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -714,14 +678,14 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	if workerErr == nil {
 		for _, wk := range workers {
 			workerMetrics = append(workerMetrics, map[string]any{
-				"worker_id":   wk.WorkerID,
-				"hostname":    wk.Hostname,
-				"cpu_usage":   wk.CPUUsage,
+				"worker_id":    wk.WorkerID,
+				"hostname":     wk.Hostname,
+				"cpu_usage":    wk.CPUUsage,
 				"memory_usage": wk.MemoryUsage,
-				"active_jobs": wk.ActiveJobs,
-				"gpu":         wk.GPU,
-				"status":      wk.Status,
-				"last_seen":   wk.Timestamp,
+				"active_jobs":  wk.ActiveJobs,
+				"gpu":          wk.GPU,
+				"status":       wk.Status,
+				"last_seen":    wk.Timestamp,
 			})
 		}
 	}
@@ -1961,15 +1925,28 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Validate API key format: "Bearer <api_key>"
-		expectedHeader := "Bearer " + s.apiKey
-		if authHeader != expectedHeader {
+		const bearerPrefix = "Bearer "
+		if !strings.HasPrefix(authHeader, bearerPrefix) {
 			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
 			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
 			return
 		}
 
-		next(w, r)
+		providedKey := strings.TrimPrefix(authHeader, bearerPrefix)
+		if subtle.ConstantTimeCompare([]byte(providedKey), []byte(s.apiKey)) != 1 {
+			slog.Warn("Invalid API key", "path", r.URL.Path, "ip", r.RemoteAddr)
+			http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), authContextKey{}, true)
+		next(w, r.WithContext(ctx))
 	}
+}
+
+func (s *Server) authenticatedRequest(r *http.Request) bool {
+	v, ok := r.Context().Value(authContextKey{}).(bool)
+	return ok && v
 }
 
 // correlationMiddleware adds a correlation ID to each request for tracing
@@ -2013,8 +1990,8 @@ func (s *Server) updateQueueDepthMetric() {
 }
 
 // GetWorkerConfig returns the worker configuration from the master.
-// This endpoint allows workers to be started with just a -url flag and fetch
-// all their configuration from the master, similar to FileFlows architecture.
+// When the server API key is configured, this endpoint only serves authenticated
+// bootstrap requests and includes the API key in the response for authorized workers.
 // If worker_id query parameter is provided, returns worker-specific config if available.
 func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -2036,8 +2013,10 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("Global worker configuration requested")
 	}
 
-	// Add API key to the response (not included in webui display version)
-	response.APIKey = s.apiKey
+	// Only include the API key for authenticated bootstrap requests
+	if s.apiKey != "" && s.authenticatedRequest(r) {
+		response.APIKey = s.apiKey
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	err := json.NewEncoder(w).Encode(response)
@@ -2120,8 +2099,8 @@ func (s *Server) buildRemoteWorkerConfig() *models.RemoteWorkerConfig {
 		JobCheckInterval:       int64(jobCheckInterval),
 		JobTimeout:             int64(jobTimeout),
 		MaxAPIRequestsPerMin:   maxAPIRequestsPerMin,
-		MaxBackoffInterval:     30,  // Fixed default
-		InitialBackoffInterval: 1,   // Fixed default
+		MaxBackoffInterval:     30, // Fixed default
+		InitialBackoffInterval: 1,  // Fixed default
 		DownloadTimeout:        int64(downloadTimeout),
 		UploadTimeout:          int64(uploadTimeout),
 		MaxCacheSize:           maxCacheSize,
@@ -2151,8 +2130,8 @@ func (s *Server) buildRemoteWorkerConfigForWorker(workerID string) *models.Remot
 			JobCheckInterval:       int64(workerSettings.JobCheckInterval),
 			JobTimeout:             int64(workerSettings.JobTimeout),
 			MaxAPIRequestsPerMin:   workerSettings.MaxAPIRequestsPerMin,
-			MaxBackoffInterval:     30,  // Fixed default
-			InitialBackoffInterval: 1,   // Fixed default
+			MaxBackoffInterval:     30, // Fixed default
+			InitialBackoffInterval: 1,  // Fixed default
 			DownloadTimeout:        int64(workerSettings.DownloadTimeout),
 			UploadTimeout:          int64(workerSettings.UploadTimeout),
 			MaxCacheSize:           workerSettings.MaxCacheSize,

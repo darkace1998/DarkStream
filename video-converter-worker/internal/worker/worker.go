@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -34,11 +35,22 @@ type Worker struct {
 	cacheManager      *CacheManager
 	concurrency       int
 	activeJobs        int32
+	jobsStarted       int64
+	jobsCompleted     int64
+	jobsFailed        int64
 	jobSemaphore      chan struct{}    // Semaphore to limit concurrent jobs
 	rateLimiter       <-chan time.Time // Rate limiter channel for API calls
 	rateLimiterTicker *time.Ticker     // Rate limiter ticker (kept for cleanup)
 	currentBackoff    time.Duration    // Current backoff interval when no jobs available
 	backoffMu         sync.Mutex       // Mutex for backoff state
+	diagMu            sync.RWMutex
+	startTime         time.Time
+	lastHeartbeat     time.Time
+	activeJobIDs      map[string]time.Time
+	lastJobID         string
+	lastJobError      string
+	diagnosticsServer *http.Server
+	diagnosticsAddr   string
 	vulkanCaps        *converter.VulkanCapabilities
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -115,6 +127,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		cacheManager:      cacheManager,
 		concurrency:       cfg.Worker.Concurrency,
 		activeJobs:        0,
+		activeJobIDs:      make(map[string]time.Time),
 		jobSemaphore:      jobSemaphore,
 		rateLimiter:       rateLimiterTicker.C,
 		rateLimiterTicker: rateLimiterTicker,
@@ -167,6 +180,13 @@ func (w *Worker) Start() error {
 		)
 	}
 
+	w.diagMu.Lock()
+	w.startTime = time.Now()
+	w.diagMu.Unlock()
+	if err := w.startDiagnosticsServer(); err != nil {
+		slog.Warn("Failed to start worker diagnostics endpoint", "error", err)
+	}
+
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -205,6 +225,8 @@ func (w *Worker) Shutdown() error {
 		if w.rateLimiterTicker != nil {
 			w.rateLimiterTicker.Stop()
 		}
+
+		w.stopDiagnosticsServer()
 
 		// Wait for all goroutines to finish with a timeout
 		done := make(chan struct{})
@@ -387,18 +409,29 @@ func (w *Worker) processJob(job *models.Job) {
 	atomic.AddInt32(&w.activeJobs, 1)
 	defer atomic.AddInt32(&w.activeJobs, -1)
 
-	err := w.executeJob(job)
+	jobLog := slog.With("job_id", job.ID)
+	w.markJobStarted(job.ID)
+	jobLog.Info("Job started",
+		"source_path", job.SourcePath,
+		"output_path", job.OutputPath,
+	)
+
+	startedAt := time.Now()
+	err := w.executeJob(job, jobLog)
+	duration := time.Since(startedAt)
 	if err != nil {
-		slog.Error("Job execution failed",
-			"job_id", job.ID,
+		w.markJobFinished(job.ID, false, err)
+		jobLog.Error("Job execution failed",
+			"duration_seconds", duration.Seconds(),
 			"error", err,
 		)
 		reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error())
 		if reportErr != nil {
-			slog.Error("Failed to report job failure to master", "job_id", job.ID, "error", reportErr)
+			jobLog.Error("Failed to report job failure to master", "error", reportErr)
 		}
 	} else {
-		slog.Info("Job completed successfully", "job_id", job.ID)
+		w.markJobFinished(job.ID, true, nil)
+		jobLog.Info("Job completed successfully", "duration_seconds", duration.Seconds())
 		// Note: Job completion is already reported by the upload endpoint
 	}
 }
@@ -414,7 +447,7 @@ func (w *Worker) processJob(job *models.Job) {
 //
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
-func (w *Worker) executeJob(job *models.Job) error {
+func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	// Report progress: starting
 	w.reportProgress(job.ID, 0, 0, "download")
 
@@ -433,7 +466,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 		sourceExt = ".mp4" // Default to .mp4 if no extension
 	}
 	sourceLocalPath := filepath.Join(jobCacheDir, "source"+sourceExt)
-	slog.Info("Downloading source video", "job_id", job.ID, "local_path", sourceLocalPath)
+	log.Info("Downloading source video", "local_path", sourceLocalPath)
 	err = w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
@@ -441,7 +474,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 
 	// Validate source file checksum if available
 	if job.SourceChecksum != "" {
-		slog.Info("Validating source file checksum", "job_id", job.ID, "expected_checksum", job.SourceChecksum)
+		log.Info("Validating source file checksum", "expected_checksum", job.SourceChecksum)
 		valid, err := w.validator.VerifyChecksum(sourceLocalPath, job.SourceChecksum)
 		if err != nil {
 			return fmt.Errorf("checksum validation error: %w", err)
@@ -449,21 +482,20 @@ func (w *Worker) executeJob(job *models.Job) error {
 		if !valid {
 			return fmt.Errorf("checksum mismatch: downloaded file checksum does not match expected value")
 		}
-		slog.Info("Source file checksum validated successfully", "job_id", job.ID)
+		log.Info("Source file checksum validated successfully")
 	} else {
-		slog.Debug("No source checksum available for validation", "job_id", job.ID)
+		log.Debug("No source checksum available for validation")
 	}
 
 	// Extract video metadata using FFprobe
 	metadata, err := w.metadataExtractor.GetVideoMetadata(sourceLocalPath)
 	if err != nil {
-		slog.Warn("Failed to extract video metadata", "job_id", job.ID, "error", err)
+		log.Warn("Failed to extract video metadata", "error", err)
 		// Continue without metadata - don't fail the job
 	} else {
 		// Apply metadata to job for later storage
 		converter.ApplyMetadataToJob(job, metadata)
-		slog.Info("Extracted video metadata",
-			"job_id", job.ID,
+		log.Info("Extracted video metadata",
 			"duration", metadata.Duration,
 			"resolution", fmt.Sprintf("%dx%d", metadata.Width, metadata.Height),
 			"video_codec", metadata.VideoCodec,
@@ -483,7 +515,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 	// Fetch dynamic configuration from master
 	dynamicCfg, err := w.configFetcher.FetchConfig()
 	if err != nil {
-		slog.Warn("Failed to fetch config, using static fallback", "error", err)
+		log.Warn("Failed to fetch config, using static fallback", "error", err)
 		// Use static config as fallback
 		dynamicCfg = &w.config.Conversion
 	}
@@ -512,8 +544,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 		UseVulkan:        w.config.FFmpeg.UseVulkan,
 	}
 
-	slog.Info("Using conversion config",
-		"job_id", job.ID,
+	log.Info("Using conversion config",
 		"resolution", cfg.TargetResolution,
 		"codec", cfg.Codec,
 		"format", dynamicCfg.OutputFormat,
@@ -523,13 +554,13 @@ func (w *Worker) executeJob(job *models.Job) error {
 	progressCallback := func(progress float64, fps float64) {
 		w.reportProgress(job.ID, progress, fps, "convert")
 	}
-	err = w.ffmpegConverter.ConvertVideoWithProgress(job, cfg, progressCallback)
+	err = w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
 	if err != nil {
 		return fmt.Errorf("conversion failed: %w", err)
 	}
 
 	// Validate output
-	err = w.ffmpegConverter.ValidateOutput(job.OutputPath)
+	err = w.ffmpegConverter.ValidateOutputWithLogger(job.OutputPath, log)
 	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -538,7 +569,7 @@ func (w *Worker) executeJob(job *models.Job) error {
 	w.reportProgress(job.ID, 100, 0, "upload")
 
 	// Upload converted video to master
-	slog.Info("Uploading converted video", "job_id", job.ID, "local_path", outputLocalPath)
+	log.Info("Uploading converted video", "local_path", outputLocalPath)
 	err = w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath)
 	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
@@ -596,9 +627,49 @@ func (w *Worker) sendHeartbeats() {
 				MemoryUsage:     getSystemMemoryUsage(),
 			}
 
+			w.recordHeartbeat(hb.Timestamp)
 			w.masterClient.SendHeartbeat(hb)
 		}
 	}
+}
+
+func (w *Worker) markJobStarted(jobID string) {
+	w.diagMu.Lock()
+	defer w.diagMu.Unlock()
+
+	if w.activeJobIDs == nil {
+		w.activeJobIDs = make(map[string]time.Time)
+	}
+	w.activeJobIDs[jobID] = time.Now()
+	w.lastJobID = jobID
+	w.lastJobError = ""
+	atomic.AddInt64(&w.jobsStarted, 1)
+}
+
+func (w *Worker) markJobFinished(jobID string, success bool, err error) {
+	w.diagMu.Lock()
+	defer w.diagMu.Unlock()
+
+	delete(w.activeJobIDs, jobID)
+	w.lastJobID = jobID
+	if success {
+		w.lastJobError = ""
+		atomic.AddInt64(&w.jobsCompleted, 1)
+		return
+	}
+
+	if err != nil {
+		w.lastJobError = err.Error()
+	} else {
+		w.lastJobError = ""
+	}
+	atomic.AddInt64(&w.jobsFailed, 1)
+}
+
+func (w *Worker) recordHeartbeat(ts time.Time) {
+	w.diagMu.Lock()
+	w.lastHeartbeat = ts
+	w.diagMu.Unlock()
 }
 
 // getHostname returns the system hostname

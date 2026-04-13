@@ -90,4 +90,8 @@ Workers send periodic heartbeats to the master containing:
 - System metrics (CPU/memory usage)
 - Health status
 
-Monitor worker health through the master's web UI or API.
+Each worker also starts a local diagnostics server on `127.0.0.1` with:
+- `GET /healthz` for worker status and active job IDs
+- `GET /metrics` for basic runtime counters
+
+The exact listen address is logged at startup.

@@ -37,7 +37,13 @@ func displayJobs(masterURL, status string, limit int, format string) {
 		url += fmt.Sprintf("&status=%s", status)
 	}
 
-	resp, err := http.Get(url)
+	req, err := newMasterRequest(http.MethodGet, url, nil, "")
+	if err != nil {
+		slog.Error("Error creating request", "error", err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))

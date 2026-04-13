@@ -52,7 +52,7 @@ func main() {
 		}
 	}
 
-	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+	logger.Init(cfg.Logging.Level, cfg.Logging.Format, "worker_id", cfg.Worker.ID)
 
 	w, err := worker.New(cfg)
 	if err != nil {
@@ -138,7 +138,7 @@ func loadConfigFromMaster(masterURL, workerID string) (*models.WorkerConfig, err
 // findFFmpegPath attempts to find ffmpeg in common locations
 func findFFmpegPath() string {
 	var paths []string
-	
+
 	if runtime.GOOS == "windows" {
 		paths = []string{
 			"C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
@@ -151,17 +151,17 @@ func findFFmpegPath() string {
 			"/usr/local/bin/ffmpeg",
 			"/opt/ffmpeg/bin/ffmpeg",
 			"/opt/homebrew/bin/ffmpeg", // macOS Homebrew
-			"ffmpeg", // Use PATH
+			"ffmpeg",                   // Use PATH
 		}
 	}
-	
+
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
 			log.Printf("Found ffmpeg at: %s", p)
 			return p
 		}
 	}
-	
+
 	log.Printf("FFmpeg not found in common locations, falling back to PATH lookup")
 	return "ffmpeg" // Fallback to PATH lookup
 }

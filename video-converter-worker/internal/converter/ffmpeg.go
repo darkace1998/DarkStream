@@ -59,7 +59,7 @@ func (fc *FFmpegConverter) ConvertVideo(
 	job *models.Job,
 	cfg *models.ConversionConfig,
 ) error {
-	return fc.ConvertVideoWithProgress(job, cfg, nil)
+	return fc.ConvertVideoWithProgressLogger(job, cfg, nil, slog.Default())
 }
 
 // ConvertVideoWithProgress performs the video conversion with progress tracking
@@ -68,7 +68,21 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 	cfg *models.ConversionConfig,
 	progressCallback ProgressCallback,
 ) error {
-	slog.Info("Starting conversion",
+	return fc.ConvertVideoWithProgressLogger(job, cfg, progressCallback, slog.Default())
+}
+
+// ConvertVideoWithProgressLogger performs the video conversion with progress tracking using the provided logger.
+func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
+	job *models.Job,
+	cfg *models.ConversionConfig,
+	progressCallback ProgressCallback,
+	log *slog.Logger,
+) error {
+	if log == nil {
+		log = slog.Default()
+	}
+
+	log.Info("Starting conversion",
 		"job_id", job.ID,
 		"source", job.SourcePath,
 		"output", job.OutputPath,
@@ -84,12 +98,12 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 	// Get video duration for progress calculation
 	duration, err := fc.getVideoDuration(job.SourcePath)
 	if err != nil {
-		slog.Warn("Failed to get video duration, progress tracking may be inaccurate", "error", err)
+		log.Warn("Failed to get video duration, progress tracking may be inaccurate", "error", err)
 		duration = 0
 	}
 
 	// Build FFmpeg command
-	args := fc.buildFFmpegCommand(job, cfg)
+	args := fc.buildFFmpegCommand(job, cfg, log)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
@@ -104,7 +118,7 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 		return fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
-	slog.Debug("Executing FFmpeg command", "args", args)
+	log.Debug("Executing FFmpeg command", "args", args)
 
 	err = cmd.Start()
 	if err != nil {
@@ -113,7 +127,7 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 
 	// Track progress if callback provided and duration is known
 	if progressCallback != nil && duration > 0 {
-		go fc.trackProgress(stderr, duration, progressCallback)
+		go fc.trackProgress(stderr, duration, progressCallback, log)
 	} else {
 		// Always consume stderr to prevent FFmpeg from blocking when the pipe buffer fills
 		go func() {
@@ -129,12 +143,21 @@ func (fc *FFmpegConverter) ConvertVideoWithProgress(
 		return fmt.Errorf("ffmpeg conversion failed: %w", err)
 	}
 
-	slog.Info("Conversion completed", "job_id", job.ID)
+	log.Info("Conversion completed", "job_id", job.ID)
 	return nil
 }
 
 // ValidateOutput validates the converted output file
 func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
+	return fc.ValidateOutputWithLogger(outputPath, slog.Default())
+}
+
+// ValidateOutputWithLogger validates the converted output file using the provided logger.
+func (fc *FFmpegConverter) ValidateOutputWithLogger(outputPath string, log *slog.Logger) error {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	// Check if file exists
 	info, err := os.Stat(outputPath)
 	if err != nil {
@@ -146,7 +169,7 @@ func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
 		return fmt.Errorf("output file too small: %d bytes", info.Size())
 	}
 
-	slog.Info("Output validated", "path", outputPath, "size", info.Size())
+	log.Info("Output validated", "path", outputPath, "size", info.Size())
 	return nil
 }
 
@@ -154,6 +177,7 @@ func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
 func (fc *FFmpegConverter) buildFFmpegCommand(
 	job *models.Job,
 	cfg *models.ConversionConfig,
+	log *slog.Logger,
 ) []string {
 	args := []string{
 		"-i", job.SourcePath,
@@ -174,7 +198,7 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	)
 
 	// Video codec selection with Vulkan support
-	videoCodec := fc.getVideoCodec(cfg.Codec, cfg.UseVulkan)
+	videoCodec := fc.getVideoCodecWithLogger(cfg.Codec, cfg.UseVulkan, log)
 	args = append(args, "-c:v", videoCodec)
 
 	// Add preset and bitrate for video
@@ -184,7 +208,7 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	)
 
 	// Audio codec selection
-	audioCodec := fc.getAudioCodec(cfg.AudioCodec)
+	audioCodec := fc.getAudioCodecWithLogger(cfg.AudioCodec, log)
 	args = append(args,
 		"-c:a", audioCodec,
 		"-b:a", cfg.AudioBitrate,
@@ -192,7 +216,7 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 
 	// Add output format if specified
 	if cfg.OutputFormat != "" {
-		args = append(args, "-f", fc.getOutputFormat(cfg.OutputFormat))
+		args = append(args, "-f", fc.getOutputFormatWithLogger(cfg.OutputFormat, log))
 	}
 
 	// Output file with format
@@ -203,6 +227,14 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 
 // getVideoCodec returns the appropriate video codec based on configuration
 func (fc *FFmpegConverter) getVideoCodec(codec string, useVulkan bool) string {
+	return fc.getVideoCodecWithLogger(codec, useVulkan, slog.Default())
+}
+
+func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool, log *slog.Logger) string {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	if useVulkan {
 		switch codec {
 		case constants.CodecH264, "avc":
@@ -211,7 +243,7 @@ func (fc *FFmpegConverter) getVideoCodec(codec string, useVulkan bool) string {
 			return "hevc_vulkan"
 		default:
 			// Fallback to h264_vulkan for unknown codecs
-			slog.Warn("Unknown codec for Vulkan encoding, falling back to h264_vulkan", "codec", codec)
+			log.Warn("Unknown codec for Vulkan encoding, falling back to h264_vulkan", "codec", codec)
 			return "h264_vulkan"
 		}
 	}
@@ -228,13 +260,21 @@ func (fc *FFmpegConverter) getVideoCodec(codec string, useVulkan bool) string {
 		return "libaom-av1"
 	default:
 		// Fallback to libx264
-		slog.Warn("Unknown codec, falling back to libx264", "codec", codec)
+		log.Warn("Unknown codec, falling back to libx264", "codec", codec)
 		return "libx264"
 	}
 }
 
 // getAudioCodec returns the appropriate audio codec
 func (fc *FFmpegConverter) getAudioCodec(codec string) string {
+	return fc.getAudioCodecWithLogger(codec, slog.Default())
+}
+
+func (fc *FFmpegConverter) getAudioCodecWithLogger(codec string, log *slog.Logger) string {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	switch codec {
 	case constants.AudioCodecAAC:
 		return "aac"
@@ -246,13 +286,21 @@ func (fc *FFmpegConverter) getAudioCodec(codec string) string {
 		return "libvorbis"
 	default:
 		// Fallback to aac
-		slog.Warn("Unknown audio codec, falling back to aac", "codec", codec)
+		log.Warn("Unknown audio codec, falling back to aac", "codec", codec)
 		return "aac"
 	}
 }
 
 // getOutputFormat returns the appropriate output format
 func (fc *FFmpegConverter) getOutputFormat(format string) string {
+	return fc.getOutputFormatWithLogger(format, slog.Default())
+}
+
+func (fc *FFmpegConverter) getOutputFormatWithLogger(format string, log *slog.Logger) string {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	switch format {
 	case constants.FormatMP4:
 		return "mp4"
@@ -264,7 +312,7 @@ func (fc *FFmpegConverter) getOutputFormat(format string) string {
 		return "avi"
 	default:
 		// Fallback to mp4
-		slog.Warn("Unknown output format, falling back to mp4", "format", format)
+		log.Warn("Unknown output format, falling back to mp4", "format", format)
 		return "mp4"
 	}
 }
@@ -301,7 +349,12 @@ func (fc *FFmpegConverter) trackProgress(
 	stderr io.ReadCloser,
 	totalDuration float64,
 	callback ProgressCallback,
+	log *slog.Logger,
 ) {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	scanner := bufio.NewScanner(stderr)
 
 	var currentTime float64
@@ -334,7 +387,7 @@ func (fc *FFmpegConverter) trackProgress(
 			}
 			callback(progress, fps)
 
-			slog.Debug("Conversion progress",
+			log.Debug("Conversion progress",
 				"progress", fmt.Sprintf("%.1f%%", progress),
 				"fps", fmt.Sprintf("%.1f", fps),
 			)

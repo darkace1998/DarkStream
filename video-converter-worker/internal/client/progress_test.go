@@ -29,7 +29,7 @@ func TestProgressReader(t *testing.T) {
 
 	// Create progress reader with smaller report interval for testing
 	reader := NewProgressReader(bytes.NewReader(testData), totalSize, progressCallback)
-	reader.reportInterval = 10 * time.Millisecond
+	reader.reportInterval = 0
 
 	// Read data
 	buf := make([]byte, 256)
@@ -43,8 +43,6 @@ func TestProgressReader(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error during read: %v", err)
 		}
-		// Sleep a bit to allow progress reporting
-		time.Sleep(15 * time.Millisecond)
 	}
 
 	// Verify all data was read
@@ -75,7 +73,7 @@ func TestProgressReaderWithZeroTotal(t *testing.T) {
 	}
 
 	reader := NewProgressReader(bytes.NewReader(testData), 0, progressCallback)
-	reader.reportInterval = 1 * time.Millisecond
+	reader.reportInterval = 0
 
 	// Read all data
 	_, err := io.ReadAll(reader)
@@ -84,7 +82,6 @@ func TestProgressReaderWithZeroTotal(t *testing.T) {
 	}
 
 	// Progress should still be reported even with zero total
-	time.Sleep(10 * time.Millisecond)
 	if atomic.LoadInt32(&callCount) < 1 {
 		t.Error("Expected progress callback to be called at least once")
 	}

@@ -233,18 +233,49 @@ func killProcess(t *testing.T, name string, cmd *exec.Cmd) {
 // verifyMasterAPI checks that the master API is accessible
 func verifyMasterAPI(t *testing.T) {
 	t.Helper()
-	resp, err := http.Get("http://127.0.0.1:38080/api/status")
-	if err != nil {
-		t.Fatalf("Master API not accessible: %v", err)
-	}
-	cerr := resp.Body.Close()
-	if cerr != nil {
-		t.Logf("Failed to close response body: %v", cerr)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Master API returned status %d", resp.StatusCode)
-	}
+	waitForHTTPStatus(t, "http://127.0.0.1:38080/api/status", http.StatusOK, 30*time.Second)
 	t.Log("✓ Master server is running and accessible")
+}
+
+func waitForHTTPStatus(t *testing.T, url string, wantStatus int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == wantStatus {
+				return
+			}
+			lastErr = fmt.Errorf("unexpected status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %s to return %d: %v", url, wantStatus, lastErr)
+}
+
+func waitForWorkerHeartbeats(t *testing.T, db *sql.DB, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastCount int
+
+	for time.Now().Before(deadline) {
+		err := db.QueryRow("SELECT COUNT(*) FROM workers").Scan(&lastCount)
+		if err != nil {
+			t.Fatalf("Failed to query worker heartbeats: %v", err)
+		}
+		if lastCount >= want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %d worker heartbeats; last count=%d", want, lastCount)
 }
 
 // queryJobStats queries job statistics from the database
@@ -394,7 +425,6 @@ func TestDistributedFileTransfer(t *testing.T) {
 	defer killProcess(t, "master", masterCmd)
 
 	t.Log("Waiting for master to start...")
-	time.Sleep(3 * time.Second)
 	verifyMasterAPI(t)
 
 	// Open database and verify jobs
@@ -448,16 +478,10 @@ func TestDistributedFileTransfer(t *testing.T) {
 	defer killProcess(t, "worker 2", worker2Cmd)
 
 	t.Log("✓ Both workers started")
-	time.Sleep(3 * time.Second)
 
 	// Check worker heartbeats
-	var heartbeatCount int
-	err = db.QueryRow("SELECT COUNT(DISTINCT worker_id) FROM worker_heartbeats").Scan(&heartbeatCount)
-	if err != nil {
-		t.Logf("Warning: Failed to query worker heartbeats: %v", err)
-	} else {
-		t.Logf("✓ Received heartbeats from %d worker(s)", heartbeatCount)
-	}
+	waitForWorkerHeartbeats(t, db, 2, 30*time.Second)
+	t.Log("✓ Received heartbeats from 2 worker(s)")
 
 	// Monitor and report results
 	finalStats := monitorJobProgress(t, db)

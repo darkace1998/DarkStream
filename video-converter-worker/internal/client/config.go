@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -251,6 +252,8 @@ func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteW
 		url = fmt.Sprintf("%s?worker_id=%s", url, workerID)
 	}
 
+	apiKey := os.Getenv("DARKSTREAM_API_KEY")
+
 	var lastErr error
 	for attempt := 0; attempt < DefaultMaxRetries; attempt++ {
 		if attempt > 0 {
@@ -259,7 +262,15 @@ func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteW
 			time.Sleep(delay)
 		}
 
-		resp, err := client.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create worker config request: %w", err)
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to request worker config: %w", err)
 			slog.Warn("Worker config fetch attempt failed", "attempt", attempt+1, "error", err)
