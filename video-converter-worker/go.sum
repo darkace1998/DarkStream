@@ -1,6 +1,6 @@
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
-github.com/darkace1998/golang-vulkan-api v1.0.4 h1:drfv0Q3PSKHxX10AagXkh6r/hP7hSx/stNMPU+TNAB0=
-github.com/darkace1998/golang-vulkan-api v1.0.4/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
+github.com/darkace1998/golang-vulkan-api v1.1.0 h1:zqbRq1smbqV6TCco7OKRy2pJGyQ0riVlNvpwE2hW2r4=
+github.com/darkace1998/golang-vulkan-api v1.1.0/go.mod h1:oeh2uVLWB7cbwuYz45wgx7wABCZvi5v8fwfCpA7Kd+k=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
