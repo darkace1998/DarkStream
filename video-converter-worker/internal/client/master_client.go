@@ -645,9 +645,9 @@ func (mc *MasterClient) addAuthHeader(req *http.Request) {
 	}
 }
 
-// downloadSourceVideoAttempt performs a single download attempt
+// downloadSourceVideoAttempt performs a single download attempt with optional progress tracking
 //
-//nolint:gocognit,cyclop // File download with resume support is inherently complex
+//nolint:gocognit,cyclop // File download with resume support and progress tracking is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, progressCallback ProgressCallback) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		return err
@@ -786,7 +786,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	return nil
 }
 
-// uploadConvertedVideoAttempt performs a single upload attempt
+// uploadConvertedVideoAttempt performs a single upload attempt with optional progress tracking
 func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, progressCallback ProgressCallback) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		return err
