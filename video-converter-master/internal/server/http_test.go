@@ -586,3 +586,43 @@ func TestGetNextJob_AtomicClaim(t *testing.T) {
 		t.Fatalf("Expected 0 pending jobs after atomic claim, got %d", pendingCount)
 	}
 }
+
+func TestRetryJob(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Create a failed job
+	jobID := "failed-job-123"
+	job := &models.Job{
+		ID:         jobID,
+		SourcePath: "/tmp/source.mp4",
+		OutputPath: "/tmp/output.mp4",
+		Status:     "failed",
+		WorkerID:   "worker-1",
+		CreatedAt:  time.Now(),
+	}
+	err := srv.db.CreateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Create HTTP request
+	req := httptest.NewRequest(http.MethodPost, "/api/job/retry?job_id="+jobID, nil)
+	rec := httptest.NewRecorder()
+
+	// Call the handler
+	srv.RetryJob(rec, req)
+
+	// Verify response
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status OK, got %v", rec.Code)
+	}
+
+	// Verify job status was updated to pending
+	updatedJob, err := srv.db.GetJobByID(jobID)
+	if err != nil {
+		t.Fatalf("Failed to fetch updated job: %v", err)
+	}
+	if updatedJob.Status != "pending" {
+		t.Errorf("Expected job status to be 'pending', got %v", updatedJob.Status)
+	}
+}

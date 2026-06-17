@@ -216,7 +216,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <!-- History Tab -->
         <div id="history" class="tab-content">
             <div class="card">
-                <h2>Recent Jobs (Last 50)</h2>
+                <h2>Recent Jobs (Last 50) <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button></h2>
                 {{if .RecentJobs}}
                 <table class="table">
                     <thead>
@@ -227,6 +227,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Worker</th>
                             <th>Duration</th>
                             <th>Completed</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -238,6 +239,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td>{{.WorkerID}}</td>
                             <td>{{if .SourceDuration}}{{printf "%.0f" .SourceDuration}}s{{else}}-{{end}}</td>
                             <td>{{if .CompletedAt}}{{.CompletedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
+                            <td>{{if eq .Status "failed"}}<button class="btn btn-primary btn-sm" onclick="retryJob('{{.ID}}')">Retry</button>{{end}}</td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -686,6 +688,34 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     location.reload();
                 } else {
                     alert('Failed to cancel jobs');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function retryJob(jobId) {
+            if (!confirm('Retry job ' + jobId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/job/retry?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to retry job');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function retryAllFailed() {
+            if (!confirm('Retry ALL failed jobs?')) return;
+            try {
+                const resp = await authorizedFetch('/api/retry', { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to retry jobs');
                 }
             } catch (err) {
                 alert('Error: ' + err.message);

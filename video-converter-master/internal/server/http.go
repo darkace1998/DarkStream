@@ -234,6 +234,7 @@ func (s *Server) Start() (err error) {
 
 	// CLI API endpoints - with correlation ID
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
+	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
@@ -1611,6 +1612,50 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to encode jobs response", "error", err)
 		return
 	}
+}
+
+// RetryJob handles retrying a specific failed job
+func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the job
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		slog.Error("Failed to fetch job for retry", "job_id", jobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Can only retry failed jobs
+	if job.Status != statusFailed {
+		http.Error(w, fmt.Sprintf("Cannot retry job with status '%s'. Only failed jobs can be retried.", job.Status), http.StatusBadRequest)
+		return
+	}
+
+	updated, err := s.db.ResetJobToPending(job.ID, true, statusFailed, "", job.StartedAt)
+	if err != nil {
+		slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while retrying", http.StatusConflict)
+		return
+	}
+
+	s.RecordJobRetry("ui_single")
+	slog.Info("Retried specific job", "job_id", job.ID)
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // CancelJob handles cancelling a specific job
