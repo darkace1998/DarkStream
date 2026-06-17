@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -35,6 +36,7 @@ type Scanner struct {
 	OutputBase      string
 	Options         ScanOptions
 	seenHashes      map[string]string // hash -> first file path (for duplicate detection)
+	mu              sync.RWMutex
 }
 
 // New creates a new scanner instance
@@ -63,6 +65,8 @@ func New(rootPath string, extensions []string, outputBase string) *Scanner {
 
 // SetOptions configures scanner options
 func (s *Scanner) SetOptions(opts ScanOptions) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Options = opts
 	if opts.DetectDuplicates {
 		s.seenHashes = make(map[string]string)
@@ -74,9 +78,11 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 	var jobs []*models.Job
 
 	// Reset duplicate detection map if enabled
+	s.mu.Lock()
 	if s.Options.DetectDuplicates {
 		s.seenHashes = make(map[string]string)
 	}
+	s.mu.Unlock()
 
 	err := s.scanWithDepth(s.RootPath, 0, &jobs)
 	if err != nil {
@@ -125,29 +131,34 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 			continue
 		}
 
-		// Check file extension
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if !s.VideoExtensions[ext] {
-			continue
-		}
-
-		// Get file info for size filtering
-		fileInfo, err := entry.Info()
+		job, err := s.ProcessFile(fullPath)
 		if err != nil {
-			slog.Warn("Failed to get file info", "path", fullPath, "error", err)
+			// Specific errors can be logged or ignored depending on verbosity desired.
 			continue
 		}
+		if job != nil {
+			*jobs = append(*jobs, job)
+		}
+	}
 
-		// Apply size filters
-		fileSize := fileInfo.Size()
-		if s.Options.MinFileSize > 0 && fileSize < s.Options.MinFileSize {
-			slog.Debug("Skipping file (too small)", "path", fullPath, "size", fileSize, "min", s.Options.MinFileSize)
-			continue
-		}
-		if s.Options.MaxFileSize > 0 && fileSize > s.Options.MaxFileSize {
-			slog.Debug("Skipping file (too large)", "path", fullPath, "size", fileSize, "max", s.Options.MaxFileSize)
-			continue
-		}
+	return nil
+}
+
+// ProcessFile validates a single file and creates a Job if it matches criteria.
+// Returns nil, nil if the file is skipped (e.g., wrong extension, too large).
+func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
+	s.mu.RLock()
+	opts := s.Options
+	s.mu.RUnlock()
+
+	// Skip hidden files/directories if configured
+	baseName := filepath.Base(fullPath)
+	if strings.HasPrefix(baseName, ".") {
+		if opts.SkipHiddenFiles {
+			slog.Debug("Skipping hidden file", "path", fullPath)
+			return nil, nil
+		var sourceChecksum string
+		var hashComputed bool
 
 		// Detect duplicates if enabled
 		if s.Options.DetectDuplicates {
@@ -156,6 +167,8 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 				slog.Warn("Failed to compute file hash", "path", fullPath, "error", err)
 				// Continue processing even if hash fails
 			} else {
+				sourceChecksum = fileHash
+				hashComputed = true
 				if originalPath, exists := s.seenHashes[fileHash]; exists {
 					slog.Info("Duplicate file detected",
 						"path", fullPath,
@@ -166,63 +179,119 @@ func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*m
 				s.seenHashes[fileHash] = fullPath
 			}
 		}
-
-		// Generate output path
-		var outputPath string
-		if s.Options.ReplaceSource {
-			// Replace source file with output (same location)
-			outputPath = fullPath
-		} else {
-			// Place in output directory maintaining structure
-			relPath, relErr := filepath.Rel(s.RootPath, fullPath)
-			if relErr != nil {
-				slog.Warn("Failed to compute relative path", "root", s.RootPath, "path", fullPath, "error", relErr)
-				continue
-			}
-			outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
-		}
-
-		// Validate paths before creating job
-		// This ensures no path traversal issues even if directory structure is compromised
-		// Use utils for consistent validation across the codebase
-		_, err = utils.ValidatePathWithinBase(s.RootPath, fullPath)
-		if err != nil {
-			slog.Warn("Source path validation failed, skipping", "root", s.RootPath, "path", fullPath, "error", err)
-			continue
-		}
-		if !s.Options.ReplaceSource {
-			_, err = utils.ValidatePathWithinBase(s.OutputBase, outputPath)
-			if err != nil {
-				slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
-				continue
-			}
-		}
-
-		// Calculate source file checksum for integrity validation
-		sourceChecksum, err := computeFileHash(fullPath)
-		if err != nil {
-			slog.Warn("Failed to compute source checksum", "path", fullPath, "error", err)
-			// Continue without checksum - it will be empty string
-			sourceChecksum = ""
-		}
-
-		job := &models.Job{
-			ID:             generateJobID(fullPath),
-			SourcePath:     fullPath,
-			OutputPath:     outputPath,
-			Status:         "pending",
-			Priority:       5, // Default priority (normal)
-			CreatedAt:      time.Now(),
-			RetryCount:     0,
-			MaxRetries:     3,
-			SourceChecksum: sourceChecksum,
-		}
-
-		*jobs = append(*jobs, job)
-		slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
 	}
 
-	return nil
+	// Check file extension
+	ext := strings.ToLower(filepath.Ext(baseName))
+	if !s.VideoExtensions[ext] {
+		return nil, nil
+	}
+
+	// Get file info for size filtering
+	fileInfo, err := os.Stat(fullPath)
+	if err != nil {
+		slog.Warn("Failed to get file info", "path", fullPath, "error", err)
+		return nil, err
+	}
+
+	if fileInfo.IsDir() {
+		return nil, nil
+	}
+
+	// Apply size filters
+	fileSize := fileInfo.Size()
+	if opts.MinFileSize > 0 && fileSize < opts.MinFileSize {
+		slog.Debug("Skipping file (too small)", "path", fullPath, "size", fileSize, "min", opts.MinFileSize)
+		return nil, nil
+	}
+	if opts.MaxFileSize > 0 && fileSize > opts.MaxFileSize {
+		slog.Debug("Skipping file (too large)", "path", fullPath, "size", fileSize, "max", opts.MaxFileSize)
+		return nil, nil
+	}
+
+	// Detect duplicates if enabled
+	if opts.DetectDuplicates {
+		fileHash, err := computeFileHash(fullPath)
+		if err != nil {
+			slog.Warn("Failed to compute file hash", "path", fullPath, "error", err)
+			// Continue processing even if hash fails
+		} else {
+			s.mu.Lock()
+			if originalPath, exists := s.seenHashes[fileHash]; exists {
+				s.mu.Unlock()
+				slog.Info("Duplicate file detected",
+					"path", fullPath,
+					"original", originalPath,
+					"hash", fileHash)
+				return nil, nil // Skip duplicate
+			}
+			s.seenHashes[fileHash] = fullPath
+			s.mu.Unlock()
+		}
+	}
+
+	// Generate output path
+	var outputPath string
+	if opts.ReplaceSource {
+		// Replace source file with output (same location)
+		outputPath = fullPath
+	} else {
+		// Place in output directory maintaining structure
+		relPath, relErr := filepath.Rel(s.RootPath, fullPath)
+		if relErr != nil {
+			slog.Warn("Failed to compute relative path", "root", s.RootPath, "path", fullPath, "error", relErr)
+			return nil, relErr
+		}
+		outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
+	}
+
+	// Validate paths before creating job
+	// This ensures no path traversal issues even if directory structure is compromised
+	// Use utils for consistent validation across the codebase
+	_, err = utils.ValidatePathWithinBase(s.RootPath, fullPath)
+	if err != nil {
+		slog.Warn("Source path validation failed, skipping", "root", s.RootPath, "path", fullPath, "error", err)
+		return nil, err
+	}
+	if !opts.ReplaceSource {
+		_, err = utils.ValidatePathWithinBase(s.OutputBase, outputPath)
+		if err != nil {
+			slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
+			return nil, err
+		// Calculate source file checksum for integrity validation
+		if !hashComputed {
+			var err error
+			sourceChecksum, err = computeFileHash(fullPath)
+			if err != nil {
+				slog.Warn("Failed to compute source checksum", "path", fullPath, "error", err)
+				// Continue without checksum - it will be empty string
+				sourceChecksum = ""
+			}
+		}
+	}
+
+	// Calculate source file checksum for integrity validation
+	sourceChecksum, err := computeFileHash(fullPath)
+	if err != nil {
+		slog.Warn("Failed to compute source checksum", "path", fullPath, "error", err)
+		// Continue without checksum - it will be empty string
+		sourceChecksum = ""
+	}
+
+	job := &models.Job{
+		ID:             generateJobID(fullPath),
+		SourcePath:     fullPath,
+		OutputPath:     outputPath,
+		Status:         "pending",
+		Priority:       5, // Default priority (normal)
+		CreatedAt:      time.Now(),
+		RetryCount:     0,
+		MaxRetries:     3,
+		SourceChecksum: sourceChecksum,
+	}
+
+	slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
+	return job, nil
 }
 
 // computeFileHash computes SHA256 hash of file for duplicate detection

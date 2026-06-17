@@ -43,7 +43,11 @@ func NewCacheManager(cachePath string, maxSize int64, maxAge time.Duration) *Cac
 	}
 
 	// Calculate initial cache size
-	cm.calculateCacheSize()
+	totalSize, _, _ := cm.listCacheEntries()
+	cm.mu.Lock()
+	cm.currentSize = totalSize
+	cm.mu.Unlock()
+	slog.Debug("Cache size calculated", "size_bytes", totalSize, "path", cm.cachePath)
 
 	return cm
 }
@@ -64,15 +68,16 @@ func (cm *CacheManager) Cleanup() error {
 	}
 	cm.mu.Unlock()
 
-	entries, err := cm.listCacheEntries()
+	totalSize, entries, err := cm.listCacheEntries()
 	if err != nil {
 		return err
 	}
 
-	var totalSize int64
 	var removedCount int
 	var removedSize int64
 	now := time.Now()
+
+	var remainingEntries []CacheEntry
 
 	// First pass: remove old files based on age
 	if cm.maxAge > 0 {
@@ -82,45 +87,30 @@ func (cm *CacheManager) Cleanup() error {
 				removeErr := os.Remove(entry.Path)
 				if removeErr != nil {
 					slog.Warn("Failed to remove old cache file", "path", entry.Path, "error", removeErr)
+					remainingEntries = append(remainingEntries, entry)
 					continue
 				}
 				removedCount++
 				removedSize += entry.Size
+				totalSize -= entry.Size
 				slog.Debug("Removed old cache file", "path", entry.Path, "age", age)
 			} else {
-				totalSize += entry.Size
+				remainingEntries = append(remainingEntries, entry)
 			}
 		}
 	} else {
-		for _, entry := range entries {
-			totalSize += entry.Size
-		}
+		remainingEntries = entries
 	}
 
 	// Second pass: remove files to enforce size limit (remove oldest first)
 	if cm.maxSize > 0 && totalSize > cm.maxSize {
-		// Re-fetch entries after age cleanup
-		entries, err = cm.listCacheEntries()
-		if err != nil {
-			return err
-		}
-
 		// Sort by modification time (oldest first)
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].ModTime.Before(entries[j].ModTime)
+		sort.Slice(remainingEntries, func(i, j int) bool {
+			return remainingEntries[i].ModTime.Before(remainingEntries[j].ModTime)
 		})
 
-		// Recalculate total size from actual disk state to account for
-		// files that failed to delete in the age-based cleanup pass.
-		totalSize = 0
-		for _, entry := range entries {
-			totalSize += entry.Size
-		}
-
-		// Calculate current size and remove files in a single pass
-		currentSize := totalSize
-		for _, entry := range entries {
-			if currentSize <= cm.maxSize {
+		for _, entry := range remainingEntries {
+			if totalSize <= cm.maxSize {
 				break
 			}
 
@@ -129,13 +119,11 @@ func (cm *CacheManager) Cleanup() error {
 				slog.Warn("Failed to remove cache file for size limit", "path", entry.Path, "error", removeErr)
 				continue
 			}
-			currentSize -= entry.Size
+			totalSize -= entry.Size
 			removedCount++
 			removedSize += entry.Size
 			slog.Debug("Removed cache file for size limit", "path", entry.Path, "size", entry.Size)
 		}
-
-		totalSize = currentSize
 	}
 
 	cm.mu.Lock()
@@ -185,32 +173,10 @@ func (cm *CacheManager) IsStopped() bool {
 	return cm.stopped
 }
 
-// calculateCacheSize calculates the current cache size
-func (cm *CacheManager) calculateCacheSize() {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	var totalSize int64
-	_ = filepath.WalkDir(cm.cachePath, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // Skip errors and continue walking
-		}
-		if !d.IsDir() {
-			info, infoErr := d.Info()
-			if infoErr == nil {
-				totalSize += info.Size()
-			}
-		}
-		return nil
-	})
-
-	cm.currentSize = totalSize
-	slog.Debug("Cache size calculated", "size_bytes", totalSize, "path", cm.cachePath)
-}
-
 // listCacheEntries lists all cache entries
-func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
+func (cm *CacheManager) listCacheEntries() (int64, []CacheEntry, error) {
 	var entries []CacheEntry
+	var totalSize int64
 
 	err := filepath.WalkDir(cm.cachePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -219,9 +185,11 @@ func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
 		if !d.IsDir() {
 			info, infoErr := d.Info()
 			if infoErr == nil {
+				size := info.Size()
+				totalSize += size
 				entries = append(entries, CacheEntry{
 					Path:    path,
-					Size:    info.Size(),
+					Size:    size,
 					ModTime: info.ModTime(),
 				})
 			}
@@ -230,7 +198,7 @@ func (cm *CacheManager) listCacheEntries() ([]CacheEntry, error) {
 	})
 
 	if err != nil {
-		return entries, fmt.Errorf("failed to walk cache directory: %w", err)
+		return 0, entries, fmt.Errorf("failed to walk cache directory: %w", err)
 	}
-	return entries, nil
+	return totalSize, entries, nil
 }

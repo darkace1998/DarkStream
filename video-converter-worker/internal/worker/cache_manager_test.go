@@ -72,7 +72,7 @@ func TestCacheManager_Cleanup_SizeLimit(t *testing.T) {
 	}
 
 	// Verify only 2 files remain
-	entries, _ := cm.listCacheEntries()
+	_, entries, _ := cm.listCacheEntries()
 	if len(entries) != 2 {
 		t.Errorf("Expected 2 files after cleanup, got %d", len(entries))
 	}
