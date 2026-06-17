@@ -43,6 +43,7 @@ type MasterConfig struct {
 		SkipHiddenDirs   bool          `yaml:"skip_hidden_dirs"`  // Skip directories starting with '.'
 		ReplaceSource    bool          `yaml:"replace_source"`    // Replace source file with output
 		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
+		EnableWatch      bool          `yaml:"enable_watch"`      // Watch for filesystem changes using fsnotify
 	} `yaml:"scanner"`
 
 	Monitoring struct {

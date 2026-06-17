@@ -21,6 +21,7 @@ scanner:
   skip_hidden_dirs: true    # Skip directories starting with '.'
   replace_source: false     # Replace source file with output (use with caution!)
   detect_duplicates: true   # Detect and skip duplicate files based on content hash
+  enable_watch: false       # Watch for filesystem changes using fsnotify
 
 database:
   path: ./jobs.db

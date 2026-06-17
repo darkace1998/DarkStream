@@ -162,6 +162,21 @@ func (c *Coordinator) Start() error {
 		slog.Info("Periodic scanning disabled (scan_interval not set)")
 	}
 
+	// Start file system watcher if enabled
+	if c.config.Scanner.EnableWatch {
+		watcher, err := scanner.NewWatcher(c.scanner)
+		if err != nil {
+			slog.Error("Failed to initialize file system watcher", "error", err)
+		} else {
+			if err := watcher.Start(); err != nil {
+				slog.Error("Failed to start file system watcher", "error", err)
+			} else {
+				c.wg.Add(1)
+				go c.listenWatcherEvents(watcher)
+			}
+		}
+	}
+
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -216,6 +231,40 @@ func (c *Coordinator) Start() error {
 	}
 
 	return err
+}
+
+// listenWatcherEvents processes jobs emitted by the file system watcher
+func (c *Coordinator) listenWatcherEvents(w *scanner.Watcher) {
+	defer c.wg.Done()
+	defer w.Close()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			slog.Info("Watcher event listener stopping")
+			return
+		case job, ok := <-w.Jobs:
+			if !ok {
+				return
+			}
+			err := c.db.CreateJob(job)
+			if err != nil {
+				if errors.Is(err, db.ErrJobAlreadyExists) {
+					// Job already exists, ignore
+				} else {
+					slog.Error("Failed to insert job from watcher", "job_id", job.ID, "error", err)
+				}
+			} else {
+				slog.Info("Successfully inserted job from watcher", "job_id", job.ID)
+				c.server.RefreshQueueDepth()
+			}
+		case err, ok := <-w.Errors:
+			if !ok {
+				return
+			}
+			slog.Error("Watcher reported error", "error", err)
+		}
+	}
 }
 
 // monitorWorkerHealth periodically checks worker health
