@@ -34,6 +34,7 @@ The repository's CI already runs race detector tests in GitHub Actions. You can 
 8. [Deployment](#deployment)
 9. [Monitoring & CLI](#monitoring--cli)
 10. [Vulkan Integration](#vulkan-integration)
+11. [Contributing & Changelog](#contributing--changelog)
 
 ---
 
@@ -1941,3 +1942,11 @@ video-converter-cli retry --master-url http://storage-server:8080 --limit 100
 ✅ **Unified API:** Single codebase for all GPU vendors
 ✅ **Open Standard:** Open-source, vendor-agnostic
 ✅ **Modern:** Low-level control, better performance than Open
+
+---
+
+## Contributing & Changelog
+
+We welcome contributions to DarkStream! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to set up your environment, run tests, and submit pull requests.
+
+To see what has changed recently, please review our [Changelog](CHANGELOG.md).

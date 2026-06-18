@@ -66,5 +66,5 @@
 ### Documentation
 - [ ] Add architecture diagrams (component interaction, data flow) to the README or a dedicated doc
 - [ ] Document the full REST API with request/response examples (OpenAPI/Swagger spec)
-- [ ] Add a contributing guide (`CONTRIBUTING.md`) with development setup, code style, and PR process
-- [ ] Add a changelog (`CHANGELOG.md`) to track releases and notable changes
+- [x] Add a contributing guide (`CONTRIBUTING.md`) with development setup, code style, and PR process
+- [x] Add a changelog (`CHANGELOG.md`) to track releases and notable changes
