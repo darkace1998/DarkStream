@@ -64,7 +64,7 @@
 - [ ] Implement job deduplication (detect re-submitted identical source files)
 
 ### Documentation
-- [ ] Add architecture diagrams (component interaction, data flow) to the README or a dedicated doc
-- [ ] Document the full REST API with request/response examples (OpenAPI/Swagger spec)
+- [x] Add architecture diagrams (component interaction, data flow) to the README or a dedicated doc
+- [x] Document the full REST API with request/response examples (API.md)
 - [x] Add a contributing guide (`CONTRIBUTING.md`) with development setup, code style, and PR process
 - [x] Add a changelog (`CHANGELOG.md`) to track releases and notable changes
