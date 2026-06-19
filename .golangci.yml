@@ -15,6 +15,7 @@ linters:
     - testpackage        # Allow tests in same package (white-box testing)
     - varnamelen         # Allow short variable names (standard Go practice)
     - wsl    
+    #- wsl_v5            # Whitespace linter (too opinionated)
     - tagliatelle        # Don't enforce tag naming convention (allow snake_case for JSON)
     - perfsprint         # Don't enforce fmt.Sprintf vs string concat (micro-optimization)
     - lll                # Don't enforce line length (some lines need to be long)

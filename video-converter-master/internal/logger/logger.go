@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Init initializes the logger with the specified level and format
 func Init(level, format, outputPath string) {
 	opts := &slog.HandlerOptions{
-		Level: parseLogLevel(level),
+		Level: utils.ParseLogLevel(level),
 	}
 
 	writer := io.Writer(os.Stdout)
@@ -38,19 +40,4 @@ func Init(level, format, outputPath string) {
 	}
 
 	slog.SetDefault(slog.New(handler))
-}
-
-func parseLogLevel(level string) slog.Level {
-	switch level {
-	case "debug":
-		return slog.LevelDebug
-	case "info":
-		return slog.LevelInfo
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
