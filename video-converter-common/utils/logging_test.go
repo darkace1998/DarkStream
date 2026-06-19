@@ -23,7 +23,7 @@ func captureStdout(f func()) string {
 	// copy the output in a separate goroutine so printing can't block indefinitely
 	go func() {
 		var buf bytes.Buffer
-		buf.ReadFrom(r)
+		_, _ = buf.ReadFrom(r)
 		outC <- buf.String()
 	}()
 
