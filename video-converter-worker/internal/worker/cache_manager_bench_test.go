@@ -14,7 +14,7 @@ func BenchmarkCacheManager_Cleanup(b *testing.B) {
 	// Create 1000 dummy files
 	for i := 0; i < 1000; i++ {
 		filePath := filepath.Join(tempDir, fmt.Sprintf("test_%d.tmp", i))
-		os.WriteFile(filePath, make([]byte, 1024), 0644)
+		_ = os.WriteFile(filePath, make([]byte, 1024), 0644)
 	}
 
 	b.ResetTimer()
@@ -25,14 +25,14 @@ func BenchmarkCacheManager_Cleanup(b *testing.B) {
 		// Restore files for next run
 		for j := 0; j < 1000; j++ {
 			filePath := filepath.Join(tempDir, fmt.Sprintf("test_%d.tmp", j))
-			os.WriteFile(filePath, make([]byte, 1024), 0644)
+			_ = os.WriteFile(filePath, make([]byte, 1024), 0644)
 			if j < 500 {
 				oldTime := time.Now().Add(-48 * time.Hour)
-				os.Chtimes(filePath, oldTime, oldTime)
+				_ = os.Chtimes(filePath, oldTime, oldTime)
 			}
 		}
 
 		b.StartTimer()
-		cm.Cleanup()
+		_ = cm.Cleanup()
 	}
 }

@@ -1,6 +1,9 @@
 server:
   port: 8080
   host: 0.0.0.0
+  api_key: ""         # Optional: Require workers to authenticate with this key
+  tls_cert: ""        # Optional: Path to TLS certificate file (enables HTTPS)
+  tls_key: ""         # Optional: Path to TLS private key file
 
 scanner:
   root_path: /mnt/storage/videos

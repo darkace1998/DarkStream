@@ -157,27 +157,6 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		if opts.SkipHiddenFiles {
 			slog.Debug("Skipping hidden file", "path", fullPath)
 			return nil, nil
-		var sourceChecksum string
-		var hashComputed bool
-
-		// Detect duplicates if enabled
-		if s.Options.DetectDuplicates {
-			fileHash, err := computeFileHash(fullPath)
-			if err != nil {
-				slog.Warn("Failed to compute file hash", "path", fullPath, "error", err)
-				// Continue processing even if hash fails
-			} else {
-				sourceChecksum = fileHash
-				hashComputed = true
-				if originalPath, exists := s.seenHashes[fileHash]; exists {
-					slog.Info("Duplicate file detected",
-						"path", fullPath,
-						"original", originalPath,
-						"hash", fileHash)
-					continue // Skip duplicate
-				}
-				s.seenHashes[fileHash] = fullPath
-			}
 		}
 	}
 
@@ -258,15 +237,6 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		if err != nil {
 			slog.Warn("Output path validation failed, skipping", "output_base", s.OutputBase, "path", outputPath, "error", err)
 			return nil, err
-		// Calculate source file checksum for integrity validation
-		if !hashComputed {
-			var err error
-			sourceChecksum, err = computeFileHash(fullPath)
-			if err != nil {
-				slog.Warn("Failed to compute source checksum", "path", fullPath, "error", err)
-				// Continue without checksum - it will be empty string
-				sourceChecksum = ""
-			}
 		}
 	}
 

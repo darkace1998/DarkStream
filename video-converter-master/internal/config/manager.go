@@ -44,18 +44,18 @@ type OutputConfig struct {
 // WorkerConfig holds worker-related settings
 type WorkerConfig struct {
 	Concurrency          int    `json:"concurrency"`
-	HeartbeatInterval    int    `json:"heartbeat_interval"`    // seconds
-	JobCheckInterval     int    `json:"job_check_interval"`    // seconds
-	JobTimeout           int    `json:"job_timeout"`           // seconds
+	HeartbeatInterval    int    `json:"heartbeat_interval"` // seconds
+	JobCheckInterval     int    `json:"job_check_interval"` // seconds
+	JobTimeout           int    `json:"job_timeout"`        // seconds
 	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
-	DownloadTimeout      int    `json:"download_timeout"`      // seconds
-	UploadTimeout        int    `json:"upload_timeout"`        // seconds
-	MaxCacheSize         int64  `json:"max_cache_size"`        // bytes
-	CacheCleanupAge      int    `json:"cache_cleanup_age"`     // seconds
-	BandwidthLimit       int64  `json:"bandwidth_limit"`       // bytes per second
+	DownloadTimeout      int    `json:"download_timeout"`  // seconds
+	UploadTimeout        int    `json:"upload_timeout"`    // seconds
+	MaxCacheSize         int64  `json:"max_cache_size"`    // bytes
+	CacheCleanupAge      int    `json:"cache_cleanup_age"` // seconds
+	BandwidthLimit       int64  `json:"bandwidth_limit"`   // bytes per second
 	EnableResumeDownload bool   `json:"enable_resume_download"`
 	UseVulkan            bool   `json:"use_vulkan"`
-	FFmpegTimeout        int    `json:"ffmpeg_timeout"`        // seconds
+	FFmpegTimeout        int    `json:"ffmpeg_timeout"` // seconds
 	LogLevel             string `json:"log_level"`
 	LogFormat            string `json:"log_format"`
 }
@@ -128,16 +128,16 @@ func getDefaultWorkerConfig() WorkerConfig {
 		Concurrency:          3,
 		HeartbeatInterval:    30,
 		JobCheckInterval:     5,
-		JobTimeout:           7200,  // 2 hours
+		JobTimeout:           7200, // 2 hours
 		MaxAPIRequestsPerMin: 60,
-		DownloadTimeout:      1800,  // 30 minutes
-		UploadTimeout:        1800,  // 30 minutes
+		DownloadTimeout:      1800,        // 30 minutes
+		UploadTimeout:        1800,        // 30 minutes
 		MaxCacheSize:         10737418240, // 10GB
-		CacheCleanupAge:      86400, // 24 hours
-		BandwidthLimit:       0,     // unlimited
+		CacheCleanupAge:      86400,       // 24 hours
+		BandwidthLimit:       0,           // unlimited
 		EnableResumeDownload: true,
 		UseVulkan:            true,
-		FFmpegTimeout:        7200,  // 2 hours
+		FFmpegTimeout:        7200, // 2 hours
 		LogLevel:             "info",
 		LogFormat:            "json",
 	}
@@ -263,6 +263,39 @@ func (m *Manager) saveToFileData(data []byte) error {
 	return nil
 }
 
+var (
+	// Validate resolution format (e.g., "1920x1080")
+	resolutionPattern = regexp.MustCompile(`^\d+x\d+$`)
+
+	// Validate video bitrate format (e.g., "5M", "2000k")
+	bitratePattern = regexp.MustCompile(`^\d+[kKmM]?$`)
+
+	validVideoCodecs = map[string]bool{
+		"h264": true, "h265": true, "hevc": true, "vp9": true, "av1": true,
+	}
+
+	validPresets = map[string]bool{
+		"ultrafast": true, "superfast": true, "veryfast": true, "faster": true,
+		"fast": true, "medium": true, "slow": true, "slower": true, "veryslow": true, "placebo": true,
+	}
+
+	validAudioCodecs = map[string]bool{
+		"aac": true, "mp3": true, "opus": true, "vorbis": true,
+	}
+
+	validFormats = map[string]bool{
+		"mp4": true, "mkv": true, "webm": true, "avi": true,
+	}
+
+	validLogLevels = map[string]bool{
+		"debug": true, "info": true, "warn": true, "error": true,
+	}
+
+	validLogFormats = map[string]bool{
+		"json": true, "text": true,
+	}
+)
+
 // ValidationError represents a configuration validation error
 type ValidationError struct {
 	Field   string `json:"field"`
@@ -286,8 +319,6 @@ func (e *ValidationErrors) Error() string {
 func validateConfig(cfg *ActiveConfig) error {
 	var errors []ValidationError
 
-	// Validate resolution format (e.g., "1920x1080")
-	resolutionPattern := regexp.MustCompile(`^\d+x\d+$`)
 	if cfg.Video.Resolution != "" && !resolutionPattern.MatchString(cfg.Video.Resolution) {
 		errors = append(errors, ValidationError{
 			Field:   "video.resolution",
@@ -295,10 +326,6 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate video codec
-	validVideoCodecs := map[string]bool{
-		"h264": true, "h265": true, "hevc": true, "vp9": true, "av1": true,
-	}
 	if cfg.Video.Codec != "" && !validVideoCodecs[cfg.Video.Codec] {
 		errors = append(errors, ValidationError{
 			Field:   "video.codec",
@@ -306,8 +333,6 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate video bitrate format (e.g., "5M", "2000k")
-	bitratePattern := regexp.MustCompile(`^\d+[kKmM]?$`)
 	if cfg.Video.Bitrate != "" && !bitratePattern.MatchString(cfg.Video.Bitrate) {
 		errors = append(errors, ValidationError{
 			Field:   "video.bitrate",
@@ -315,11 +340,6 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate preset
-	validPresets := map[string]bool{
-		"ultrafast": true, "superfast": true, "veryfast": true, "faster": true,
-		"fast": true, "medium": true, "slow": true, "slower": true, "veryslow": true, "placebo": true,
-	}
 	if cfg.Video.Preset != "" && !validPresets[cfg.Video.Preset] {
 		errors = append(errors, ValidationError{
 			Field:   "video.preset",
@@ -327,10 +347,6 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate audio codec
-	validAudioCodecs := map[string]bool{
-		"aac": true, "mp3": true, "opus": true, "vorbis": true,
-	}
 	if cfg.Audio.Codec != "" && !validAudioCodecs[cfg.Audio.Codec] {
 		errors = append(errors, ValidationError{
 			Field:   "audio.codec",
@@ -346,10 +362,6 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate output format
-	validFormats := map[string]bool{
-		"mp4": true, "mkv": true, "webm": true, "avi": true,
-	}
 	if cfg.Output.Format != "" && !validFormats[cfg.Output.Format] {
 		errors = append(errors, ValidationError{
 			Field:   "output.format",
@@ -382,17 +394,11 @@ func validateConfig(cfg *ActiveConfig) error {
 			Message: "must be at least 60 seconds",
 		})
 	}
-	validLogLevels := map[string]bool{
-		"debug": true, "info": true, "warn": true, "error": true,
-	}
 	if cfg.Worker.LogLevel != "" && !validLogLevels[cfg.Worker.LogLevel] {
 		errors = append(errors, ValidationError{
 			Field:   "worker.log_level",
 			Message: "must be one of: debug, info, warn, error",
 		})
-	}
-	validLogFormats := map[string]bool{
-		"json": true, "text": true,
 	}
 	if cfg.Worker.LogFormat != "" && !validLogFormats[cfg.Worker.LogFormat] {
 		errors = append(errors, ValidationError{
