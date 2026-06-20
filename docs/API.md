@@ -4,7 +4,9 @@ The Video Converter Master exposes a REST API for workers to fetch jobs and repo
 
 ## Authentication
 
-Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`.
+Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:
+`Authorization: Bearer <api_key>`
+
 CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service.
 
 ## Worker API

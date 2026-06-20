@@ -1617,6 +1617,8 @@ func Detect(args []string) {
 
 ### Worker -> Master API
 
+*Note: Worker API endpoints require an API key passed in the `Authorization` header (`Authorization: Bearer <api_key>`) if an `api_key` is configured on the master server.*
+
 #### 1. Get Next Job
 ```
 GET /api/worker/next-job?worker_id=worker-1&gpu_available=true
@@ -1735,6 +1737,9 @@ CREATE TABLE workers (
 server:
   port: 8080
   host: 0.0.0.0
+  api_key: ""         # Optional: Require workers to authenticate with this key
+  tls_cert: ""        # Optional: Path to TLS certificate file (enables HTTPS)
+  tls_key: ""         # Optional: Path to TLS private key file
 
 scanner:
   root_path: /mnt/storage/videos
@@ -1747,7 +1752,8 @@ scanner:
     - .webm
     - .m4v
   output_base: /mnt/storage/converted
-  recursive_depth: -1  # -1 for unlimited
+  recursive_depth: -1  # -1 for unlimited, 0 for root only, >0 for specific depth
+  scan_interval: 5m    # How often to scan for new files (e.g., 5m, 1h). 0 to disable
 
 database:
   path: ./jobs.db
@@ -1759,6 +1765,13 @@ conversion:
   preset: fast
   audio_codec: aac
   audio_bitrate: 128k
+  output_format: mp4
+
+# Worker defaults - these settings are provided to workers when they connect
+worker_defaults:
+  concurrency: 3               # Number of concurrent jobs per worker
+  use_vulkan: true             # Enable Vulkan GPU acceleration if available
+  # ... See config.yaml.example for more worker defaults
 
 logging:
   level: info
@@ -1772,15 +1785,21 @@ logging:
 worker:
   id: worker-1
   concurrency: 3
-  master_url: http://storage-server:8080
+  master_url: http://localhost:8080  # REQUIRED - master server URL
+  api_key: ""                        # MUST match master server api_key if set
   heartbeat_interval: 30s
   job_check_interval: 5s
   job_timeout: 2h
+  max_api_requests_per_min: 60
 
 storage:
   mount_path: /mnt/storage
   download_timeout: 30m
+  upload_timeout: 30m
   cache_path: /tmp/converter-cache
+  max_cache_size: 10737418240  # 10GB maximum cache size
+  cache_cleanup_age: 24h
+  enable_resume_download: true
 
 ffmpeg:
   path: /usr/bin/ffmpeg
@@ -1790,6 +1809,9 @@ ffmpeg:
 vulkan:
   preferred_device: auto
   enable_validation: false
+
+# Conversion settings are now pulled dynamically from the master server.
+# To configure conversion settings, use the web interface at http://<master_url>/
 
 logging:
   level: info
