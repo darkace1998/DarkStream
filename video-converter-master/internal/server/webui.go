@@ -1004,6 +1004,9 @@ func (s *Server) GetConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
 
 	cfg := s.configMgr.Get()
 
