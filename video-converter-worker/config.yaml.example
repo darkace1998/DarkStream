@@ -2,6 +2,7 @@ worker:
   id: worker-1
   concurrency: 3
   master_url: http://localhost:8080  # REQUIRED - master server URL
+  api_key: ""                        # MUST match master server api_key if set
   heartbeat_interval: 30s
   job_check_interval: 5s
   job_timeout: 2h

@@ -1,11 +1,10 @@
-version: '2'
+
 
 linters:    
   default: all
   disable:
     # Disable overly strict or impractical linters
     - depguard           # Allow all imports (too restrictive for this project)
-    - err113             # Allow dynamic errors (static errors not always practical)
     - exhaustruct        # Don't require all struct fields (too verbose)
     - exhaustive         # Don't require all switch cases (allow default handling)
     - godox              # Allow TODO/FIXME comments
@@ -16,11 +15,8 @@ linters:
     - testpackage        # Allow tests in same package (white-box testing)
     - varnamelen         # Allow short variable names (standard Go practice)
     - wsl    
-                # Whitespace linter (too opinionated)
     - tagliatelle        # Don't enforce tag naming convention (allow snake_case for JSON)
-    - mnd                # Don't flag magic numbers (sometimes constants are overkill)
     - perfsprint         # Don't enforce fmt.Sprintf vs string concat (micro-optimization)
-    - intrange           # Don't require Go 1.22+ range syntax (compatibility)
     - lll                # Don't enforce line length (some lines need to be long)
     - gochecknoglobals   # Allow globals when needed (e.g., sync.Once)
     - godot              # Don't enforce periods in comments (too strict)

@@ -26,7 +26,7 @@ var (
 // level should be one of the constants.LogLevel* constants.
 // format should be one of the constants.LogFormat* constants.
 func InitLogger(level, format string) {
-	globalLogLevel = parseLogLevel(level)
+	globalLogLevel = ParseLogLevel(level)
 
 	opts := &slog.HandlerOptions{
 		Level: globalLogLevel,
@@ -47,7 +47,7 @@ func InitLogger(level, format string) {
 func SetComponentLogLevel(component string, level string) {
 	componentLogMu.Lock()
 	defer componentLogMu.Unlock()
-	componentLogLevels[component] = parseLogLevel(level)
+	componentLogLevels[component] = ParseLogLevel(level)
 }
 
 // GetComponentLogLevel returns the log level for a specific component.
@@ -179,7 +179,7 @@ func (l *ComponentLogger) shouldLog(level slog.Level) bool {
 	return level >= GetComponentLogLevel(l.component)
 }
 
-func parseLogLevel(level string) slog.Level {
+func ParseLogLevel(level string) slog.Level {
 	switch level {
 	case constants.LogLevelDebug:
 		return slog.LevelDebug
