@@ -77,10 +77,13 @@ Sends a worker heartbeat with system metrics.
 Downloads the source video file for a job.
 
 **Query Parameters:**
-- `path` (string, required): The relative path of the video file.
+- `job_id` (string, required): The job ID to download the source video for.
 
 ### `POST /api/worker/upload-video`
 Uploads the converted video file. Requires `multipart/form-data`.
+
+**Query Parameters:**
+- `job_id` (string, required): The job ID to upload the converted video for.
 
 ### `POST /api/worker/job-progress`
 Updates the conversion progress of a job.
@@ -99,8 +102,45 @@ Updates the conversion progress of a job.
 ### `GET /api/worker/config`
 Retrieves worker configuration settings from the master.
 
+**Query Parameters:**
+- `worker_id` (string, optional): The ID of the worker requesting the config.
+
+### `GET /api/worker/settings`
+Retrieves per-worker configuration settings dynamically.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker.
+
 ### `POST /api/worker/settings`
-Updates worker configuration settings dynamically.
+Updates per-worker configuration settings dynamically.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker.
+
+**Body (JSON):**
+```json
+{
+  "concurrency": 3,
+  "heartbeat_interval": "30s",
+  "job_check_interval": "5s",
+  "job_timeout": "2h",
+  "max_api_requests_per_min": 60,
+  "download_timeout": "30m",
+  "upload_timeout": "30m",
+  "max_cache_size": 10737418240,
+  "cache_cleanup_age": "24h",
+  "bandwidth_limit": 0,
+  "enable_resume_download": true,
+  "use_vulkan": true,
+  "ffmpeg_timeout": "2h"
+}
+```
+
+### `DELETE /api/worker/settings`
+Deletes per-worker configuration settings, falling back to global defaults.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker.
 
 ---
 
