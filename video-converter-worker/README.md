@@ -27,6 +27,12 @@ The simplest way to start a worker is to connect it directly to the master serve
 ./worker -url http://master-server:8080
 ```
 
+If the master server requires authentication (has an `api_key` configured), you must provide it using the `DARKSTREAM_API_KEY` environment variable:
+
+```bash
+DARKSTREAM_API_KEY="your_api_key_here" ./worker -url http://master-server:8080
+```
+
 That's it! The worker will:
 - Generate a unique worker ID automatically
 - Fetch all configuration settings from the master

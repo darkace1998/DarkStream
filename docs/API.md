@@ -7,7 +7,7 @@ The Video Converter Master exposes a REST API for workers to fetch jobs and repo
 Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:
 `Authorization: Bearer <api_key>`
 
-CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service.
+CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service. For the CLI, you must set the `DARKSTREAM_API_KEY` environment variable when connecting to a master server that requires authentication.
 
 ## Worker API
 

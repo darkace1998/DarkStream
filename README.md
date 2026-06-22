@@ -1617,7 +1617,7 @@ func Detect(args []string) {
 
 ### Worker -> Master API
 
-*Note: Worker API endpoints require an API key passed in the `Authorization` header (`Authorization: Bearer <api_key>`) if an `api_key` is configured on the master server.*
+*Note: Worker API endpoints require an API key passed in the `Authorization` header (`Authorization: Bearer <api_key>`) if an `api_key` is configured on the master server. CLI and Dashboard endpoints also require authentication, which can be configured using the `DARKSTREAM_API_KEY` environment variable for the CLI.*
 
 #### 1. Get Next Job
 ```
@@ -1889,6 +1889,14 @@ WantedBy=multi-user.target
 ---
 
 ## Monitoring & CLI
+
+### Authentication
+
+If your master server has `api_key` configured, you must set the `DARKSTREAM_API_KEY` environment variable when using the CLI:
+
+```bash
+export DARKSTREAM_API_KEY="your_api_key_here"
+```
 
 ### Check Status
 
