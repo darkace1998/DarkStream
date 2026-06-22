@@ -239,7 +239,12 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td>{{.WorkerID}}</td>
                             <td>{{if .SourceDuration}}{{printf "%.0f" .SourceDuration}}s{{else}}-{{end}}</td>
                             <td>{{if .CompletedAt}}{{.CompletedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
-                            <td>{{if eq .Status "failed"}}<button class="btn btn-primary btn-sm" onclick="retryJob('{{.ID}}')">Retry</button>{{end}}</td>
+                            <td>
+                                {{if eq .Status "failed"}}<button class="btn btn-primary btn-sm" onclick="retryJob('{{.ID}}')">Retry</button>{{end}}
+                                {{if or (eq .Status "completed") (eq .Status "failed") (eq .Status "cancelled")}}
+                                <button class="btn btn-secondary btn-sm" onclick="requeueJob('{{.ID}}')">Re-queue</button>
+                                {{end}}
+                            </td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -702,6 +707,20 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     location.reload();
                 } else {
                     alert('Failed to retry job');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function requeueJob(jobId) {
+            if (!confirm('Re-queue job ' + jobId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/job/requeue?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to re-queue job');
                 }
             } catch (err) {
                 alert('Error: ' + err.message);
