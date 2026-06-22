@@ -24,6 +24,14 @@ cd video-converter-cli
 go build -o video-converter-cli
 ```
 
+## Authentication
+
+If the master server is configured with an `api_key`, you must authenticate your CLI requests by setting the `DARKSTREAM_API_KEY` environment variable:
+
+```bash
+export DARKSTREAM_API_KEY="your_api_key_here"
+```
+
 ## Usage
 
 ### Start Master Server
