@@ -58,7 +58,7 @@
 
 ### Features — Nice to Have
 - [ ] Support compression during file transfer to reduce bandwidth usage
-- [ ] Add a notification system (webhook, email) on job completion or failure
+- [x] Add a notification system (webhook, email) on job completion or failure
 - [ ] Support additional output formats and encoding presets configurable per-job
 - [ ] Add an admin API for dynamically adding/removing workers without restart
 - [ ] Implement job deduplication (detect re-submitted identical source files)

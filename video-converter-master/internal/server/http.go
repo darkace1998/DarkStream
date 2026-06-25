@@ -25,6 +25,7 @@ import (
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"github.com/darkace1998/video-converter-master/internal/metrics"
+	"github.com/darkace1998/video-converter-master/internal/notifier"
 	"gopkg.in/yaml.v3"
 )
 
@@ -166,6 +167,7 @@ type Server struct {
 	apiKey      string
 	allowedDirs []string // Allowed directories for file operations (source and output)
 	metrics     *metrics.Metrics
+	notifier    *notifier.WebhookNotifier
 }
 
 // New creates a new HTTP server instance
@@ -187,6 +189,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		apiKey:      apiKey,
 		allowedDirs: allowedDirs,
 		metrics:     metrics.New(),
+		notifier:    notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
 	}
 }
 
@@ -543,6 +546,11 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.metrics.RecordJobFinished()
 
+	// Notify webhook if configured
+	if updatedJob, fetchErr := s.db.GetJobByID(job.ID); fetchErr == nil {
+		s.notifier.Notify("completed", updatedJob)
+	}
+
 	slog.Info("Job completed", "job_id", req.JobID, "worker_id", req.WorkerID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -615,6 +623,11 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	s.metrics.RecordJobFailed(duration, errorType)
 	s.metrics.RecordJobFinished()
+
+	// Notify webhook if configured
+	if updatedJob, fetchErr := s.db.GetJobByID(req.JobID); fetchErr == nil {
+		s.notifier.Notify("failed", updatedJob)
+	}
 
 	slog.Warn("Job failed", "job_id", req.JobID, "worker_id", req.WorkerID, "error", req.ErrorMessage)
 	w.WriteHeader(http.StatusOK)
