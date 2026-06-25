@@ -81,7 +81,7 @@ A distributed video converter system that:
 │   Listening on: 0.0.0.0:8080                              │
 └─────────────────────────────────────────────────────────────┘
                  ↑                    ↑                    ↑
-         Network (HTTP)      Network (NFS/SMB)   Network (HTTP)
+         Network (HTTP)        Network (HTTP)      Network (HTTP)
                  │                    │                    │
         ┌────────┴────────┬───────────┴──────────┬────────┴──────┐
         │                 │                      │               │
@@ -179,8 +179,6 @@ video-converter-ecosystem/
 │   │   ├── stats.go
 │   │   └── detect.go
 │   └── README.md
-│
-└── VIDEO_CONVERTER_ARCHITECTURE.md (this file)
 ```
 
 ---
@@ -1885,6 +1883,18 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+### Web Dashboard
+
+The master server provides a built-in Web Dashboard for monitoring the system status, tracking job progress, and managing worker configurations. By default, it is accessible at the root path of the master server:
+
+```
+http://<master-host>:8080/
+```
+
+The Web Dashboard requires no additional setup and provides real-time insights into the distributed conversion process.
 
 ---
 
