@@ -235,6 +235,7 @@ func (s *Server) Start() (err error) {
 	// CLI API endpoints - with correlation ID
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
+	mux.HandleFunc("/api/job/requeue", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RequeueJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
@@ -1654,6 +1655,48 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 
 	s.RecordJobRetry("ui_single")
 	slog.Info("Retried specific job", "job_id", job.ID)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// RequeueJob handles requeuing a specific job, regardless of its current status
+func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the job
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		slog.Error("Failed to fetch job for requeue", "job_id", jobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Reset job to pending, do not increment retry count
+	updated, err := s.db.ResetJobToPending(job.ID, false, job.Status, "", job.StartedAt)
+	if err != nil {
+		slog.Error("Failed to reset job for requeue", "job_id", job.ID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while requeuing", http.StatusConflict)
+		return
+	}
+
+	s.RecordJobRetry("ui_requeue")
+	slog.Info("Requeued specific job", "job_id", job.ID)
 
 	w.WriteHeader(http.StatusOK)
 }
