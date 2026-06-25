@@ -60,6 +60,11 @@ type MasterConfig struct {
 		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
 	} `yaml:"database"`
 
+	Notifications struct {
+		WebhookURL string   `yaml:"webhook_url"`
+		Events     []string `yaml:"events"`
+	} `yaml:"notifications"`
+
 	Conversion ConversionSettings `yaml:"conversion"`
 	Logging    LoggingSettings    `yaml:"logging"`
 
