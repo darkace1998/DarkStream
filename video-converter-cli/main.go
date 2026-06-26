@@ -38,6 +38,8 @@ func main() {
 		commands.Workers(subArgs)
 	case "jobs":
 		commands.Jobs(subArgs)
+	case "priority":
+		commands.Priority(subArgs)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -63,6 +65,7 @@ Commands:
   detect                 Detect GPU/Vulkan capabilities
   validate [options]     Validate configuration file
   cancel [options]       Cancel a job
+  priority [options]     Update job priority
   workers [options]      List and manage workers
   jobs [options]         List and manage jobs
 
@@ -93,6 +96,12 @@ Cancel Options:
   --job-id <id>          Job ID to cancel (required)
   --format <format>      Output format: table, json, csv
 
+Priority Options:
+  --master-url <url>     Master server URL
+  --job-id <id>          Job ID to update (required)
+  --priority <0-10>      New priority value (0-10, default 5)
+  --format <format>      Output format: table, json, csv
+
 Workers Options:
   --master-url <url>     Master server URL
   --active               Show only active workers
@@ -116,6 +125,7 @@ Examples:
   video-converter-cli workers --active
   video-converter-cli validate --type master --file config.yaml --local
   video-converter-cli cancel --job-id abc123
+  video-converter-cli priority --job-id abc123 --priority 10
   video-converter-cli detect
   `)
 }

@@ -63,6 +63,61 @@ func TestTrackerCreateAndGetJob(t *testing.T) {
 	}
 }
 
+func TestTrackerUpdateJobPriority(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		err := tracker.Close()
+		if err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	now := time.Now()
+	job := &models.Job{
+		ID:         "job-priority-update",
+		SourcePath: "/input/video.mp4",
+		OutputPath: "/output/video.mp4",
+		Status:     "pending",
+		Priority:   5,
+		CreatedAt:  now,
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	err = tracker.CreateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Update priority
+	err = tracker.UpdateJobPriority(job.ID, 10)
+	if err != nil {
+		t.Fatalf("Failed to update job priority: %v", err)
+	}
+
+	// Verify update
+	retrievedJob, err := tracker.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to get updated job: %v", err)
+	}
+
+	if retrievedJob.Priority != 10 {
+		t.Errorf("Expected Priority 10, got %d", retrievedJob.Priority)
+	}
+
+	// Test non-existent job
+	err = tracker.UpdateJobPriority("non-existent-job", 10)
+	if err == nil {
+		t.Error("Expected error when updating non-existent job, got nil")
+	}
+}
+
 func TestTrackerUpdateJob(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

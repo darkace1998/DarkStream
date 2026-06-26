@@ -163,7 +163,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
                             <td><span class="badge badge-pending">{{.Priority}}</span></td>
                             <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                            <td><button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button></td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="updatePriority('{{.ID}}', {{.Priority}})">Priority</button>
+                                <button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button>
+                            </td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -666,6 +669,35 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             loading.classList.remove('show');
             setTimeout(function() { status.style.display = 'none'; }, 3000);
         });
+
+        // Update job priority
+        async function updatePriority(jobId, currentPriority) {
+            const newPriorityStr = prompt('Enter new priority for job ' + jobId + ' (0-10):', currentPriority);
+            if (newPriorityStr === null) return;
+
+            const newPriority = parseInt(newPriorityStr, 10);
+            if (isNaN(newPriority) || newPriority < 0 || newPriority > 10) {
+                alert('Invalid priority. Must be a number between 0 and 10.');
+                return;
+            }
+
+            try {
+                const resp = await authorizedFetch('/api/job/priority', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_id: jobId, priority: newPriority })
+                });
+
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    const data = await resp.json().catch(() => ({}));
+                    alert('Failed to update priority: ' + (data.error || resp.statusText));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
 
         // Cancel single job
         async function cancelJob(jobId) {
