@@ -3,13 +3,13 @@ package main
 
 import (
 	"flag"
+	"github.com/darkace1998/video-converter-common/utils"
 	"log"
 	"log/slog"
 	"os"
 
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/coordinator"
-	"github.com/darkace1998/video-converter-master/internal/logger"
 )
 
 func main() {
@@ -23,7 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Init(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath)
+	utils.InitLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath)
 
 	coord, err := coordinator.New(cfg)
 	if err != nil {
