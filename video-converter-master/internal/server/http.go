@@ -249,6 +249,7 @@ func (s *Server) Start() (err error) {
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      s.metricsMiddleware(mux),
+		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:  35 * time.Minute, // Extended for file downloads/uploads
 		WriteTimeout: 35 * time.Minute, // Extended for file downloads/uploads
 		IdleTimeout:  60 * time.Second,
