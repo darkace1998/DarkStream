@@ -36,6 +36,7 @@ type Metrics struct {
 	// File transfer metrics
 	BytesDownloaded prometheus.Counter
 	BytesUploaded   prometheus.Counter
+	TransferSpeed   *prometheus.HistogramVec
 }
 
 // New creates and registers all Prometheus metrics (singleton pattern to avoid double registration)
@@ -169,6 +170,16 @@ func newMetrics() *Metrics {
 				Help:      "Total bytes uploaded by workers",
 			},
 		),
+		TransferSpeed: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "darkstream",
+				Subsystem: "transfer",
+				Name:      "speed_bytes_per_second",
+				Help:      "File transfer speeds in bytes per second",
+				Buckets:   []float64{1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024, 50 * 1024 * 1024, 100 * 1024 * 1024, 500 * 1024 * 1024, 1024 * 1024 * 1024}, // 1MB/s to 1GB/s
+			},
+			[]string{"direction"}, // "upload" or "download"
+		),
 	}
 
 	// Register all metrics
@@ -186,6 +197,7 @@ func newMetrics() *Metrics {
 		m.APILatency,
 		m.BytesDownloaded,
 		m.BytesUploaded,
+		m.TransferSpeed,
 	)
 
 	return m
@@ -261,4 +273,9 @@ func (m *Metrics) RecordBytesDownloaded(bytes int64) {
 // RecordBytesUploaded records bytes uploaded
 func (m *Metrics) RecordBytesUploaded(bytes int64) {
 	m.BytesUploaded.Add(float64(bytes))
+}
+
+// RecordTransferSpeed records the transfer speed in bytes per second
+func (m *Metrics) RecordTransferSpeed(direction string, bytesPerSec float64) {
+	m.TransferSpeed.WithLabelValues(direction).Observe(bytesPerSec)
 }
