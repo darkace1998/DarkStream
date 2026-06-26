@@ -41,9 +41,9 @@ graph TD
 
     %% Worker interactions
     W1 <-->|1. Get next job| M
-    W1 -->|2. Download source| SRC
+    W1 <-->|2. Download source (HTTP)| M
     W1 <-->|3. Report progress| M
-    W1 -->|4. Upload result| DST
+    W1 <-->|4. Upload result (HTTP)| M
     W1 -->|5. Job complete/failed| M
 
     W2 <-->|API Polling| M
@@ -59,12 +59,12 @@ graph TD
 2. **Polling**: Workers periodically poll the master node via the `/api/worker/next-job` endpoint to request work.
 3. **Assignment**: If a `pending` job exists, the master updates its status to `processing` and assigns it to the requesting worker.
 4. **Execution**:
-   - The worker downloads the source video via the master or from shared storage.
+   - The worker downloads the source video directly from the master via HTTP.
    - The worker identifies the best available Vulkan-compatible GPU for processing.
    - FFmpeg is invoked by the worker to convert the video.
    - During conversion, the worker periodically sends progress updates to the master via `/api/worker/job-progress`.
 5. **Completion**:
-   - Upon successful conversion, the worker uploads the output file to the target destination.
+   - Upon successful conversion, the worker uploads the output file to the master via HTTP.
    - The worker sends a `/api/worker/job-complete` request to the master.
    - The master marks the job as `completed` in the database.
 6. **Failure Recovery**:

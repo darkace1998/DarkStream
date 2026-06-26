@@ -25,6 +25,7 @@ import (
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"github.com/darkace1998/video-converter-master/internal/metrics"
+	"github.com/darkace1998/video-converter-master/internal/notifier"
 	"gopkg.in/yaml.v3"
 )
 
@@ -166,6 +167,7 @@ type Server struct {
 	apiKey      string
 	allowedDirs []string // Allowed directories for file operations (source and output)
 	metrics     *metrics.Metrics
+	notifier    *notifier.WebhookNotifier
 }
 
 // New creates a new HTTP server instance
@@ -187,6 +189,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		apiKey:      apiKey,
 		allowedDirs: allowedDirs,
 		metrics:     metrics.New(),
+		notifier:    notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
 	}
 }
 
@@ -235,6 +238,7 @@ func (s *Server) Start() (err error) {
 	// CLI API endpoints - with correlation ID
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
+	mux.HandleFunc("/api/job/requeue", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RequeueJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
 	mux.HandleFunc("/api/job/priority", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UpdateJobPriority))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
@@ -543,6 +547,11 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.metrics.RecordJobFinished()
 
+	// Notify webhook if configured
+	if updatedJob, fetchErr := s.db.GetJobByID(job.ID); fetchErr == nil {
+		s.notifier.Notify("completed", updatedJob)
+	}
+
 	slog.Info("Job completed", "job_id", req.JobID, "worker_id", req.WorkerID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -615,6 +624,11 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	s.metrics.RecordJobFailed(duration, errorType)
 	s.metrics.RecordJobFinished()
+
+	// Notify webhook if configured
+	if updatedJob, fetchErr := s.db.GetJobByID(req.JobID); fetchErr == nil {
+		s.notifier.Notify("failed", updatedJob)
+	}
 
 	slog.Warn("Job failed", "job_id", req.JobID, "worker_id", req.WorkerID, "error", req.ErrorMessage)
 	w.WriteHeader(http.StatusOK)
@@ -1722,12 +1736,54 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]string{
 		"message": "Job priority updated successfully",
-		"job_id": req.JobID,
+		"job_id":  req.JobID,
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
 		slog.Error("Failed to encode response", "error", err)
 	}
+}
+
+// RequeueJob handles requeuing a specific job, regardless of its current status
+func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the job
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		slog.Error("Failed to fetch job for requeue", "job_id", jobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Reset job to pending, do not increment retry count
+	updated, err := s.db.ResetJobToPending(job.ID, false, job.Status, "", job.StartedAt)
+	if err != nil {
+		slog.Error("Failed to reset job for requeue", "job_id", job.ID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Job state changed while requeuing", http.StatusConflict)
+		return
+	}
+
+	s.RecordJobRetry("ui_requeue")
+	slog.Info("Requeued specific job", "job_id", job.ID)
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // CancelJob handles cancelling a specific job

@@ -633,6 +633,54 @@ func TestUpdateJobPriority(t *testing.T) {
 	}
 }
 
+func TestRequeueJob(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Create a completed job
+	jobID := "completed-job-123"
+	job := &models.Job{
+		ID:         jobID,
+		SourcePath: "/tmp/source.mp4",
+		OutputPath: "/tmp/output.mp4",
+		Status:     "completed",
+		WorkerID:   "worker-1",
+		CreatedAt:  time.Now().Add(-1 * time.Hour),
+		RetryCount: 1,
+	}
+	if err := srv.db.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create test job: %v", err)
+	}
+
+	// Test successful requeue
+	req := httptest.NewRequest(http.MethodPost, "/api/job/requeue?job_id="+jobID, nil)
+	rec := httptest.NewRecorder()
+	srv.RequeueJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("RequeueJob status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	// Verify job was reset correctly
+	updatedJob, err := srv.db.GetJobByID(jobID)
+	if err != nil {
+		t.Fatalf("Failed to get updated job: %v", err)
+	}
+	if updatedJob.Status != "pending" {
+		t.Errorf("Expected job status 'pending', got '%s'", updatedJob.Status)
+	}
+	if updatedJob.RetryCount != 1 {
+		t.Errorf("Expected retry count to remain 1, got %d", updatedJob.RetryCount)
+	}
+
+	// Test missing job ID
+	req = httptest.NewRequest(http.MethodPost, "/api/job/requeue", nil)
+	rec = httptest.NewRecorder()
+	srv.RequeueJob(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d for missing job ID, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
 func TestRetryJob(t *testing.T) {
 	srv := newTestServer(t)
 

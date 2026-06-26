@@ -29,6 +29,12 @@ scanner:
 database:
   path: ./jobs.db
 
+notifications:
+  webhook_url: ""         # Optional: URL to send job event webhooks to
+  events:
+    - completed
+    - failed
+
 conversion:
   target_resolution: 1920x1080
   codec: h264

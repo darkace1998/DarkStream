@@ -177,32 +177,27 @@ Retries all failed jobs.
 ### `POST /api/job/retry`
 Retries a specific failed job.
 
-**Body (JSON):**
-```json
-{
-  "job_id": "string"
-}
-```
+**Query Parameters:**
+- `job_id` (string, required): The job ID.
+
+### `POST /api/job/requeue`
+Requeues a specific job regardless of its current status.
+
+**Query Parameters:**
+- `job_id` (string, required): The job ID.
 
 ### `POST /api/job/cancel`
 Cancels a specific job.
 
-**Body (JSON):**
-```json
-{
-  "job_id": "string"
-}
-```
+**Query Parameters:**
+- `job_id` (string, required): The job ID.
 
 ### `POST /api/jobs/cancel`
 Cancels multiple jobs.
 
-**Body (JSON):**
-```json
-{
-  "job_ids": ["string", "string"]
-}
-```
+**Query Parameters:**
+- `status` (string, required): Filter for jobs to cancel (`pending`, `processing`, or `all`).
+- `limit` (integer, optional): Maximum number of jobs to cancel. Defaults to 100.
 
 ### `GET /api/workers`
 Lists all active registered workers.

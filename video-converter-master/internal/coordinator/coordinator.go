@@ -17,19 +17,21 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
+	"github.com/darkace1998/video-converter-master/internal/notifier"
 	"github.com/darkace1998/video-converter-master/internal/scanner"
 	"github.com/darkace1998/video-converter-master/internal/server"
 )
 
 // Coordinator orchestrates the master server components
 type Coordinator struct {
-	config  *models.MasterConfig
-	db      *db.Tracker
-	scanner *scanner.Scanner
-	server  *server.Server
-	ctx     context.Context //nolint:containedctx
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	config   *models.MasterConfig
+	db       *db.Tracker
+	scanner  *scanner.Scanner
+	server   *server.Server
+	notifier *notifier.WebhookNotifier
+	ctx      context.Context //nolint:containedctx
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 // New creates a new coordinator instance
@@ -108,12 +110,13 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Coordinator{
-		config:  cfg,
-		db:      tracker,
-		scanner: scn,
-		server:  srv,
-		ctx:     ctx,
-		cancel:  cancel,
+		config:   cfg,
+		db:       tracker,
+		scanner:  scn,
+		server:   srv,
+		notifier: notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
+		ctx:      ctx,
+		cancel:   cancel,
 	}, nil
 }
 
@@ -390,6 +393,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 						slog.Error("Failed to mark stale job as failed",
 							"job_id", job.ID, "error", err)
 					} else if updated {
+						// Notify webhook if configured
+						if updatedJob, fetchErr := c.db.GetJobByID(job.ID); fetchErr == nil {
+							c.notifier.Notify("failed", updatedJob)
+						}
+
 						slog.Info("Marked stale job as permanently failed",
 							"job_id", job.ID,
 							"retry_count", job.RetryCount,
