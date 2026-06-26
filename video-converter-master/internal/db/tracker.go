@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"log/slog"
 	"sort"
 	"time"
@@ -1429,16 +1430,35 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 		{"source_file_size", "INTEGER"},
 	}
 
+	var placeholders []string
+	var args []any
 	for _, col := range columns {
-		var columnExists int
-		err := t.db.QueryRow(`
-			SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name=?
-		`, col.name).Scan(&columnExists)
-		if err != nil {
-			return fmt.Errorf("failed to check for %s column: %w", col.name, err)
-		}
+		placeholders = append(placeholders, "?")
+		args = append(args, col.name)
+	}
 
-		if columnExists == 0 {
+	query := fmt.Sprintf(`SELECT name FROM pragma_table_info('jobs') WHERE name IN (%s)`, strings.Join(placeholders, ","))
+	rows, err := t.db.Query(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to query existing columns: %w", err)
+	}
+	defer rows.Close()
+
+	existingCols := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("failed to scan column name: %w", err)
+		}
+		existingCols[name] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating over existing columns: %w", err)
+	}
+
+	for _, col := range columns {
+		if !existingCols[col.name] {
 			slog.Info("Adding column to jobs table", "column", col.name)
 			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %s %s`, col.name, col.dataType)
 			_, err := t.db.Exec(query)
