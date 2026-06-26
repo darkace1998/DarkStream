@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -584,6 +585,51 @@ func TestGetNextJob_AtomicClaim(t *testing.T) {
 	}
 	if pendingCount != 0 {
 		t.Fatalf("Expected 0 pending jobs after atomic claim, got %d", pendingCount)
+	}
+}
+
+func TestUpdateJobPriority(t *testing.T) {
+	srv := newTestServer(t)
+
+	now := time.Now()
+	job := &models.Job{
+		ID:         "job-to-update-priority",
+		SourcePath: "/input/test.mp4",
+		OutputPath: "/output/test.mp4",
+		Status:     statusPending,
+		Priority:   5,
+		CreatedAt:  now,
+	}
+	err := srv.db.CreateJob(job)
+	if err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Make request
+	payload := map[string]interface{}{
+		"job_id":   job.ID,
+		"priority": 10,
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/job/priority", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	// Call handler directly, skipping auth middleware since we test that separately
+	srv.UpdateJobPriority(w, req)
+
+	// Verify response
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d. Body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	// Verify job was updated
+	updatedJob, err := srv.db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to get job: %v", err)
+	}
+	if updatedJob.Priority != 10 {
+		t.Errorf("Expected job priority to be 10, got %d", updatedJob.Priority)
 	}
 }
 

@@ -371,6 +371,27 @@ func (t *Tracker) CountPendingJobs() (int, error) {
 	return count, nil
 }
 
+// UpdateJobPriority updates the priority of a specific job
+func (t *Tracker) UpdateJobPriority(jobID string, priority int) error {
+	result, err := t.db.Exec(`
+		UPDATE jobs SET priority = ? WHERE id = ?
+	`, priority, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to update job priority: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	return nil
+}
+
 // UpdateJob updates an existing job in the database
 func (t *Tracker) UpdateJob(job *models.Job) error {
 	_, err := t.db.Exec(`

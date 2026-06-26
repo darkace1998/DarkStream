@@ -236,6 +236,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
+	mux.HandleFunc("/api/job/priority", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UpdateJobPriority))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
 	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListWorkers))))
@@ -1656,6 +1657,77 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Retried specific job", "job_id", job.ID)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// UpdateJobPriority handles updating a job's priority
+func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		JobID    string `json:"job_id"`
+		Priority int    `json:"priority"`
+	}
+
+	// Support both JSON body and query parameters for flexibility
+	if r.Header.Get("Content-Type") == "application/json" {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+	} else {
+		req.JobID = r.URL.Query().Get("job_id")
+		priorityStr := r.URL.Query().Get("priority")
+		if priorityStr != "" {
+			parsedPriority, err := parseInt(priorityStr)
+			if err != nil {
+				http.Error(w, "Invalid priority parameter", http.StatusBadRequest)
+				return
+			}
+			req.Priority = parsedPriority
+		}
+	}
+
+	if !validateJobID(req.JobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Validate priority range (0-10)
+	if req.Priority < 0 || req.Priority > 10 {
+		http.Error(w, "Priority must be between 0 and 10", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch the job to ensure it exists
+	_, err := s.db.GetJobByID(req.JobID)
+	if err != nil {
+		slog.Error("Failed to fetch job for priority update", "job_id", req.JobID, "error", err)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	err = s.db.UpdateJobPriority(req.JobID, req.Priority)
+	if err != nil {
+		slog.Error("Failed to update job priority", "job_id", req.JobID, "priority", req.Priority, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Updated job priority", "job_id", req.JobID, "priority", req.Priority)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]string{
+		"message": "Job priority updated successfully",
+		"job_id": req.JobID,
+	}
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
 }
 
 // CancelJob handles cancelling a specific job
