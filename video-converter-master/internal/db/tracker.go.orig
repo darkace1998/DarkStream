@@ -622,14 +622,11 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 		ORDER BY created_at DESC
 	`
 
-	args := []any{startTime, endTime}
-
 	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
+		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := t.db.Query(query, args...)
+	rows, err := t.db.Query(query, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query job history: %w", err)
 	}
