@@ -34,7 +34,7 @@ func captureStdout(f func()) string {
 
 func TestInitLogger_JSON_Debug(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger(constants.LogLevelDebug, constants.LogFormatJSON)
+		InitLogger(constants.LogLevelDebug, constants.LogFormatJSON, "")
 		slog.Debug("test debug message json")
 	})
 
@@ -58,7 +58,7 @@ func TestInitLogger_JSON_Debug(t *testing.T) {
 
 func TestInitLogger_Text_Info(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger(constants.LogLevelInfo, constants.LogFormatText)
+		InitLogger(constants.LogLevelInfo, constants.LogFormatText, "")
 		slog.Debug("this debug message should not appear")
 		slog.Info("test info message text")
 	})
@@ -88,7 +88,7 @@ func TestInitLogger_Text_Info(t *testing.T) {
 
 func TestInitLogger_Fallback(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger("invalid_level", "invalid_format")
+		InitLogger("invalid_level", "invalid_format", "")
 		slog.Debug("this debug message should not appear")
 		slog.Info("fallback level is info")
 	})

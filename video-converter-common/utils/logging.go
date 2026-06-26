@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -22,24 +25,48 @@ var (
 	globalLogLevel     = slog.LevelInfo
 )
 
-// InitLogger initializes the global logger with the specified level and format.
+// InitLogger initializes the global logger with the specified level, format, optional output path, and base attributes.
 // level should be one of the constants.LogLevel* constants.
 // format should be one of the constants.LogFormat* constants.
-func InitLogger(level, format string) {
+func InitLogger(level, format, outputPath string, attrs ...any) {
 	globalLogLevel = ParseLogLevel(level)
 
 	opts := &slog.HandlerOptions{
 		Level: globalLogLevel,
 	}
 
-	var handler slog.Handler
-	if format == constants.LogFormatJSON {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+	writer := io.Writer(os.Stdout)
+	if outputPath != "" {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "darkstream: failed to create log directory %q: %v\n", filepath.Dir(outputPath), err)
+		} else if file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "darkstream: failed to open log file %q: %v\n", outputPath, err)
+		} else {
+			writer = io.MultiWriter(os.Stdout, file)
+		}
 	}
 
-	slog.SetDefault(slog.New(handler))
+	var handler slog.Handler
+	var unsupportedFormat bool
+	if format == constants.LogFormatJSON {
+		handler = slog.NewJSONHandler(writer, opts)
+	} else {
+		if format != constants.LogFormatText && format != "" {
+			unsupportedFormat = true
+		}
+		handler = slog.NewTextHandler(writer, opts)
+	}
+
+	base := slog.New(handler)
+	if len(attrs) > 0 {
+		base = base.With(attrs...)
+	}
+
+	slog.SetDefault(base)
+
+	if unsupportedFormat {
+		fmt.Fprintf(os.Stderr, "darkstream: unsupported log format %q, defaulting to text\n", format)
+	}
 }
 
 // SetComponentLogLevel sets the log level for a specific component.
