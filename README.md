@@ -1,6 +1,6 @@
 ## Testing
 
-Current status: security/auth hardening, reliability/race fixes, CI/test hardening, and observability improvements are in place; the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
+Current status: security/auth hardening, reliability/race fixes, CI/test hardening, observability improvements, and complete documentation are in place; the repository builds cleanly and the full Go test suite passes as of 2026-04-13. Recent bug fixes are documented in `TESTING_SUMMARY.md`.
 
 ### Running Race Detector Tests (Local)
 
@@ -34,8 +34,9 @@ The repository's CI already runs race detector tests in GitHub Actions. You can 
 8. [Deployment](#deployment)
 9. [Monitoring & CLI](#monitoring--cli)
 10. [Vulkan Integration](#vulkan-integration)
-11. [Contributing & Changelog](#contributing--changelog)
-12. [Documentation](#documentation)
+11. [Web UI](#web-ui)
+12. [Contributing & Changelog](#contributing--changelog)
+13. [Documentation](#documentation)
 
 ---
 
@@ -1729,6 +1730,10 @@ CREATE TABLE workers (
 
 ## Configuration
 
+Configuration is primarily managed via YAML files. A key feature of DarkStream is **Dynamic Worker Configuration**, where workers connect to the Master coordinator and automatically fetch their configuration settings (such as conversion parameters, timeouts, and rate limits).
+
+For detailed information on configuration options, see the [Configuration Guide](docs/CONFIGURATION.md).
+
 ### Master Config (`config.yaml`)
 
 ```yaml
@@ -1975,6 +1980,21 @@ video-converter-cli retry --master-url http://storage-server:8080 --limit 100
 
 ---
 
+## Web UI
+
+The master coordinator includes a built-in Web UI dashboard to monitor the system in real-time.
+
+To access the Web UI:
+1. Start the master server.
+2. Open a web browser and navigate to the master server's root URL (e.g., `http://localhost:8080/`).
+
+The dashboard provides insights into:
+*   **System Status**: Overall progress, active workers, and job queues.
+*   **Worker Metrics**: Real-time CPU and memory usage, GPU details, and active job counts for each connected worker.
+*   **Recent Jobs**: A view of recently completed or failed conversion jobs.
+
+---
+
 ## Vulkan Integration
 
 ### Why Vulkan Over NVIDIA/AMD Specific Solutions?
@@ -1997,5 +2017,6 @@ To see what has changed recently, please review our [Changelog](CHANGELOG.md).
 ## Documentation
 
 For more detailed technical information, please refer to the following guides:
+- [Configuration Guide](docs/CONFIGURATION.md): Details on Master and Worker configurations, including dynamic configuration.
 - [API Reference](docs/API.md): Details on the REST API for workers and management tools.
 - [Architecture](docs/ARCHITECTURE.md): Component interaction diagrams and data flow.
