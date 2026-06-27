@@ -116,7 +116,7 @@ func TestInitLogger_Fallback(t *testing.T) {
 
 func TestComponentLogLevel(t *testing.T) {
 	// Reset the state to default before the test
-	InitLogger(constants.LogLevelInfo, constants.LogFormatText)
+	InitLogger(constants.LogLevelInfo, constants.LogFormatText, "")
 
 	// Test case 1: Default behavior (unknown component)
 	t.Run("Default Behavior", func(t *testing.T) {
