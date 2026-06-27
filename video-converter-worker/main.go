@@ -3,6 +3,7 @@ package main
 
 import (
 	"flag"
+	"github.com/darkace1998/video-converter-common/utils"
 	"log"
 	"log/slog"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-worker/internal/client"
 	"github.com/darkace1998/video-converter-worker/internal/config"
-	"github.com/darkace1998/video-converter-worker/internal/logger"
 	"github.com/darkace1998/video-converter-worker/internal/worker"
 	"github.com/google/uuid"
 )
@@ -52,7 +52,7 @@ func main() {
 		}
 	}
 
-	logger.Init(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath, "worker_id", cfg.Worker.ID)
+	utils.InitLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath, "worker_id", cfg.Worker.ID)
 
 	w, err := worker.New(cfg)
 	if err != nil {

@@ -841,8 +841,11 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 
 		// Wrap file reader with progress tracking
 		var reader io.Reader = file
+		if mc.bandwidthLimit > 0 {
+			reader = NewThrottledReader(reader, mc.bandwidthLimit)
+		}
 		if progressCallback != nil {
-			reader = NewProgressReader(file, fileSize, progressCallback)
+			reader = NewProgressReader(reader, fileSize, progressCallback)
 		}
 
 		_, copyErr := io.Copy(part, reader)

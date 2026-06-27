@@ -249,6 +249,7 @@ func (s *Server) Start() (err error) {
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      s.metricsMiddleware(mux),
+		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:  35 * time.Minute, // Extended for file downloads/uploads
 		WriteTimeout: 35 * time.Minute, // Extended for file downloads/uploads
 		IdleTimeout:  60 * time.Second,
@@ -1090,7 +1091,15 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusPartialContent)
 
 			// Stream the remaining file content
-			_, err = io.CopyN(w, file, contentLength)
+			startDownloadTime := time.Now()
+			written, err := io.CopyN(w, file, contentLength)
+			if written > 0 {
+				s.metrics.RecordBytesDownloaded(written)
+				durationSecs := time.Since(startDownloadTime).Seconds()
+				if durationSecs > 0 {
+					s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
+				}
+			}
 			if err != nil {
 				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
 				return
@@ -1110,7 +1119,15 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Stream the file
-	_, err = io.Copy(w, file)
+	startDownloadTime := time.Now()
+	written, err := io.Copy(w, file)
+	if written > 0 {
+		s.metrics.RecordBytesDownloaded(written)
+		durationSecs := time.Since(startDownloadTime).Seconds()
+		if durationSecs > 0 {
+			s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
+		}
+	}
 	if err != nil {
 		slog.Error("Failed to stream file", "job_id", jobID, "error", err)
 		return
@@ -1231,7 +1248,15 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Copy the uploaded file to the temp file
+	startUploadTime := time.Now()
 	bytesWritten, err := io.Copy(tempFile, file)
+	if bytesWritten > 0 {
+		s.metrics.RecordBytesUploaded(bytesWritten)
+		durationSecs := time.Since(startUploadTime).Seconds()
+		if durationSecs > 0 {
+			s.metrics.RecordTransferSpeed("upload", float64(bytesWritten)/durationSecs)
+		}
+	}
 	if err != nil {
 		slog.Error("Failed to write temp file", "error", err)
 		http.Error(w, "Failed to write output file", http.StatusInternalServerError)

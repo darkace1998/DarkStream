@@ -299,17 +299,35 @@ func waitForJobsTable(t *testing.T, db *sql.DB, timeout time.Duration) {
 func queryJobStats(t *testing.T, db *sql.DB) jobStats {
 	t.Helper()
 	var stats jobStats
-	queries := map[string]*int{
-		"pending":    &stats.pending,
-		"processing": &stats.processing,
-		"completed":  &stats.completed,
-		"failed":     &stats.failed,
+	rows, err := db.Query("SELECT status, COUNT(*) FROM jobs GROUP BY status")
+	if err != nil {
+		t.Fatalf("Failed to query job stats: %v", err)
 	}
-	for status, count := range queries {
-		err := db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status = ?", status).Scan(count)
-		if err != nil {
-			t.Fatalf("Failed to query %s jobs: %v", status, err)
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Logf("Failed to close rows: %v", cerr)
 		}
+	}()
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			t.Fatalf("Failed to scan job stats: %v", err)
+		}
+		switch status {
+		case "pending":
+			stats.pending = count
+		case "processing":
+			stats.processing = count
+		case "completed":
+			stats.completed = count
+		case "failed":
+			stats.failed = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error iterating job stats: %v", err)
 	}
 	return stats
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -34,7 +35,7 @@ func captureStdout(f func()) string {
 
 func TestInitLogger_JSON_Debug(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger(constants.LogLevelDebug, constants.LogFormatJSON)
+		InitLogger(constants.LogLevelDebug, constants.LogFormatJSON, "")
 		slog.Debug("test debug message json")
 	})
 
@@ -58,7 +59,7 @@ func TestInitLogger_JSON_Debug(t *testing.T) {
 
 func TestInitLogger_Text_Info(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger(constants.LogLevelInfo, constants.LogFormatText)
+		InitLogger(constants.LogLevelInfo, constants.LogFormatText, "")
 		slog.Debug("this debug message should not appear")
 		slog.Info("test info message text")
 	})
@@ -88,7 +89,7 @@ func TestInitLogger_Text_Info(t *testing.T) {
 
 func TestInitLogger_Fallback(t *testing.T) {
 	output := captureStdout(func() {
-		InitLogger("invalid_level", "invalid_format")
+		InitLogger("invalid_level", "invalid_format", "")
 		slog.Debug("this debug message should not appear")
 		slog.Info("fallback level is info")
 	})
@@ -111,4 +112,66 @@ func TestInitLogger_Fallback(t *testing.T) {
 	if !strings.Contains(output, "fallback level is info") {
 		t.Errorf("expected info message to be logged at default level")
 	}
+}
+
+func TestComponentLogLevel(t *testing.T) {
+	// Reset the state to default before the test
+	InitLogger(constants.LogLevelInfo, constants.LogFormatText, "")
+
+	// Test case 1: Default behavior (unknown component)
+	t.Run("Default Behavior", func(t *testing.T) {
+		level := GetComponentLogLevel("unknown_component")
+		if level != slog.LevelInfo {
+			t.Errorf("Expected default level to be Info (0), got %v", level)
+		}
+	})
+
+	// Test case 2: Setting and getting valid levels
+	t.Run("Set and Get Valid Levels", func(t *testing.T) {
+		SetComponentLogLevel("db", constants.LogLevelDebug)
+		level := GetComponentLogLevel("db")
+		if level != slog.LevelDebug {
+			t.Errorf("Expected db component level to be Debug (-4), got %v", level)
+		}
+
+		SetComponentLogLevel("api", constants.LogLevelError)
+		level = GetComponentLogLevel("api")
+		if level != slog.LevelError {
+			t.Errorf("Expected api component level to be Error (8), got %v", level)
+		}
+	})
+
+	// Test case 3: Invalid level fallback
+	t.Run("Invalid Level Fallback", func(t *testing.T) {
+		SetComponentLogLevel("auth", "invalid_level_string")
+		level := GetComponentLogLevel("auth")
+		if level != slog.LevelInfo {
+			t.Errorf("Expected fallback to Info (0) for invalid string, got %v", level)
+		}
+	})
+
+	// Test case 4: Concurrency (should not trigger data races when run with -race)
+	t.Run("Concurrency", func(t *testing.T) {
+		var wg sync.WaitGroup
+		const numGoroutines = 100
+
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				SetComponentLogLevel("concurrent_comp", constants.LogLevelWarn)
+			}()
+			go func() {
+				defer wg.Done()
+				_ = GetComponentLogLevel("concurrent_comp")
+			}()
+		}
+		wg.Wait()
+
+		// Verify the final state is correct (or at least one of the expected states if more were added)
+		level := GetComponentLogLevel("concurrent_comp")
+		if level != slog.LevelWarn {
+			t.Errorf("Expected concurrent_comp level to be Warn (4), got %v", level)
+		}
+	})
 }

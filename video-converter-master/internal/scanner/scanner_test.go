@@ -423,3 +423,67 @@ func TestScannerWithReplaceSource(t *testing.T) {
 			jobs[0].SourcePath, jobs[0].OutputPath)
 	}
 }
+
+func TestNew(t *testing.T) {
+	rootPath := "/data/videos"
+	extensions := []string{".mp4", ".MKV", ".Avi"}
+	outputBase := "/data/output"
+
+	scanner := New(rootPath, extensions, outputBase)
+
+	if scanner.RootPath != rootPath {
+		t.Errorf("Expected RootPath %q, got %q", rootPath, scanner.RootPath)
+	}
+
+	if scanner.OutputBase != outputBase {
+		t.Errorf("Expected OutputBase %q, got %q", outputBase, scanner.OutputBase)
+	}
+
+	expectedExts := map[string]bool{
+		".mp4": true,
+		".mkv": true,
+		".avi": true,
+	}
+
+	if len(scanner.VideoExtensions) != len(expectedExts) {
+		t.Errorf("Expected %d VideoExtensions, got %d", len(expectedExts), len(scanner.VideoExtensions))
+	}
+
+	for ext := range expectedExts {
+		if !scanner.VideoExtensions[ext] {
+			t.Errorf("Expected extension %q to be in VideoExtensions, but it wasn't", ext)
+		}
+	}
+
+	if scanner.Options.MaxDepth != -1 {
+		t.Errorf("Expected default MaxDepth -1, got %d", scanner.Options.MaxDepth)
+	}
+
+	if scanner.Options.MinFileSize != 0 {
+		t.Errorf("Expected default MinFileSize 0, got %d", scanner.Options.MinFileSize)
+	}
+
+	if scanner.Options.MaxFileSize != 0 {
+		t.Errorf("Expected default MaxFileSize 0, got %d", scanner.Options.MaxFileSize)
+	}
+
+	if !scanner.Options.SkipHiddenFiles {
+		t.Errorf("Expected default SkipHiddenFiles true, got false")
+	}
+
+	if !scanner.Options.SkipHiddenDirs {
+		t.Errorf("Expected default SkipHiddenDirs true, got false")
+	}
+
+	if scanner.Options.ReplaceSource {
+		t.Errorf("Expected default ReplaceSource false, got true")
+	}
+
+	if scanner.Options.DetectDuplicates {
+		t.Errorf("Expected default DetectDuplicates false, got true")
+	}
+
+	if scanner.seenHashes == nil {
+		t.Error("Expected seenHashes to be initialized (not nil)")
+	}
+}
