@@ -165,6 +165,14 @@ Cancel a pending or processing job:
 video-converter-cli cancel --job-id abc123
 ```
 
+### Update Job Priority
+
+Update the priority of a job (0-10):
+
+```bash
+video-converter-cli priority --job-id abc123 --priority 10
+```
+
 ### Validate Configuration
 
 Validate a configuration file before use:

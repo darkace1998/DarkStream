@@ -192,6 +192,21 @@ Cancels a specific job.
 **Query Parameters:**
 - `job_id` (string, required): The job ID.
 
+### `POST /api/job/priority`
+Updates the priority of a specific job.
+
+**Query Parameters:**
+- `job_id` (string, required): The job ID.
+- `priority` (integer, required): The new priority value (0-10).
+
+**Body (JSON) [Alternative to Query Parameters]:**
+```json
+{
+  "job_id": "string",
+  "priority": 10
+}
+```
+
 ### `POST /api/jobs/cancel`
 Cancels multiple jobs.
 
