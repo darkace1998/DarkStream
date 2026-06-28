@@ -6,9 +6,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"log/slog"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -1436,9 +1437,19 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 		{"source_file_size", "INTEGER"},
 	}
 
+	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	validType := regexp.MustCompile(`^[a-zA-Z]+$`)
+
 	var placeholders []string
 	var args []any
 	for _, col := range columns {
+		// Strict validation of column name and data type to prevent SQL injection
+		if !validName.MatchString(col.name) {
+			return fmt.Errorf("invalid column name: %s", col.name)
+		}
+		if !validType.MatchString(col.dataType) {
+			return fmt.Errorf("invalid column data type: %s", col.dataType)
+		}
 		placeholders = append(placeholders, "?")
 		args = append(args, col.name)
 	}
@@ -1466,7 +1477,7 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 	for _, col := range columns {
 		if !existingCols[col.name] {
 			slog.Info("Adding column to jobs table", "column", col.name)
-			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %s %s`, col.name, col.dataType)
+			query := fmt.Sprintf(`ALTER TABLE jobs ADD COLUMN %q %s`, col.name, col.dataType)
 			_, err := t.db.Exec(query)
 			if err != nil {
 				return fmt.Errorf("failed to add %s column: %w", col.name, err)
