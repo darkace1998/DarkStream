@@ -1978,6 +1978,22 @@ video-converter-cli stats --master-url http://storage-server:8080
 video-converter-cli retry --master-url http://storage-server:8080 --limit 100
 ```
 
+### Cancel a Job
+
+Cancel a pending or processing job:
+
+```bash
+video-converter-cli cancel --master-url http://storage-server:8080 --job-id abc123
+```
+
+### Update Job Priority
+
+Update the priority of a job (0-10):
+
+```bash
+video-converter-cli priority --master-url http://storage-server:8080 --job-id abc123 --priority 10
+```
+
 ---
 
 ## Web UI
