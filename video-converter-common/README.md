@@ -83,7 +83,7 @@ Configuration for the master coordinator:
 
 Configuration for worker processes:
 - `Worker`: Worker settings (ID, concurrency, master URL)
-- `Storage`: Storage mounting settings
+- `Storage`: Storage caching settings
 - `FFmpeg`: FFmpeg configuration
 - `Vulkan`: Vulkan device preferences
 - `Logging`: Logging configuration
@@ -151,7 +151,7 @@ if utils.FileExists(job.SourcePath) {
 
 ## Dependencies
 
-- Go 1.23 or higher
+- Go 1.24 or higher
 - `gopkg.in/yaml.v3` for YAML configuration parsing
 
 ## License

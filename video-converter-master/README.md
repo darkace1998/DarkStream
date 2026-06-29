@@ -40,12 +40,16 @@ Key configuration sections:
 
 ## API Endpoints
 
+For a complete list of API endpoints, refer to the [API Reference](../docs/API.md).
+
 ### Worker API
 
 - `GET /api/worker/next-job?worker_id=<id>` - Get next pending job
 - `POST /api/worker/job-complete` - Report job completion
 - `POST /api/worker/job-failed` - Report job failure
 - `POST /api/worker/heartbeat` - Worker heartbeat
+- `GET /api/worker/download-video` - Download source video for processing
+- `POST /api/worker/upload-video` - Upload converted video
 
 ### Monitoring API
 
