@@ -59,7 +59,7 @@ cp config.yaml.example config.yaml
 Configuration file options:
 - Worker ID and concurrency settings
 - Master coordinator URL
-- Storage mount paths
+- Storage cache paths
 - FFmpeg and Vulkan settings
 - Conversion parameters (resolution, codec, bitrate, etc.)
 - Logging preferences
@@ -79,10 +79,10 @@ The worker consists of several internal packages:
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.24+
 - FFmpeg installed (with Vulkan support if using GPU acceleration)
 - Network access to master coordinator
-- Storage mount with read access to source videos and write access to output directory
+- Local cache path with write access for temporary files during conversion
 
 ## GPU Acceleration
 

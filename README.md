@@ -1853,19 +1853,15 @@ cp config.yaml.example config.yaml
 git clone https://github.com/darkace1998/video-converter-ecosystem.git
 cd video-converter-ecosystem
 
-# 2. Mount storage
-mkdir -p /mnt/storage
-mount -t nfs storage-server:/export/videos /mnt/storage
-
-# 3. Build worker
+# 2. Build worker
 cd video-converter-worker
 go build -o worker
 
-# 4. Create config (if not exists)
+# 3. Create config (if not exists)
 cp config.yaml.example config.yaml
 # Edit config.yaml with master URL and settings
 
-# 5. Run worker
+# 4. Run worker
 ./worker --config config.yaml
 ```
 
