@@ -40,7 +40,7 @@ Reports that a job has been successfully completed.
 {
   "job_id": "string",
   "worker_id": "string",
-  "output_path": "string"
+  "output_size": 1073741824
 }
 ```
 
@@ -52,7 +52,7 @@ Reports that a job has failed to convert.
 {
   "job_id": "string",
   "worker_id": "string",
-  "error": "string"
+  "error_message": "string"
 }
 ```
 
@@ -64,12 +64,13 @@ Sends a worker heartbeat with system metrics.
 {
   "worker_id": "string",
   "hostname": "string",
-  "version": "string",
-  "metrics": {
-    "cpu_usage_percent": 45.2,
-    "memory_usage_bytes": 104857600,
-    "active_jobs": 2
-  }
+  "vulkan_available": true,
+  "active_jobs": 2,
+  "status": "healthy",
+  "timestamp": "2025-11-07T20:56:59Z",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "cpu_usage": 45.2,
+  "memory_usage": 62.1
 }
 ```
 
@@ -95,7 +96,8 @@ Updates the conversion progress of a job.
   "worker_id": "string",
   "progress": 50.5,
   "fps": 24.0,
-  "eta_seconds": 120
+  "stage": "convert",
+  "updated_at": "2025-11-07T20:56:59Z"
 }
 ```
 
