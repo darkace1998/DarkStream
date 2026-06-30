@@ -230,6 +230,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/worker/settings", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleWorkerSettings))) // Per-worker settings management
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetStatus))))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
+	mux.HandleFunc("/api/stats/stream", s.correlationMiddleware(s.authMiddleware(s.StreamStats))) // SSE endpoint (no rate limit)
 
 	// Progress tracking endpoints
 	mux.HandleFunc("/api/job/progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJobProgress))))
@@ -694,6 +695,141 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to encode job stats response", "error", err)
 		return
+	}
+}
+
+// StreamStats provides Server-Sent Events (SSE) for real-time dashboard updates
+func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+
+	for {
+		// Collect stats
+		jobStats, err := s.db.GetJobStats()
+		if err != nil {
+			slog.Error("Failed to get job stats for stream", "error", err)
+			continue
+		}
+
+		workers, workerErr := s.db.GetWorkers()
+		workerMetrics := make([]map[string]any, 0)
+		onlineWorkers := 0
+		now := time.Now()
+		if workerErr == nil {
+			for _, wk := range workers {
+				isOnline := now.Sub(wk.Timestamp) < workerOnlineThreshold
+				if isOnline {
+					onlineWorkers++
+				}
+				workerMetrics = append(workerMetrics, map[string]any{
+					"worker_id":    wk.WorkerID,
+					"hostname":     wk.Hostname,
+					"cpu_usage":    wk.CPUUsage,
+					"memory_usage": wk.MemoryUsage,
+					"active_jobs":  wk.ActiveJobs,
+					"gpu":          wk.GPU,
+					"status":       wk.Status,
+					"is_online":    isOnline,
+					"last_seen":    wk.Timestamp,
+				})
+			}
+		}
+
+		stats := map[string]any{
+			"pending":    0,
+			"processing": 0,
+			"completed":  0,
+			"failed":     0,
+			"workers":    onlineWorkers,
+		}
+		if v, ok := jobStats["pending"].(int); ok {
+			stats["pending"] = v
+		}
+		if v, ok := jobStats["processing"].(int); ok {
+			stats["processing"] = v
+		}
+		if v, ok := jobStats["completed"].(int); ok {
+			stats["completed"] = v
+		}
+		if v, ok := jobStats["failed"].(int); ok {
+			stats["failed"] = v
+		}
+
+		pendingJobs, _ := s.db.GetJobsByStatus("pending", 20)
+		processingJobs, _ := s.db.GetJobsByStatus("processing", 20)
+
+		// Include progress for processing jobs
+		processingJobsData := make([]map[string]any, 0, len(processingJobs))
+		for _, pj := range processingJobs {
+			pData := map[string]any{
+				"id":          pj.ID,
+				"source_path": pj.SourcePath,
+				"worker_id":   pj.WorkerID,
+				"started_at":  pj.StartedAt,
+				"progress":    0.0,
+			}
+			progress, progressErr := s.db.GetJobProgress(pj.ID)
+			if progressErr == nil {
+				pData["progress"] = progress.Progress
+			}
+			processingJobsData = append(processingJobsData, pData)
+		}
+
+		recentJobs := make([]*models.Job, 0)
+		completed, err := s.db.GetJobsByStatus("completed", 25)
+		if err == nil {
+			recentJobs = append(recentJobs, completed...)
+		}
+		failed, err := s.db.GetJobsByStatus("failed", 25)
+		if err == nil {
+			recentJobs = append(recentJobs, failed...)
+		}
+
+		response := map[string]any{
+			"timestamp":       time.Now(),
+			"stats":           stats,
+			"workers":         workerMetrics,
+			"pending_jobs":    pendingJobs,
+			"processing_jobs": processingJobsData,
+			"recent_jobs":     recentJobs,
+		}
+
+		eventData, err := json.Marshal(response)
+		if err != nil {
+			slog.Error("Failed to marshal stats stream event", "error", err)
+			continue
+		}
+
+		_, _ = fmt.Fprintf(w, "event: stats\ndata: %s\n\n", eventData)
+		flusher.Flush()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Loop again
+		}
 	}
 }
 
@@ -2180,17 +2316,21 @@ func (s *Server) authenticateRequest(r *http.Request) bool {
 		return true
 	}
 
+	var providedKey string
 	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return false
-	}
-
 	const bearerPrefix = "Bearer "
-	if !strings.HasPrefix(authHeader, bearerPrefix) {
+
+	if authHeader != "" && strings.HasPrefix(authHeader, bearerPrefix) {
+		providedKey = strings.TrimPrefix(authHeader, bearerPrefix)
+	} else {
+		// Fallback to query parameter for EventSource/SSE connections
+		providedKey = r.URL.Query().Get("api_key")
+	}
+
+	if providedKey == "" {
 		return false
 	}
 
-	providedKey := strings.TrimPrefix(authHeader, bearerPrefix)
 	return subtle.ConstantTimeCompare([]byte(providedKey), []byte(s.apiKey)) == 1
 }
 
