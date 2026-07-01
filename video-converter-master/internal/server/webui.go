@@ -89,7 +89,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 <span class="version">Video Converter System</span>
             </div>
             <div class="meta">
-                Config Version: {{.Config.Version}} | Auto-refresh: <span id="countdown">30</span>s
+                Config Version: {{.Config.Version}} | <span id="live-indicator">Live 🟢</span>
             </div>
         </div>
 
@@ -233,7 +233,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="recent-jobs">
                         {{range .RecentJobs}}
                         <tr>
                             <td><code>{{.ID}}</code></td>
@@ -285,7 +285,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="workers-list">
                         {{range .Workers}}
                         <tr>
                             <td><code>{{.WorkerID}}</code></td>
@@ -773,32 +773,220 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
         }
 
-        // Auto-refresh countdown
-        let countdown = 30;
-        setInterval(function() {
-            countdown--;
-            document.getElementById('countdown').textContent = countdown;
-            if (countdown <= 0) {
-                location.reload();
+        // Connect to stats stream for real-time updates
+        function connectStatsStream() {
+            let url = '/api/stats/stream';
+            const apiKey = localStorage.getItem('darkstream_api_key');
+            if (apiKey) {
+                url += '?api_key=' + encodeURIComponent(apiKey);
             }
-        }, 1000);
+            const evtSource = new EventSource(url);
 
-        // Fetch stats periodically
-        async function updateStats() {
-            try {
-                const resp = await authorizedFetch('/api/stats');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.pending !== undefined) document.getElementById('stat-pending').textContent = data.pending;
-                    if (data.processing !== undefined) document.getElementById('stat-processing').textContent = data.processing;
-                    if (data.completed !== undefined) document.getElementById('stat-completed').textContent = data.completed;
-                    if (data.failed !== undefined) document.getElementById('stat-failed').textContent = data.failed;
+            evtSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Update stats
+                    if (data.stats.pending !== undefined) document.getElementById('stat-pending').textContent = data.stats.pending;
+                    if (data.stats.processing !== undefined) document.getElementById('stat-processing').textContent = data.stats.processing;
+                    if (data.stats.completed !== undefined) document.getElementById('stat-completed').textContent = data.stats.completed;
+                    if (data.stats.failed !== undefined) document.getElementById('stat-failed').textContent = data.stats.failed;
+                    if (data.stats.workers !== undefined) document.getElementById('stat-workers').textContent = data.stats.workers;
+
+                    function createElement(tag, opts = {}) {
+                        const el = document.createElement(tag);
+                        if (opts.text) el.textContent = opts.text;
+                        if (opts.className) el.className = opts.className;
+                        if (opts.title) el.title = opts.title;
+                        if (opts.onclick) el.onclick = opts.onclick;
+                        if (opts.innerHTML) el.innerHTML = opts.innerHTML; // only for static UI bits, not data
+                        if (opts.style) {
+                            for (let key in opts.style) {
+                                el.style[key] = opts.style[key];
+                            }
+                        }
+                        return el;
+                    }
+
+                    // Update pending jobs table
+                    if (data.pending_jobs && document.getElementById('pending-jobs')) {
+                        const tbody = document.getElementById('pending-jobs');
+                        tbody.innerHTML = '';
+                        data.pending_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            const createdAt = new Date(job.created_at).toLocaleString();
+                            const prio = job.priority !== undefined ? job.priority : 5;
+
+                            const tdId = createElement('td');
+                            const codeId = createElement('code', {text: job.id});
+                            tdId.appendChild(codeId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+
+                            const tdPrio = createElement('td');
+                            const badgePrio = createElement('span', {text: prio, className: 'badge badge-pending'});
+                            tdPrio.appendChild(badgePrio);
+
+                            const tdCreated = createElement('td', {text: createdAt});
+
+                            const tdActions = createElement('td');
+                            const btnPrio = createElement('button', {text: 'Priority', className: 'btn btn-primary btn-sm'});
+                            btnPrio.onclick = () => updatePriority(job.id, prio);
+
+                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                            btnCancel.onclick = () => cancelJob(job.id);
+
+                            tdActions.appendChild(btnPrio);
+                            tdActions.appendChild(document.createTextNode(' '));
+                            tdActions.appendChild(btnCancel);
+
+                            tr.append(tdId, tdSource, tdPrio, tdCreated, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update processing jobs table
+                    if (data.processing_jobs && document.getElementById('processing-jobs')) {
+                        const tbody = document.getElementById('processing-jobs');
+                        tbody.innerHTML = '';
+                        data.processing_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            let startedAt = '';
+                            if (job.started_at) {
+                                startedAt = new Date(job.started_at).toLocaleTimeString();
+                            }
+
+                            const tdId = createElement('td');
+                            const codeId = createElement('code', {text: job.id});
+                            tdId.appendChild(codeId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+                            const tdWorker = createElement('td', {text: job.worker_id || ''});
+
+                            const tdProg = createElement('td');
+                            const progBar = createElement('div', {className: 'progress-bar', style: {width: '100px'}});
+                            const progFill = createElement('div', {className: 'progress-fill', style: {width: (job.progress || 0) + '%'}});
+                            progBar.appendChild(progFill);
+                            tdProg.appendChild(progBar);
+
+                            const tdStarted = createElement('td', {text: startedAt});
+
+                            const tdActions = createElement('td');
+                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                            btnCancel.onclick = () => cancelJob(job.id);
+                            tdActions.appendChild(btnCancel);
+
+                            tr.append(tdId, tdSource, tdWorker, tdProg, tdStarted, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update recent jobs table
+                    if (data.recent_jobs && document.getElementById('recent-jobs')) {
+                        const tbody = document.getElementById('recent-jobs');
+                        tbody.innerHTML = '';
+                        data.recent_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            let statusClass = 'badge-pending';
+                            if (job.status === 'completed') statusClass = 'badge-completed';
+                            else if (job.status === 'failed') statusClass = 'badge-failed';
+
+                            let completedAt = '-';
+                            if (job.completed_at) {
+                                completedAt = new Date(job.completed_at).toLocaleString();
+                            }
+
+                            const tdId = createElement('td');
+                            const codeId = createElement('code', {text: job.id});
+                            tdId.appendChild(codeId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+
+                            const tdStatus = createElement('td');
+                            const badgeStatus = createElement('span', {text: job.status, className: 'badge ' + statusClass});
+                            tdStatus.appendChild(badgeStatus);
+
+                            const tdWorker = createElement('td', {text: job.worker_id || ''});
+                            const tdDuration = createElement('td', {text: job.source_duration ? Math.round(job.source_duration) + 's' : '-'});
+                            const tdCompleted = createElement('td', {text: completedAt});
+
+                            const tdActions = createElement('td');
+                            if (job.status === 'failed') {
+                                const btnRetry = createElement('button', {text: 'Retry', className: 'btn btn-primary btn-sm'});
+                                btnRetry.onclick = () => retryJob(job.id);
+                                tdActions.appendChild(btnRetry);
+                                tdActions.appendChild(document.createTextNode(' '));
+                            }
+                            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                                const btnRequeue = createElement('button', {text: 'Re-queue', className: 'btn btn-secondary btn-sm'});
+                                btnRequeue.onclick = () => requeueJob(job.id);
+                                tdActions.appendChild(btnRequeue);
+                            }
+
+                            tr.append(tdId, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update workers table
+                    if (data.workers && document.getElementById('workers-list')) {
+                        const tbody = document.getElementById('workers-list');
+                        tbody.innerHTML = '';
+                        data.workers.forEach(worker => {
+                            const tr = document.createElement('tr');
+                            const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
+                            const statusText = worker.is_online ? 'Online' : 'Offline';
+                            let lastSeen = '-';
+                            if (worker.last_seen) {
+                                lastSeen = new Date(worker.last_seen).toLocaleTimeString();
+                            }
+
+                            const tdId = createElement('td');
+                            const codeId = createElement('code', {text: worker.worker_id});
+                            tdId.appendChild(codeId);
+
+                            const tdHost = createElement('td', {text: worker.hostname || ''});
+                            const tdGpu = createElement('td', {text: worker.gpu || ''});
+                            const tdJobs = createElement('td', {text: worker.active_jobs || 0});
+                            const tdCpu = createElement('td', {text: (worker.cpu_usage || 0).toFixed(1) + '%'});
+                            const tdMem = createElement('td', {text: (worker.memory_usage || 0).toFixed(1) + '%'});
+
+                            const tdStatus = createElement('td');
+                            const badgeStatus = createElement('span', {text: statusText, className: 'badge ' + statusBadge});
+                            tdStatus.appendChild(badgeStatus);
+
+                            const tdSeen = createElement('td', {text: lastSeen});
+
+                            const tdActions = createElement('td');
+                            const btnConfig = createElement('button', {text: '⚙️ Configure', className: 'btn btn-primary btn-sm'});
+                            btnConfig.onclick = () => openWorkerSettings(worker.worker_id);
+                            tdActions.appendChild(btnConfig);
+
+                            tr.append(tdId, tdHost, tdGpu, tdJobs, tdCpu, tdMem, tdStatus, tdSeen, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+                } catch (err) {
+                    console.error('Failed to parse SSE data:', err);
                 }
-            } catch (err) {
-                console.error('Failed to update stats:', err);
-            }
+            };
+
+            evtSource.onerror = function() {
+                const indicator = document.getElementById('live-indicator');
+                if (indicator) {
+                    indicator.textContent = 'Disconnected 🔴';
+                }
+            };
+
+            evtSource.onopen = function() {
+                const indicator = document.getElementById('live-indicator');
+                if (indicator) {
+                    indicator.textContent = 'Live 🟢';
+                }
+            };
         }
-        setInterval(updateStats, 5000);
+
+        connectStatsStream();
 
         // Worker settings modal functions
         async function openWorkerSettings(workerId) {
