@@ -16,6 +16,7 @@ const (
 	WorkerStatusIdle    = "idle"
 	WorkerStatusOnline  = "online"
 	WorkerStatusOffline = "offline"
+	WorkerStatusPaused  = "paused"
 )
 
 // Vulkan device types

@@ -40,6 +40,12 @@ func main() {
 		commands.Jobs(subArgs)
 	case "priority":
 		commands.Priority(subArgs)
+	case "worker-pause":
+		commands.WorkerPause(subArgs)
+	case "worker-resume":
+		commands.WorkerResume(subArgs)
+	case "worker-remove":
+		commands.WorkerRemove(subArgs)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -67,6 +73,9 @@ Commands:
   cancel [options]       Cancel a job
   priority [options]     Update job priority
   workers [options]      List and manage workers
+  worker-pause [opts]    Pause a worker
+  worker-resume [opts]   Resume a paused worker
+  worker-remove [opts]   Remove a worker
   jobs [options]         List and manage jobs
 
 Status Options:

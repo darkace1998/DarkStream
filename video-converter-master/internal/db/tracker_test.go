@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 )
 
@@ -1739,5 +1740,101 @@ func TestJobPriority(t *testing.T) {
 	}
 	if job3.Priority != 0 {
 		t.Errorf("Expected third job to have priority 0, got %d", job3.Priority)
+	}
+}
+
+func TestSetWorkerStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	// Add a worker
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        "worker-status-test",
+		Hostname:        "test-host",
+		Timestamp:       time.Now(),
+		VulkanAvailable: true,
+		ActiveJobs:      0,
+		Status:          constants.WorkerStatusOnline,
+	}
+
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
+		t.Fatalf("Failed to add worker: %v", err)
+	}
+
+	// Change status
+	err = tracker.SetWorkerStatus("worker-status-test", constants.WorkerStatusPaused)
+	if err != nil {
+		t.Fatalf("Failed to set worker status: %v", err)
+	}
+
+	// Verify status
+	workers, err := tracker.GetWorkers()
+	if err != nil {
+		t.Fatalf("Failed to get workers: %v", err)
+	}
+
+	found := false
+	for _, w := range workers {
+		if w.WorkerID == "worker-status-test" {
+			found = true
+			if w.Status != constants.WorkerStatusPaused {
+				t.Errorf("Expected status %s, got %s", constants.WorkerStatusPaused, w.Status)
+			}
+		}
+	}
+
+	if !found {
+		t.Errorf("Worker not found")
+	}
+}
+
+func TestDeleteWorker(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	// Add a worker
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        "worker-delete-test",
+		Hostname:        "test-host",
+		Timestamp:       time.Now(),
+		VulkanAvailable: true,
+		ActiveJobs:      0,
+		Status:          constants.WorkerStatusOnline,
+	}
+
+	err = tracker.UpdateWorkerHeartbeat(hb)
+	if err != nil {
+		t.Fatalf("Failed to add worker: %v", err)
+	}
+
+	// Delete the worker
+	err = tracker.DeleteWorker("worker-delete-test")
+	if err != nil {
+		t.Fatalf("Failed to delete worker: %v", err)
+	}
+
+	// Verify worker is gone
+	workers, err := tracker.GetWorkers()
+	if err != nil {
+		t.Fatalf("Failed to get workers: %v", err)
+	}
+
+	for _, w := range workers {
+		if w.WorkerID == "worker-delete-test" {
+			t.Errorf("Worker was not deleted")
+		}
 	}
 }

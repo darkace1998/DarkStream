@@ -418,6 +418,28 @@ func (t *Tracker) UpdateJob(job *models.Job) error {
 	return nil
 }
 
+// SetWorkerStatus sets the status of a specific worker
+func (t *Tracker) SetWorkerStatus(workerID, status string) error {
+	_, err := t.db.Exec(`
+		UPDATE workers
+		SET status = ?
+		WHERE id = ?
+	`, status, workerID)
+	if err != nil {
+		return fmt.Errorf("failed to set worker status: %w", err)
+	}
+	return nil
+}
+
+// DeleteWorker removes a worker from the database
+func (t *Tracker) DeleteWorker(workerID string) error {
+	_, err := t.db.Exec(`DELETE FROM workers WHERE id = ?`, workerID)
+	if err != nil {
+		return fmt.Errorf("failed to delete worker: %w", err)
+	}
+	return nil
+}
+
 // UpdateWorkerHeartbeat updates worker status in the database
 func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 	_, err := t.db.Exec(`
@@ -430,7 +452,7 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 			active_jobs = excluded.active_jobs,
 			cpu_usage = excluded.cpu_usage,
 			memory_usage = excluded.memory_usage,
-			status = excluded.status
+			status = CASE WHEN workers.status = 'paused' THEN 'paused' ELSE excluded.status END
 	`, hb.WorkerID, hb.Hostname, hb.Timestamp, hb.VulkanAvailable,
 		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage, hb.Status)
 	if err != nil {

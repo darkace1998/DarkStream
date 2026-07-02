@@ -228,6 +228,9 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
 	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetWorkerConfig))))
 	mux.HandleFunc("/api/worker/settings", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleWorkerSettings))) // Per-worker settings management
+	mux.HandleFunc("/api/worker/pause", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PauseWorker))))
+	mux.HandleFunc("/api/worker/resume", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ResumeWorker))))
+	mux.HandleFunc("/api/worker", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleWorkerAdmin))))
 	mux.HandleFunc("/api/status", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetStatus))))
 	mux.HandleFunc("/api/stats", s.correlationMiddleware(s.rateLimitMiddleware(s.GetStats)))
 	mux.HandleFunc("/api/stats/stream", s.correlationMiddleware(s.authMiddleware(s.StreamStats))) // SSE endpoint (no rate limit)
@@ -248,12 +251,12 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ValidateConfig))))
 
 	s.server = &http.Server{
-		Addr:         s.addr,
-		Handler:      s.metricsMiddleware(mux),
+		Addr:              s.addr,
+		Handler:           s.metricsMiddleware(mux),
 		ReadHeaderTimeout: 30 * time.Second,
-		ReadTimeout:  35 * time.Minute, // Extended for file downloads/uploads
-		WriteTimeout: 35 * time.Minute, // Extended for file downloads/uploads
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:       35 * time.Minute, // Extended for file downloads/uploads
+		WriteTimeout:      35 * time.Minute, // Extended for file downloads/uploads
+		IdleTimeout:       60 * time.Second,
 	}
 
 	slog.Info("HTTP server starting", "addr", s.addr, "metrics_endpoint", "/metrics", "health_endpoints", "/healthz, /readyz, /api/health")
@@ -336,6 +339,11 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		// Find the requesting worker's current load
 		for _, worker := range workers {
 			if worker.WorkerID == workerID {
+				if worker.Status == "paused" {
+					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				// Simple load balancing: don't assign jobs if worker is heavily loaded
 				// This could be made configurable based on worker capacity
 				const maxJobsPerWorker = 5
@@ -415,6 +423,12 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		availableSlots = limit
 		for _, worker := range workers {
 			if worker.WorkerID == workerID {
+				if worker.Status == "paused" {
+					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode([]*models.Job{})
+					return
+				}
 				const maxJobsPerWorker = 5
 				availableSlots = maxJobsPerWorker - worker.ActiveJobs
 				if availableSlots <= 0 {
@@ -2723,4 +2737,79 @@ func (s *Server) deleteWorkerSettings(w http.ResponseWriter, workerID string) {
 
 	slog.Info("Worker settings deleted, will use defaults", "worker_id", workerID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PauseWorker handles pausing a specific worker
+func (s *Server) PauseWorker(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	err := s.db.SetWorkerStatus(workerID, constants.WorkerStatusPaused)
+	if err != nil {
+		slog.Error("Failed to pause worker", "worker_id", workerID, "error", err)
+		http.Error(w, "Failed to pause worker", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Paused worker", "worker_id", workerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// ResumeWorker handles resuming a specific worker
+func (s *Server) ResumeWorker(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	err := s.db.SetWorkerStatus(workerID, constants.WorkerStatusOnline)
+	if err != nil {
+		slog.Error("Failed to resume worker", "worker_id", workerID, "error", err)
+		http.Error(w, "Failed to resume worker", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Resumed worker", "worker_id", workerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// HandleWorkerAdmin handles other admin operations for a worker (e.g. DELETE)
+func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workerID := r.URL.Query().Get("worker_id")
+	if workerID == "" {
+		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	err := s.db.DeleteWorker(workerID)
+	if err != nil {
+		slog.Error("Failed to delete worker", "worker_id", workerID, "error", err)
+		http.Error(w, "Failed to delete worker", http.StatusInternalServerError)
+		return
+	}
+
+	// Also delete its config if any
+	_ = s.db.DeleteWorkerConfig(workerID)
+
+	slog.Info("Deleted worker", "worker_id", workerID)
+	w.WriteHeader(http.StatusOK)
 }
