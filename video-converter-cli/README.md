@@ -352,6 +352,8 @@ The CLI communicates with the master server via HTTP REST API:
 - `GET /api/workers` - List workers
 - `POST /api/retry?limit=N` - Retry failed jobs
 - `POST /api/job/cancel?job_id=ID` - Cancel a job
+- `POST /api/jobs/cancel?status=STATUS` - Cancel multiple jobs
+- `POST /api/job/priority?job_id=ID&priority=N` - Update priority of a job
 - `POST /api/validate-config?type=TYPE` - Validate configuration
 
 ## Troubleshooting

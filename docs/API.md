@@ -150,6 +150,9 @@ Deletes per-worker configuration settings, falling back to global defaults.
 
 These endpoints are used by `video-converter-cli` and the Web UI.
 
+### `GET /`
+Serves the built-in Web Dashboard UI.
+
 ### `GET /api/status`
 Returns the overall system status (job counts, worker counts).
 
@@ -163,6 +166,9 @@ Lists jobs with pagination and filtering.
 - `status` (string, optional): Filter by job status (e.g., `pending`, `processing`, `completed`, `failed`).
 - `limit` (integer, optional): Maximum number of jobs to return.
 - `offset` (integer, optional): Pagination offset.
+
+### `GET /api/stats/stream`
+Server-Sent Events (SSE) endpoint for real-time dashboard updates.
 
 ### `GET /api/job/progress`
 Gets the progress of a specific job.
