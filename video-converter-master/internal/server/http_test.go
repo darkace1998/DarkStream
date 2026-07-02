@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
@@ -718,5 +719,83 @@ func TestRetryJob(t *testing.T) {
 	}
 	if updatedJob.Status != "pending" {
 		t.Errorf("Expected job status to be 'pending', got %v", updatedJob.Status)
+	}
+}
+
+func TestWorkerAdminEndpoints(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Add a worker
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        "admin-worker",
+		Hostname:        "test-host",
+		Timestamp:       time.Now(),
+		VulkanAvailable: true,
+		ActiveJobs:      0,
+		Status:          constants.WorkerStatusOnline,
+	}
+	err := srv.db.UpdateWorkerHeartbeat(hb)
+	if err != nil {
+		t.Fatalf("Failed to add worker: %v", err)
+	}
+
+	// Test PauseWorker
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/pause?worker_id=admin-worker", nil)
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec := httptest.NewRecorder()
+	srv.PauseWorker(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("PauseWorker status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	workers, _ := srv.db.GetWorkers()
+	found := false
+	for _, w := range workers {
+		if w.WorkerID == "admin-worker" {
+			found = true
+			if w.Status != constants.WorkerStatusPaused {
+				t.Errorf("Worker status = %s, want %s", w.Status, constants.WorkerStatusPaused)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("Worker not found")
+	}
+
+	// Test ResumeWorker
+	req = httptest.NewRequest(http.MethodPost, "/api/worker/resume?worker_id=admin-worker", nil)
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec = httptest.NewRecorder()
+	srv.ResumeWorker(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("ResumeWorker status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	workers, _ = srv.db.GetWorkers()
+	for _, w := range workers {
+		if w.WorkerID == "admin-worker" {
+			if w.Status != constants.WorkerStatusOnline {
+				t.Errorf("Worker status = %s, want %s", w.Status, constants.WorkerStatusOnline)
+			}
+		}
+	}
+
+	// Test HandleWorkerAdmin DELETE (Remove worker)
+	req = httptest.NewRequest(http.MethodDelete, "/api/worker?worker_id=admin-worker", nil)
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	rec = httptest.NewRecorder()
+	srv.HandleWorkerAdmin(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("RemoveWorker status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	workers, _ = srv.db.GetWorkers()
+	for _, w := range workers {
+		if w.WorkerID == "admin-worker" {
+			t.Errorf("Worker was not removed")
+		}
 	}
 }

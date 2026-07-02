@@ -962,6 +962,22 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             btnConfig.onclick = () => openWorkerSettings(worker.worker_id);
                             tdActions.appendChild(btnConfig);
 
+                            if (worker.status !== 'offline') {
+                                if (worker.status === 'paused') {
+                                    const btnResume = createElement('button', {text: '▶️ Resume', className: 'btn btn-success btn-sm', style: 'margin-left: 5px;'});
+                                    btnResume.onclick = () => resumeWorker(worker.worker_id);
+                                    tdActions.appendChild(btnResume);
+                                } else {
+                                    const btnPause = createElement('button', {text: '⏸️ Pause', className: 'btn btn-warning btn-sm', style: 'margin-left: 5px;'});
+                                    btnPause.onclick = () => pauseWorker(worker.worker_id);
+                                    tdActions.appendChild(btnPause);
+                                }
+                            }
+
+                            const btnRemove = createElement('button', {text: '🗑️ Remove', className: 'btn btn-danger btn-sm', style: 'margin-left: 5px;'});
+                            btnRemove.onclick = () => removeWorker(worker.worker_id);
+                            tdActions.appendChild(btnRemove);
+
                             tr.append(tdId, tdHost, tdGpu, tdJobs, tdCpu, tdMem, tdStatus, tdSeen, tdActions);
                             tbody.appendChild(tr);
                         });
@@ -987,6 +1003,46 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         }
 
         connectStatsStream();
+
+        // Worker admin functions
+        async function pauseWorker(workerId) {
+            if (!confirm('Pause worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker/pause?worker_id=' + encodeURIComponent(workerId), { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to pause worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function resumeWorker(workerId) {
+            if (!confirm('Resume worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker/resume?worker_id=' + encodeURIComponent(workerId), { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to resume worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function removeWorker(workerId) {
+            if (!confirm('Remove worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker?worker_id=' + encodeURIComponent(workerId), { method: 'DELETE' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to remove worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
 
         // Worker settings modal functions
         async function openWorkerSettings(workerId) {
