@@ -462,6 +462,27 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 }
 
 // GetJobStats returns statistics about job statuses
+
+// HasJobWithSourceChecksum checks if a job already exists with the given source checksum
+// and has a status other than 'failed' or 'cancelled'.
+func (t *Tracker) HasJobWithSourceChecksum(checksum string) (bool, error) {
+	if checksum == "" {
+		return false, nil
+	}
+
+	var count int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM jobs
+		WHERE source_checksum = ? AND status NOT IN ('failed', 'cancelled')
+	`, checksum).Scan(&count)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check job by checksum: %w", err)
+	}
+
+	return count > 0, nil
+}
+
 func (t *Tracker) GetJobStats() (map[string]any, error) {
 	stats := make(map[string]any)
 

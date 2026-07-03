@@ -27,6 +27,7 @@ type ScanOptions struct {
 	SkipHiddenDirs   bool  // Skip directories starting with '.'
 	ReplaceSource    bool  // Replace source file with output (output path = source path)
 	DetectDuplicates bool  // Track file hashes to detect duplicates
+	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
 }
 
 // Scanner discovers video files in a directory tree
@@ -198,7 +199,7 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 			s.mu.Lock()
 			if originalPath, exists := s.seenHashes[fileHash]; exists {
 				s.mu.Unlock()
-				slog.Info("Duplicate file detected",
+				slog.Info("Duplicate file detected in current scan",
 					"path", fullPath,
 					"original", originalPath,
 					"hash", fileHash)
@@ -206,6 +207,19 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 			}
 			s.seenHashes[fileHash] = fullPath
 			s.mu.Unlock()
+
+			// Check external duplicate checker if provided
+			if opts.DuplicateChecker != nil {
+				exists, err := opts.DuplicateChecker(fileHash)
+				if err != nil {
+					slog.Warn("Failed to check external duplicate checker", "path", fullPath, "error", err)
+				} else if exists {
+					slog.Info("Duplicate file detected in external checker (e.g. database)",
+						"path", fullPath,
+						"hash", fileHash)
+					return nil, nil // Skip duplicate
+				}
+			}
 		}
 	}
 

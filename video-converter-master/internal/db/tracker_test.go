@@ -1838,3 +1838,100 @@ func TestDeleteWorker(t *testing.T) {
 		}
 	}
 }
+
+
+func TestHasJobWithSourceChecksum(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_tracker.db")
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer tracker.Close()
+
+	// Empty checksum should return false immediately
+	exists, err := tracker.HasJobWithSourceChecksum("")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if exists {
+		t.Errorf("Expected exists to be false for empty checksum")
+	}
+
+	checksum := "a1b2c3d4e5f6"
+
+	// Checksum does not exist yet
+	exists, err = tracker.HasJobWithSourceChecksum(checksum)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if exists {
+		t.Errorf("Expected exists to be false initially")
+	}
+
+	// Add a job with the checksum
+	job := &models.Job{
+		ID:             "job-with-checksum",
+		SourcePath:     "/test/video.mp4",
+		OutputPath:     "/test/video_out.mp4",
+		Status:         "pending",
+		SourceChecksum: checksum,
+	}
+
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	// Should exist now
+	exists, err = tracker.HasJobWithSourceChecksum(checksum)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if !exists {
+		t.Errorf("Expected exists to be true after creating job")
+	}
+
+	// Update job to 'failed'
+	job.Status = "failed"
+	if err := tracker.UpdateJob(job); err != nil {
+		t.Fatalf("Failed to update job: %v", err)
+	}
+
+	// Should not exist if it's failed
+	exists, err = tracker.HasJobWithSourceChecksum(checksum)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if exists {
+		t.Errorf("Expected exists to be false for 'failed' job")
+	}
+
+	// Update job to 'cancelled'
+	job.Status = "cancelled"
+	if err := tracker.UpdateJob(job); err != nil {
+		t.Fatalf("Failed to update job: %v", err)
+	}
+
+	// Should not exist if it's cancelled
+	exists, err = tracker.HasJobWithSourceChecksum(checksum)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if exists {
+		t.Errorf("Expected exists to be false for 'cancelled' job")
+	}
+
+	// Update job to 'completed'
+	job.Status = "completed"
+	if err := tracker.UpdateJob(job); err != nil {
+		t.Fatalf("Failed to update job: %v", err)
+	}
+
+	// Should exist if it's completed
+	exists, err = tracker.HasJobWithSourceChecksum(checksum)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if !exists {
+		t.Errorf("Expected exists to be true for 'completed' job")
+	}
+}

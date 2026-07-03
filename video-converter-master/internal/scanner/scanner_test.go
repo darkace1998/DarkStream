@@ -487,3 +487,57 @@ func TestNew(t *testing.T) {
 		t.Error("Expected seenHashes to be initialized (not nil)")
 	}
 }
+
+
+func TestScannerWithDuplicateChecker(t *testing.T) {
+	tmpDir := t.TempDir()
+	videosDir := filepath.Join(tmpDir, "videos")
+	outputDir := filepath.Join(tmpDir, "output")
+
+	err := os.MkdirAll(videosDir, 0o755)
+	if err != nil {
+		t.Fatalf("Failed to create videos dir: %v", err)
+	}
+
+	// Create test file
+	err = os.WriteFile(filepath.Join(videosDir, "video1.mp4"), []byte("test content"), 0o600)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	scanner := New(videosDir, []string{".mp4"}, outputDir)
+
+	// Test with checker that returns true (duplicate exists)
+	scanner.SetOptions(ScanOptions{
+		DetectDuplicates: true,
+		DuplicateChecker: func(checksum string) (bool, error) {
+			return true, nil
+		},
+	})
+
+	jobs, err := scanner.ScanDirectory()
+	if err != nil {
+		t.Fatalf("ScanDirectory failed: %v", err)
+	}
+
+	if len(jobs) != 0 {
+		t.Errorf("Expected 0 jobs because of external checker, got %d", len(jobs))
+	}
+
+	// Test with checker that returns false (no duplicate)
+	scanner.SetOptions(ScanOptions{
+		DetectDuplicates: true,
+		DuplicateChecker: func(checksum string) (bool, error) {
+			return false, nil
+		},
+	})
+
+	jobs, err = scanner.ScanDirectory()
+	if err != nil {
+		t.Fatalf("ScanDirectory failed: %v", err)
+	}
+
+	if len(jobs) != 1 {
+		t.Errorf("Expected 1 job, got %d", len(jobs))
+	}
+}
