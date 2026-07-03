@@ -102,6 +102,7 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		SkipHiddenDirs:   cfg.Scanner.SkipHiddenDirs,
 		ReplaceSource:    cfg.Scanner.ReplaceSource,
 		DetectDuplicates: cfg.Scanner.DetectDuplicates,
+		DuplicateChecker: tracker.HasJobWithSourceChecksum,
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
