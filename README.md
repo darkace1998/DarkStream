@@ -1974,6 +1974,14 @@ video-converter-cli stats --master-url http://storage-server:8080
 video-converter-cli retry --master-url http://storage-server:8080 --limit 100
 ```
 
+### Requeue a Job
+
+Requeue a completed, failed, or cancelled job back to pending status:
+
+```bash
+video-converter-cli requeue --master-url http://storage-server:8080 --job-id abc123
+```
+
 ### Cancel a Job
 
 Cancel a pending or processing job:
