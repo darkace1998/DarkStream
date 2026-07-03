@@ -2029,6 +2029,7 @@ To see what has changed recently, please review our [Changelog](CHANGELOG.md).
 ## Documentation
 
 For more detailed technical information, please refer to the following guides:
+- [Getting Started](docs/GETTING_STARTED.md): Step-by-step guide to setting up a DarkStream cluster.
 - [Configuration Guide](docs/CONFIGURATION.md): Details on Master and Worker configurations, including dynamic configuration.
 - [API Reference](docs/API.md): Details on the REST API for workers and management tools.
 - [Architecture](docs/ARCHITECTURE.md): Component interaction diagrams and data flow.

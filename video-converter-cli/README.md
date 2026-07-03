@@ -162,7 +162,7 @@ video-converter-cli retry --master-url http://localhost:8080 --limit 100
 Cancel a pending or processing job:
 
 ```bash
-video-converter-cli cancel --job-id abc123
+video-converter-cli cancel --master-url http://localhost:8080 --job-id abc123
 ```
 
 ### Update Job Priority
@@ -170,7 +170,7 @@ video-converter-cli cancel --job-id abc123
 Update the priority of a job (0-10):
 
 ```bash
-video-converter-cli priority --job-id abc123 --priority 10
+video-converter-cli priority --master-url http://localhost:8080 --job-id abc123 --priority 10
 ```
 
 ### Validate Configuration
@@ -222,6 +222,10 @@ Environment:
 | `workers` | List workers | `--active`, `--watch`, `--format` |
 | `retry` | Retry failed jobs | `--limit`, `--format` |
 | `cancel` | Cancel a job | `--job-id` |
+| `priority` | Update job priority | `--job-id`, `--priority` |
+| `worker-pause` | Pause a worker | `--worker-id` |
+| `worker-resume`| Resume a paused worker| `--worker-id` |
+| `worker-remove`| Remove a worker | `--worker-id` |
 | `validate` | Validate config file | `--type`, `--file`, `--local` |
 | `detect` | Detect GPU/Vulkan | None |
 
