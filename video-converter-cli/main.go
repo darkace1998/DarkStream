@@ -34,6 +34,8 @@ func main() {
 		commands.Validate(subArgs)
 	case "cancel":
 		commands.Cancel(subArgs)
+	case "requeue":
+		commands.Requeue(subArgs)
 	case "workers":
 		commands.Workers(subArgs)
 	case "jobs":
@@ -71,6 +73,7 @@ Commands:
   detect                 Detect GPU/Vulkan capabilities
   validate [options]     Validate configuration file
   cancel [options]       Cancel a job
+  requeue [options]      Requeue a job
   priority [options]     Update job priority
   workers [options]      List and manage workers
   worker-pause [opts]    Pause a worker
@@ -105,6 +108,11 @@ Cancel Options:
   --job-id <id>          Job ID to cancel (required)
   --format <format>      Output format: table, json, csv
 
+Requeue Options:
+  --master-url <url>     Master server URL
+  --job-id <id>          Job ID to requeue (required)
+  --format <format>      Output format: table, json, csv
+
 Priority Options:
   --master-url <url>     Master server URL
   --job-id <id>          Job ID to update (required)
@@ -134,6 +142,7 @@ Examples:
   video-converter-cli workers --active
   video-converter-cli validate --type master --file config.yaml --local
   video-converter-cli cancel --job-id abc123
+  video-converter-cli requeue --job-id abc123
   video-converter-cli priority --job-id abc123 --priority 10
   video-converter-cli detect
   `)
