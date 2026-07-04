@@ -225,6 +225,24 @@ Cancels multiple jobs.
 ### `GET /api/workers`
 Lists all active registered workers.
 
+### `POST /api/worker/pause`
+Pauses a specific worker, preventing it from fetching new jobs.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker to pause.
+
+### `POST /api/worker/resume`
+Resumes a paused worker, allowing it to fetch new jobs again.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker to resume.
+
+### `DELETE /api/worker`
+Removes a specific worker and its configuration from the system.
+
+**Query Parameters:**
+- `worker_id` (string, required): The ID of the worker to remove.
+
 ### `GET /api/config`
 Retrieves the master configuration.
 
