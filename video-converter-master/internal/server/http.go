@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -168,6 +169,7 @@ type Server struct {
 	allowedDirs []string // Allowed directories for file operations (source and output)
 	metrics     *metrics.Metrics
 	notifier    *notifier.WebhookNotifier
+	queuePaused atomic.Bool // New field to pause/resume queue
 }
 
 // New creates a new HTTP server instance
@@ -240,6 +242,8 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/job/progress/stream", s.correlationMiddleware(s.authMiddleware(s.StreamJobProgress))) // SSE endpoint (no rate limit)
 
 	// CLI API endpoints - with correlation ID
+	mux.HandleFunc("/api/queue/pause", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PauseQueue))))
+	mux.HandleFunc("/api/queue/resume", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ResumeQueue))))
 	mux.HandleFunc("/api/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryFailedJobs))))
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
 	mux.HandleFunc("/api/job/requeue", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RequeueJob))))
@@ -319,6 +323,11 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.queuePaused.Load() {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// Validate worker_id parameter
 	workerID := r.URL.Query().Get("worker_id")
 	if workerID == "" {
@@ -387,6 +396,11 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.queuePaused.Load() {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -704,6 +718,9 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add queue_paused boolean to stats
+	stats["queue_paused"] = s.queuePaused.Load()
+
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(stats)
 	if err != nil {
@@ -771,11 +788,12 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stats := map[string]any{
-			"pending":    0,
-			"processing": 0,
-			"completed":  0,
-			"failed":     0,
-			"workers":    onlineWorkers,
+			"pending":      0,
+			"processing":   0,
+			"completed":    0,
+			"failed":       0,
+			"workers":      onlineWorkers,
+			"queue_paused": s.queuePaused.Load(),
 		}
 		if v, ok := jobStats["pending"].(int); ok {
 			stats["pending"] = v
@@ -1846,6 +1864,34 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Retried specific job", "job_id", job.ID)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PauseQueue pauses job assignment to workers
+func (s *Server) PauseQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.queuePaused.Store(true)
+	slog.Info("Global job queue paused")
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"paused"}`))
+}
+
+// ResumeQueue resumes job assignment to workers
+func (s *Server) ResumeQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.queuePaused.Store(false)
+	slog.Info("Global job queue resumed")
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"resumed"}`))
 }
 
 // UpdateJobPriority handles updating a job's priority

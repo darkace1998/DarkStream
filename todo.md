@@ -27,16 +27,18 @@
 ## Medium Priority
 
 ### Features
+- [x] Add Global Queue Maintenance Mode (pause/resume the entire queue)
 - [ ] Implement chunked/parallel file uploads for large video files
 - [ ] Validate and test the resume-download feature (`enable_resume_download` config option exists but may not be exercised)
-- [ ] Enforce bandwidth-limiting during transfers (`max_bandwidth` config option exists but enforcement is unclear)
-- [ ] Use the job priority field for scheduling — `Priority` is defined in the `Job` model but the queue is FIFO
-- [ ] Add filesystem watch (inotify/fsnotify) as an alternative to polling-based video scanning
+- [x] Enforce bandwidth-limiting during transfers (`max_bandwidth` config option exists but enforcement is unclear)
+- [x] Use the job priority field for scheduling — `Priority` is defined in the `Job` model but the queue is FIFO
+- [x] Add filesystem watch (inotify/fsnotify) as an alternative to polling-based video scanning
 
 ### Web UI
+- [x] Update Web UI with Global Pause/Resume controls for the queue
 - [ ] Expand the Web UI beyond the current single-page dashboard — add pages for individual job details, worker management, and configuration editing
-- [ ] Add real-time updates to the Web UI (WebSocket or SSE) instead of requiring manual page refresh
-- [ ] Add job action controls (retry, cancel, re-queue) directly in the Web UI
+- [x] Add real-time updates to the Web UI (WebSocket or SSE) instead of requiring manual page refresh
+- [x] Add job action controls (retry, cancel, re-queue) directly in the Web UI
 
 ### Observability
 - [ ] Expand Prometheus metrics — add histograms for conversion duration, transfer speeds, queue depth over time
