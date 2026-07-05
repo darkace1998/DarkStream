@@ -59,6 +59,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .badge-processing { background: #614a1f; color: #ffc107; }
         .badge-completed { background: #1b4332; color: #95d5b2; }
         .badge-failed { background: #5c2323; color: #f8d7da; }
+        .badge-success { background: #1b4332; color: #95d5b2; }
         .meta { color: #666; font-size: 0.85em; }
         .tabs { display: flex; border-bottom: 2px solid #333; margin-bottom: 20px; }
         .tab { padding: 12px 24px; cursor: pointer; color: #888; border-bottom: 2px solid transparent; margin-bottom: -2px; }
@@ -88,7 +89,11 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 <h1>🎬 DarkStream Dashboard</h1>
                 <span class="version">Video Converter System</span>
             </div>
-            <div class="meta">
+            <div class="meta" style="display: flex; align-items: center; gap: 15px;">
+                <div id="queue-status-container">
+                    <span id="queue-status-badge" class="badge badge-success" style="padding: 5px 10px; font-size: 0.9em; margin-right: 10px;">Queue Active</span>
+                    <button id="toggle-queue-btn" class="btn btn-sm" style="background: #e6a23c; color: #fff;" onclick="toggleQueue()">Pause Queue</button>
+                </div>
                 Config Version: {{.Config.Version}} | <span id="live-indicator">Live 🟢</span>
             </div>
         </div>
@@ -793,6 +798,25 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.stats.failed !== undefined) document.getElementById('stat-failed').textContent = data.stats.failed;
                     if (data.stats.workers !== undefined) document.getElementById('stat-workers').textContent = data.stats.workers;
 
+                    // Update queue status
+                    if (data.stats.queue_paused !== undefined) {
+                        const isPaused = data.stats.queue_paused;
+                        window.isQueuePaused = isPaused;
+                        const badge = document.getElementById('queue-status-badge');
+                        const btn = document.getElementById('toggle-queue-btn');
+                        if (isPaused) {
+                            badge.textContent = 'Queue Paused';
+                            badge.className = 'badge badge-failed';
+                            btn.textContent = 'Resume Queue';
+                            btn.style.background = '#67c23a';
+                        } else {
+                            badge.textContent = 'Queue Active';
+                            badge.className = 'badge badge-success';
+                            btn.textContent = 'Pause Queue';
+                            btn.style.background = '#e6a23c';
+                        }
+                    }
+
                     function createElement(tag, opts = {}) {
                         const el = document.createElement(tag);
                         if (opts.text) el.textContent = opts.text;
@@ -1003,6 +1027,25 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         }
 
         connectStatsStream();
+
+        // Queue status functions
+        async function toggleQueue() {
+            const isPaused = window.isQueuePaused || false;
+            const endpoint = isPaused ? '/api/queue/resume' : '/api/queue/pause';
+            const action = isPaused ? 'resume' : 'pause';
+
+            if (!confirm('Are you sure you want to ' + action + ' the global job queue?')) return;
+
+            try {
+                const resp = await authorizedFetch(endpoint, { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to ' + action + ' queue: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
 
         // Worker admin functions
         async function pauseWorker(workerId) {
