@@ -39,6 +39,12 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `min_file_size` / `max_file_size`: Size limits for processing.
 *   `skip_hidden_files` / `skip_hidden_dirs`: Whether to ignore files/directories starting with `.`.
 *   `detect_duplicates`: Detect and skip duplicate files based on content hash.
+*   `replace_source`: Replace source file with output. Use with caution.
+*   `enable_watch`: Watch for filesystem changes using fsnotify.
+
+### `notifications`
+*   `webhook_url`: Optional URL to send job event webhooks to.
+*   `events`: List of events to trigger webhooks (e.g., `completed`, `failed`).
 
 ### `database`
 *   `path`: Path to the SQLite database file (e.g., `./jobs.db`).
@@ -59,10 +65,16 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `heartbeat_interval`: Frequency of worker heartbeats (e.g., `30s`).
 *   `job_check_interval`: Frequency of polling for new jobs (e.g., `5s`).
 *   `job_timeout`: Maximum time allowed for a single job (e.g., `2h`).
+*   `max_api_requests_per_min`: Rate limit for API calls to master.
+*   `max_backoff_interval` / `initial_backoff_interval`: Backoff settings when no jobs are available.
 *   `download_timeout` / `upload_timeout`: Timeouts for file transfers.
 *   `max_cache_size`: Maximum local cache size on the worker.
+*   `cache_cleanup_age`: Age after which cached files are cleaned up.
+*   `bandwidth_limit`: Bandwidth limit in bytes per second (0 = unlimited).
+*   `enable_resume_download`: Enable resume support for downloads.
 *   `use_vulkan`: Enable Vulkan GPU acceleration if available.
 *   `ffmpeg_timeout`: Timeout specifically for the FFmpeg process.
+*   `log_level` / `log_format`: Worker log level and format.
 
 ---
 
@@ -81,6 +93,7 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 ### `storage`
 *   `cache_path`: Local directory for caching source and converted videos during processing.
 *   `max_cache_size`: Local override for maximum cache size.
+*   `chunk_size`: Size for chunked streaming (currently unused).
 *   `download_timeout` / `upload_timeout`: Local overrides for transfer timeouts.
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).
 *   `enable_resume_download`: Enable resume support for interrupted downloads.

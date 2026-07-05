@@ -62,6 +62,8 @@ The Master node acts as the central coordinator, job queue manager, and state tr
    ```
    *Make sure these directories exist on the Master node.*
 
+   *(Optional) If you want to secure your cluster, set an `api_key` under the `server` block in `config.yaml`.*
+
 4. Start the Master server:
    ```bash
    ./master --config config.yaml
@@ -79,9 +81,15 @@ Worker nodes connect to the Master coordinator to fetch and process jobs. Thanks
 
 2. Start the worker, pointing it to your Master server's URL:
    ```bash
+   # If your master server has an api_key configured, provide it via the environment variable:
+   DARKSTREAM_API_KEY="your_api_key_here" ./worker -url http://localhost:8080
+
+   # Or without auth:
    ./worker -url http://localhost:8080
    ```
    *(Replace `localhost` with the Master's IP address if running on a different machine.)*
+
+   *Tip: The worker automatically starts a local diagnostics server (e.g., at `127.0.0.1:45321`). Check the worker startup logs for the exact URL to view its health and metrics.*
 
 The worker will automatically detect its hardware capabilities (e.g., Vulkan GPUs), register with the Master, fetch the conversion configuration, and start pulling jobs if any source videos were found by the Master.
 
@@ -104,7 +112,7 @@ Here you can view real-time system status, worker metrics, and recent job activi
 You can also use the `video-converter-cli` to interact with the cluster.
 
 1. Open a new terminal and navigate to the `video-converter-cli` directory.
-2. Check the overall conversion progress:
+2. Check the overall conversion progress (if auth is enabled, set `export DARKSTREAM_API_KEY="your_key"` first):
    ```bash
    ./video-converter-cli status --master-url http://localhost:8080
    ```
