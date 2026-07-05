@@ -251,6 +251,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/job/priority", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UpdateJobPriority))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
+	mux.HandleFunc("/api/jobs/prune", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PruneJobs))))
 	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListWorkers))))
 	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ValidateConfig))))
 
@@ -2063,6 +2064,41 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
 		slog.Error("Failed to encode cancel response", "error", err)
+		return
+	}
+}
+
+// PruneJobs handles deleting jobs with specified status (completed, failed, or all)
+func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status := r.URL.Query().Get("status")
+	if status != "completed" && status != "failed" && status != "all" {
+		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', or 'all'", http.StatusBadRequest)
+		return
+	}
+
+	deletedCount, err := s.db.PruneJobs(status)
+	if err != nil {
+		slog.Error("Failed to prune jobs", "status", status, "error", err)
+		http.Error(w, "Failed to prune jobs", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Jobs pruned", "status", status, "deleted_count", deletedCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"deleted_count": deletedCount,
+		"status_filter": status,
+		"message":       fmt.Sprintf("Successfully pruned %d jobs", deletedCount),
+	}
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode prune response", "error", err)
 		return
 	}
 }

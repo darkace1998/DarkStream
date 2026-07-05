@@ -224,7 +224,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <!-- History Tab -->
         <div id="history" class="tab-content">
             <div class="card">
-                <h2>Recent Jobs (Last 50) <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button></h2>
+                <h2>Recent Jobs (Last 50)
+                    <button class="btn btn-danger btn-sm refresh-btn" onclick="pruneJobs('all')" style="margin-left: 10px;">Clear Completed & Failed</button>
+                    <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button>
+                </h2>
                 {{if .RecentJobs}}
                 <table class="table">
                     <thead>
@@ -716,6 +719,28 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 }
             } catch (err) {
                 alert('Error: ' + err.message);
+            }
+        }
+
+        // Prune jobs
+        async function pruneJobs(status) {
+            let msg = 'Are you sure you want to clear ' + status + ' jobs?';
+            if (status === 'all') {
+                msg = 'Are you sure you want to clear all completed and failed jobs?';
+            }
+            if (!confirm(msg)) return;
+
+            try {
+                const response = await fetch('/api/jobs/prune?status=' + status, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+                const data = await handleResponse(response);
+                alert('Cleared ' + data.deleted_count + ' jobs');
+                window.location.reload();
+            } catch (error) {
+                console.error('Error pruning jobs:', error);
+                alert('Error: ' + error.message);
             }
         }
 

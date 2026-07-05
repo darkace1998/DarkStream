@@ -188,6 +188,21 @@ Retries a specific failed job.
 **Query Parameters:**
 - `job_id` (string, required): The job ID.
 
+### `DELETE /api/jobs/prune`
+Deletes jobs that have reached a terminal state (completed or failed).
+
+**Query Parameters:**
+- `status` (string, required): The status of jobs to prune. Must be `completed`, `failed`, or `all`.
+
+**Response (200 OK):**
+```json
+{
+  "deleted_count": 5,
+  "status_filter": "completed",
+  "message": "Successfully pruned 5 jobs"
+}
+```
+
 ### `POST /api/job/requeue`
 Requeues a specific job regardless of its current status.
 
