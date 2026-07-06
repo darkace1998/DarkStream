@@ -237,6 +237,12 @@ Cancels multiple jobs.
 - `status` (string, required): Filter for jobs to cancel (`pending`, `processing`, or `all`).
 - `limit` (integer, optional): Maximum number of jobs to cancel. Defaults to 100.
 
+### `POST /api/queue/pause`
+Pauses the global job queue. When paused, no workers will be assigned new jobs.
+
+### `POST /api/queue/resume`
+Resumes the global job queue. Workers will once again be assigned new jobs.
+
 ### `GET /api/workers`
 Lists all active registered workers.
 

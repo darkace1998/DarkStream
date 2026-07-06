@@ -619,6 +619,49 @@ Update the priority of a job (0-10):
 video-converter-cli priority --master-url http://storage-server:8080 --job-id abc123 --priority 10
 ```
 
+### List Jobs
+
+List and filter jobs:
+
+```bash
+video-converter-cli jobs --master-url http://storage-server:8080 --status pending --limit 50
+```
+
+### List Workers
+
+List active registered workers:
+
+```bash
+video-converter-cli workers --master-url http://storage-server:8080 --active
+```
+
+### Worker Administration
+
+Manage worker states:
+
+```bash
+# Pause a worker (prevent it from fetching new jobs)
+video-converter-cli worker-pause --master-url http://storage-server:8080 --worker-id worker-1
+
+# Resume a paused worker
+video-converter-cli worker-resume --master-url http://storage-server:8080 --worker-id worker-1
+
+# Remove a worker
+video-converter-cli worker-remove --master-url http://storage-server:8080 --worker-id worker-1
+```
+
+### Validate Configuration
+
+Validate a configuration file before starting a node:
+
+```bash
+# Validate locally without connecting to master
+video-converter-cli validate --type master --file config.yaml --local
+
+# Validate against a remote master
+video-converter-cli validate --type worker --file config.yaml --master-url http://storage-server:8080
+```
+
 ---
 
 ## Web UI
