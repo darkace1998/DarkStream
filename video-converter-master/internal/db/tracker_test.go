@@ -1935,3 +1935,116 @@ func TestHasJobWithSourceChecksum(t *testing.T) {
 		t.Errorf("Expected exists to be true for 'completed' job")
 	}
 }
+
+func TestPruneJobs(t *testing.T) {
+	// Create temporary database
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		err := tracker.Close()
+		if err != nil {
+			t.Logf("Failed to close tracker: %v", err)
+		}
+	}()
+
+	now := time.Now()
+
+	// Create test jobs in various states
+	jobs := []*models.Job{
+		{ID: "job-pending-1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: "pending", CreatedAt: now},
+		{ID: "job-processing-1", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: "processing", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now},
+		{ID: "job-completed-1", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-completed-2", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-failed-1", SourcePath: "/e.mp4", OutputPath: "/out/e.mp4", Status: "failed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+	}
+
+	for _, j := range jobs {
+		err := tracker.CreateJob(j)
+		if err != nil {
+			t.Fatalf("Failed to create job %s: %v", j.ID, err)
+		}
+	}
+
+	// Test invalid status
+	_, err = tracker.PruneJobs("invalid")
+	if err == nil {
+		t.Error("Expected error for invalid status, got nil")
+	}
+
+	// Test prune failed
+	count, err := tracker.PruneJobs("failed")
+	if err != nil {
+		t.Fatalf("Failed to prune failed jobs: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected to prune 1 failed job, got %d", count)
+	}
+
+	// Verify job-failed-1 is gone
+	_, err = tracker.GetJobByID("job-failed-1")
+	if err == nil {
+		t.Error("Expected job-failed-1 to be deleted")
+	}
+
+	// Verify other jobs still exist
+	stats, err := tracker.GetJobStats()
+	if err != nil {
+		t.Fatalf("Failed to get stats: %v", err)
+	}
+	if stats["completed"] != 2 || stats["pending"] != 1 || stats["processing"] != 1 {
+		t.Errorf("Unexpected stats after pruning failed jobs: %v", stats)
+	}
+
+	// Test prune completed
+	count, err = tracker.PruneJobs("completed")
+	if err != nil {
+		t.Fatalf("Failed to prune completed jobs: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected to prune 2 completed jobs, got %d", count)
+	}
+
+	// Verify remaining jobs
+	stats, err = tracker.GetJobStats()
+	if err != nil {
+		t.Fatalf("Failed to get stats: %v", err)
+	}
+	if stats["completed"] != nil || stats["pending"] != 1 || stats["processing"] != 1 {
+		t.Errorf("Unexpected stats after pruning completed jobs: %v", stats)
+	}
+
+	// Add more jobs to test "all"
+	jobs = []*models.Job{
+		{ID: "job-completed-3", SourcePath: "/f.mp4", OutputPath: "/out/f.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-failed-2", SourcePath: "/g.mp4", OutputPath: "/out/g.mp4", Status: "failed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+	}
+	for _, j := range jobs {
+		err := tracker.CreateJob(j)
+		if err != nil {
+			t.Fatalf("Failed to create job %s: %v", j.ID, err)
+		}
+	}
+
+	// Test prune all (completed and failed)
+	count, err = tracker.PruneJobs("all")
+	if err != nil {
+		t.Fatalf("Failed to prune all jobs: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected to prune 2 jobs, got %d", count)
+	}
+
+	// Verify remaining jobs (only pending and processing should be left)
+	stats, err = tracker.GetJobStats()
+	if err != nil {
+		t.Fatalf("Failed to get stats: %v", err)
+	}
+	if stats["completed"] != nil || stats["failed"] != nil || stats["pending"] != 1 || stats["processing"] != 1 {
+		t.Errorf("Unexpected stats after pruning all jobs: %v", stats)
+	}
+}

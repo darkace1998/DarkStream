@@ -36,6 +36,8 @@ func main() {
 		commands.Cancel(subArgs)
 	case "requeue":
 		commands.Requeue(subArgs)
+	case "prune":
+		commands.Prune(subArgs)
 	case "workers":
 		commands.Workers(subArgs)
 	case "jobs":
@@ -74,6 +76,7 @@ Commands:
   validate [options]     Validate configuration file
   cancel [options]       Cancel a job
   requeue [options]      Requeue a job
+  prune [options]        Clear completed or failed jobs
   priority [options]     Update job priority
   workers [options]      List and manage workers
   worker-pause [opts]    Pause a worker
@@ -113,6 +116,10 @@ Requeue Options:
   --job-id <id>          Job ID to requeue (required)
   --format <format>      Output format: table, json, csv
 
+Prune Options:
+  --master-url <url>     Master server URL
+  --status <status>      Status of jobs to prune: completed, failed, all (default)
+
 Priority Options:
   --master-url <url>     Master server URL
   --job-id <id>          Job ID to update (required)
@@ -143,6 +150,7 @@ Examples:
   video-converter-cli validate --type master --file config.yaml --local
   video-converter-cli cancel --job-id abc123
   video-converter-cli requeue --job-id abc123
+  video-converter-cli prune --status completed
   video-converter-cli priority --job-id abc123 --priority 10
   video-converter-cli detect
   `)

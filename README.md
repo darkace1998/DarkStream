@@ -587,6 +587,14 @@ video-converter-cli stats --master-url http://storage-server:8080
 video-converter-cli retry --master-url http://storage-server:8080 --limit 100
 ```
 
+### Prune Jobs
+
+Clear completed or failed jobs from the database to save space:
+
+```bash
+video-converter-cli prune --master-url http://storage-server:8080 --status completed
+```
+
 ### Requeue a Job
 
 Requeue a completed, failed, or cancelled job back to pending status:

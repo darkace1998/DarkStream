@@ -867,6 +867,36 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	return workers, nil
 }
 
+// PruneJobs removes jobs with the specified status (completed, failed, or all).
+// Returns the number of jobs deleted and any error.
+func (t *Tracker) PruneJobs(status string) (int, error) {
+	if status != "completed" && status != "failed" && status != "all" {
+		return 0, fmt.Errorf("invalid status for pruning: %s", status)
+	}
+
+	var query string
+	var args []any
+
+	if status == "all" {
+		query = `DELETE FROM jobs WHERE status IN ('completed', 'failed')`
+	} else {
+		query = `DELETE FROM jobs WHERE status = ?`
+		args = append(args, status)
+	}
+
+	result, err := t.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune jobs: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get deleted row count: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
 // MarkWorkerOffline marks a worker as offline in the database
 func (t *Tracker) MarkWorkerOffline(workerID string) error {
 	_, err := t.db.Exec(`

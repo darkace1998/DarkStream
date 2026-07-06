@@ -799,3 +799,76 @@ func TestWorkerAdminEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneJobsAPI(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Seed some jobs
+	now := time.Now()
+	jobs := []*models.Job{
+		{ID: "job1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: "pending", CreatedAt: now},
+		{ID: "job2", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: "completed", CreatedAt: now},
+		{ID: "job3", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: "failed", CreatedAt: now},
+		{ID: "job4", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: "completed", CreatedAt: now},
+	}
+
+	for _, j := range jobs {
+		if err := srv.db.CreateJob(j); err != nil {
+			t.Fatalf("Failed to create test job: %v", err)
+		}
+	}
+
+	// Helper to make API calls
+	makeReq := func(status string) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/jobs/prune?status="+status, nil)
+		// Set dummy IP to avoid rate limit issues in tests
+		req.RemoteAddr = "1.2.3.4:1234"
+
+		// Authenticate
+		ctx := context.WithValue(req.Context(), authContextKey{}, true)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		srv.PruneJobs(rr, req)
+
+		var resp map[string]any
+		json.Unmarshal(rr.Body.Bytes(), &resp)
+		return rr, resp
+	}
+
+	// 1. Test invalid status
+	rr, _ := makeReq("invalid")
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 Bad Request, got %d", rr.Code)
+	}
+
+	// 2. Test prune failed
+	rr, resp := makeReq("failed")
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200 OK, got %d", rr.Code)
+	}
+	if deleted, ok := resp["deleted_count"].(float64); !ok || deleted != 1 {
+		t.Errorf("Expected deleted_count=1, got %v", resp["deleted_count"])
+	}
+
+	// Verify database state
+	stats, _ := srv.db.GetJobStats()
+	if stats["failed"] != nil {
+		t.Errorf("Expected 0 failed jobs, got %v", stats["failed"])
+	}
+
+	// 3. Test prune completed
+	rr, resp = makeReq("completed")
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200 OK, got %d", rr.Code)
+	}
+	if deleted, ok := resp["deleted_count"].(float64); !ok || deleted != 2 {
+		t.Errorf("Expected deleted_count=2, got %v", resp["deleted_count"])
+	}
+
+	// Verify remaining job
+	stats, _ = srv.db.GetJobStats()
+	if pendingCount, ok := stats["pending"].(int); !ok || pendingCount != 1 {
+		t.Errorf("Expected 1 pending job, got %v", stats["pending"])
+	}
+}
