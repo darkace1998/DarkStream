@@ -165,6 +165,22 @@ Cancel a pending or processing job:
 video-converter-cli cancel --master-url http://localhost:8080 --job-id abc123
 ```
 
+### Requeue a Job
+
+Requeue a completed, failed, or cancelled job back to pending status:
+
+```bash
+video-converter-cli requeue --master-url http://localhost:8080 --job-id abc123
+```
+
+### Prune Jobs
+
+Clear completed or failed jobs from the database:
+
+```bash
+video-converter-cli prune --master-url http://localhost:8080 --status completed
+```
+
 ### Update Job Priority
 
 Update the priority of a job (0-10):
@@ -222,6 +238,8 @@ Environment:
 | `workers` | List workers | `--active`, `--watch`, `--format` |
 | `retry` | Retry failed jobs | `--limit`, `--format` |
 | `cancel` | Cancel a job | `--job-id` |
+| `requeue` | Requeue a job | `--job-id` |
+| `prune` | Clear completed/failed jobs | `--status` |
 | `priority` | Update job priority | `--job-id`, `--priority` |
 | `worker-pause` | Pause a worker | `--worker-id` |
 | `worker-resume`| Resume a paused worker| `--worker-id` |
