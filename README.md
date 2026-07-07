@@ -637,14 +637,14 @@ video-converter-cli workers --master-url http://storage-server:8080 --active
 
 ### Global Queue Control
 
-The master API provides global queue control endpoints to pause and resume job assignments to workers. Since the CLI currently lacks dedicated commands for these actions, you can use `curl` to interact with the API:
+The master API provides global queue control endpoints to pause and resume job assignments to workers. You can use the CLI to interact with these endpoints:
 
 ```bash
 # Pause the global job queue
-curl -X POST http://storage-server:8080/api/queue/pause -H "Authorization: Bearer ${DARKSTREAM_API_KEY}"
+video-converter-cli queue-pause --master-url http://storage-server:8080
 
 # Resume the global job queue
-curl -X POST http://storage-server:8080/api/queue/resume -H "Authorization: Bearer ${DARKSTREAM_API_KEY}"
+video-converter-cli queue-resume --master-url http://storage-server:8080
 ```
 
 ### Worker Administration
