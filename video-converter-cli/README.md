@@ -165,6 +165,14 @@ Cancel a pending or processing job:
 video-converter-cli cancel --master-url http://localhost:8080 --job-id abc123
 ```
 
+### Cancel Multiple Jobs
+
+Cancel multiple pending or processing jobs:
+
+```bash
+video-converter-cli cancel-jobs --master-url http://localhost:8080 --status pending --limit 50
+```
+
 ### Requeue a Job
 
 Requeue a completed, failed, or cancelled job back to pending status:
@@ -238,6 +246,7 @@ Environment:
 | `workers` | List workers | `--active`, `--watch`, `--format` |
 | `retry` | Retry failed jobs | `--limit`, `--format` |
 | `cancel` | Cancel a job | `--job-id` |
+| `cancel-jobs` | Cancel multiple jobs | `--status`, `--limit` |
 | `requeue` | Requeue a job | `--job-id` |
 | `prune` | Clear completed/failed jobs | `--status` |
 | `priority` | Update job priority | `--job-id`, `--priority` |
