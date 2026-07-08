@@ -24,10 +24,7 @@ func TestPruneSuccess(t *testing.T) {
 
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
-		_, err := rw.Write([]byte(`{"deleted_count": 3, "message": "Successfully pruned 3 jobs"}`))
-		if err != nil {
-			t.Errorf("Failed to write response: %v", err)
-		}
+		_, _ = rw.Write([]byte(`{"deleted_count": 3, "message": "Successfully pruned 3 jobs"}`))
 	}))
 	defer server.Close()
 

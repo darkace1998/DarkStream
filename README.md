@@ -637,7 +637,7 @@ video-converter-cli workers --master-url http://storage-server:8080 --active
 
 ### Global Queue Control
 
-The master API provides global queue control endpoints to pause and resume job assignments to workers. You can use the CLI to interact with these endpoints:
+The master API provides global queue control endpoints to pause and resume job assignments to workers. You can use the dedicated CLI commands to interact with the API:
 
 ```bash
 # Pause the global job queue
