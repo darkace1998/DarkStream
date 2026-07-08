@@ -50,6 +50,10 @@ func main() {
 		commands.WorkerResume(subArgs)
 	case "worker-remove":
 		commands.WorkerRemove(subArgs)
+	case "queue-pause":
+		commands.QueuePause(subArgs)
+	case "queue-resume":
+		commands.QueueResume(subArgs)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -82,6 +86,8 @@ Commands:
   worker-pause [opts]    Pause a worker
   worker-resume [opts]   Resume a paused worker
   worker-remove [opts]   Remove a worker
+  queue-pause [opts]     Pause the global job queue
+  queue-resume [opts]    Resume the global job queue
   jobs [options]         List and manage jobs
 
 Status Options:
@@ -147,6 +153,8 @@ Examples:
   video-converter-cli stats --detailed
   video-converter-cli jobs --status pending --format json
   video-converter-cli workers --active
+  video-converter-cli queue-pause
+  video-converter-cli queue-resume
   video-converter-cli validate --type master --file config.yaml --local
   video-converter-cli cancel --job-id abc123
   video-converter-cli requeue --job-id abc123
