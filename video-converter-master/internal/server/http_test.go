@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"github.com/stretchr/testify/require"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -832,7 +833,10 @@ func TestPruneJobsAPI(t *testing.T) {
 		srv.PruneJobs(rr, req)
 
 		var resp map[string]any
-		json.Unmarshal(rr.Body.Bytes(), &resp)
+		if rr.Code == http.StatusOK {
+			err := json.Unmarshal(rr.Body.Bytes(), &resp)
+			require.NoError(t, err)
+		}
 		return rr, resp
 	}
 
