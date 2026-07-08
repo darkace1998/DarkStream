@@ -10,7 +10,7 @@ import (
 	"github.com/darkace1998/video-converter-common/utils"
 )
 
-// QueuePause pauses the global job queue.
+// QueuePause pauses the global job queue on the master server.
 func QueuePause(args []string) {
 	fs := flag.NewFlagSet("queue-pause", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
@@ -43,7 +43,7 @@ func QueuePause(args []string) {
 	slog.Info("⏸️  Global job queue paused successfully")
 }
 
-// QueueResume resumes the global job queue.
+// QueueResume resumes the global job queue on the master server.
 func QueueResume(args []string) {
 	fs := flag.NewFlagSet("queue-resume", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")

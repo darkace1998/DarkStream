@@ -833,9 +833,8 @@ func TestPruneJobsAPI(t *testing.T) {
 		srv.PruneJobs(rr, req)
 
 		var resp map[string]any
-		err := json.Unmarshal(rr.Body.Bytes(), &resp)
-		if err != nil && rr.Code == http.StatusOK {
-			t.Logf("Unmarshal failed, body: %s", rr.Body.String())
+		if rr.Code == http.StatusOK {
+			err := json.Unmarshal(rr.Body.Bytes(), &resp)
 			require.NoError(t, err)
 		}
 		return rr, resp

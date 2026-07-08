@@ -244,6 +244,8 @@ Environment:
 | `worker-pause` | Pause a worker | `--worker-id` |
 | `worker-resume`| Resume a paused worker| `--worker-id` |
 | `worker-remove`| Remove a worker | `--worker-id` |
+| `queue-pause` | Pause global job queue | None |
+| `queue-resume` | Resume global job queue | None |
 | `validate` | Validate config file | `--type`, `--file`, `--local` |
 | `detect` | Detect GPU/Vulkan | None |
 
