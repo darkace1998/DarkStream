@@ -71,7 +71,9 @@ For a complete list of API endpoints, refer to the [API Reference](../docs/API.m
 
 ## Database Schema
 
-The master uses SQLite with two main tables:
+The master uses SQLite with four main tables:
 
-- `jobs` - Conversion job records
-- `workers` - Worker status and heartbeats
+- `jobs` - Conversion job records, metadata, and checksums
+- `workers` - Worker status, hardware capabilities, and heartbeats
+- `job_progress` - Real-time conversion progress and FPS updates
+- `worker_configs` - Per-worker configuration override settings

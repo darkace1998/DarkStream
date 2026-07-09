@@ -33,9 +33,26 @@ Represents a video conversion job with the following key fields:
 - `SourcePath`: Path to source video file
 - `OutputPath`: Path where converted video will be saved
 - `Status`: Job status (pending, processing, completed, failed)
+- `Priority`: Job priority (0-10)
 - `WorkerID`: ID of the worker processing the job
-- `RetryCount`: Number of retry attempts
-- `MaxRetries`: Maximum number of retries allowed
+- `StartedAt` / `CompletedAt`: Timestamps for job execution
+- `ErrorMessage`: Error details on failure
+- `RetryCount` / `MaxRetries`: Tracking retry attempts
+- `CreatedAt`: When the job was created
+- `SourceDuration` / `OutputSize`: Video duration and output file size
+- `SourceChecksum` / `OutputChecksum`: SHA-256 integrity checksums
+- `SourceWidth` / `SourceHeight`: Extracted video dimensions
+- `SourceVideoCodec` / `SourceAudioCodec`: Extracted media codecs
+- `SourceBitrate` / `SourceFileSize`: Extracted total bitrate and file size
+
+### VideoMetadata (`models/job.go`)
+
+Contains extracted video information from FFprobe:
+- `Duration`: Video duration in seconds
+- `Width` / `Height`: Video dimensions in pixels
+- `VideoCodec` / `AudioCodec`: Media codecs
+- `Bitrate`: Total bitrate in bits/second
+- `FileSize`: File size in bytes
 
 ### ConversionConfig (`models/job.go`)
 
@@ -43,10 +60,11 @@ Defines video conversion parameters:
 - `TargetResolution`: Target video resolution (e.g., "1920x1080")
 - `Codec`: Video codec (e.g., "h264")
 - `Bitrate`: Video bitrate (e.g., "5M")
-- `Preset`: Encoding preset (fast, medium, slow)
+- `Preset`: Encoding preset (e.g., "fast")
 - `UseVulkan`: Whether to use Vulkan hardware acceleration
 - `AudioCodec`: Audio codec (e.g., "aac")
 - `AudioBitrate`: Audio bitrate (e.g., "128k")
+- `OutputFormat`: Output container format (e.g., "mp4")
 
 ### WorkerHeartbeat (`models/job.go`)
 
@@ -55,20 +73,31 @@ Worker status information sent periodically to the master:
 - `Hostname`: Machine hostname
 - `VulkanAvailable`: Whether Vulkan is available
 - `ActiveJobs`: Number of jobs currently being processed
-- `Status`: Worker status (healthy, busy, idle)
+- `Status`: Worker status (e.g., "online")
+- `Timestamp`: When the heartbeat was generated
 - `GPU`: GPU model/name
-- `CPUUsage`: CPU usage percentage
-- `MemoryUsage`: Memory usage percentage
+- `CPUUsage`: System CPU usage percentage
+- `MemoryUsage`: System Memory usage percentage
 
 ### VulkanDevice (`models/job.go`)
 
-Information about a Vulkan-capable device:
+Information about a Vulkan-capable GPU device:
 - `Name`: Device name
 - `Type`: Device type (discrete, integrated, virtual, cpu)
 - `DeviceID`: Device ID
 - `VendorID`: Vendor ID
 - `DriverVersion`: Driver version
 - `Available`: Whether the device is available
+
+### JobProgress (`models/job.go`)
+
+Represents progress information for a running job:
+- `JobID`: ID of the job being processed
+- `WorkerID`: Worker executing the job
+- `Progress`: 0-100 percentage complete
+- `FPS`: Current encoding frames per second
+- `Stage`: Current stage (download, convert, upload)
+- `UpdatedAt`: Last progress update timestamp
 
 ### MasterConfig (`models/config.go`)
 
