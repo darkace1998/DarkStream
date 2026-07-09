@@ -165,6 +165,14 @@ Cancel a pending or processing job:
 video-converter-cli cancel --master-url http://localhost:8080 --job-id abc123
 ```
 
+### Cancel Multiple Jobs
+
+Cancel multiple jobs by status (pending, processing, or all):
+
+```bash
+video-converter-cli cancel-jobs --master-url http://localhost:8080 --status pending --limit 100
+```
+
 ### Requeue a Job
 
 Requeue a completed, failed, or cancelled job back to pending status:
@@ -238,6 +246,7 @@ Environment:
 | `workers` | List workers | `--active`, `--watch`, `--format` |
 | `retry` | Retry failed jobs | `--limit`, `--format` |
 | `cancel` | Cancel a job | `--job-id` |
+| `cancel-jobs` | Cancel multiple jobs | `--status`, `--limit` |
 | `requeue` | Requeue a job | `--job-id` |
 | `prune` | Clear completed/failed jobs | `--status` |
 | `priority` | Update job priority | `--job-id`, `--priority` |
@@ -376,7 +385,7 @@ The CLI communicates with the master server via HTTP REST API:
 - `GET /api/workers` - List workers
 - `POST /api/retry?limit=N` - Retry failed jobs
 - `POST /api/job/cancel?job_id=ID` - Cancel a job
-- `POST /api/jobs/cancel?status=STATUS` - Cancel multiple jobs
+- `POST /api/jobs/cancel?status=STATUS&limit=N` - Cancel multiple jobs
 - `POST /api/job/priority?job_id=ID&priority=N` - Update priority of a job
 - `POST /api/validate-config?type=TYPE` - Validate configuration
 

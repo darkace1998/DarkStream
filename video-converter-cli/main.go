@@ -34,6 +34,8 @@ func main() {
 		commands.Validate(subArgs)
 	case "cancel":
 		commands.Cancel(subArgs)
+	case "cancel-jobs":
+		commands.CancelJobs(subArgs)
 	case "requeue":
 		commands.Requeue(subArgs)
 	case "prune":
@@ -79,6 +81,7 @@ Commands:
   detect                 Detect GPU/Vulkan capabilities
   validate [options]     Validate configuration file
   cancel [options]       Cancel a job
+  cancel-jobs [options]  Cancel multiple jobs by status
   requeue [options]      Requeue a job
   prune [options]        Clear completed or failed jobs
   priority [options]     Update job priority
@@ -115,6 +118,12 @@ Validate Options:
 Cancel Options:
   --master-url <url>     Master server URL
   --job-id <id>          Job ID to cancel (required)
+  --format <format>      Output format: table, json, csv
+
+Cancel-Jobs Options:
+  --master-url <url>     Master server URL
+  --status <status>      Status of jobs to cancel: pending, processing, all (default: pending)
+  --limit <n>            Maximum number of jobs to cancel (default: 100)
   --format <format>      Output format: table, json, csv
 
 Requeue Options:
@@ -157,6 +166,7 @@ Examples:
   video-converter-cli queue-resume
   video-converter-cli validate --type master --file config.yaml --local
   video-converter-cli cancel --job-id abc123
+  video-converter-cli cancel-jobs --status pending --limit 50
   video-converter-cli requeue --job-id abc123
   video-converter-cli prune --status completed
   video-converter-cli priority --job-id abc123 --priority 10
