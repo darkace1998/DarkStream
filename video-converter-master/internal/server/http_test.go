@@ -876,3 +876,59 @@ func TestPruneJobsAPI(t *testing.T) {
 		t.Errorf("Expected 1 pending job, got %v", stats["pending"])
 	}
 }
+
+func TestGetJob(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.db.Close()
+
+	// Add a job
+	err := srv.db.CreateJob(&models.Job{
+		ID:         "test-job-123",
+		SourcePath: "/tmp/test1.mp4",
+		OutputPath: "/tmp/out1.mp4",
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		jobID      string
+		wantStatus int
+	}{
+		{
+			name:       "success",
+			jobID:      "test-job-123",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "missing job_id",
+			jobID:      "",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			jobID:      "nonexistent-job",
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, "/api/job?job_id="+tt.jobID, nil)
+			require.NoError(t, err)
+
+			rr := httptest.NewRecorder()
+			srv.GetJob(rr, req)
+
+			require.Equal(t, tt.wantStatus, rr.Code)
+
+			if tt.wantStatus == http.StatusOK {
+				var job models.Job
+				err := json.Unmarshal(rr.Body.Bytes(), &job)
+				require.NoError(t, err)
+				require.Equal(t, tt.jobID, job.ID)
+			}
+		})
+	}
+}

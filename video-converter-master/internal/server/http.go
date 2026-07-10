@@ -248,6 +248,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
 	mux.HandleFunc("/api/job/requeue", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RequeueJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
+	mux.HandleFunc("/api/job", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJob))))
 	mux.HandleFunc("/api/job/priority", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UpdateJobPriority))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
@@ -2894,4 +2895,35 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Deleted worker", "worker_id", workerID)
 	w.WriteHeader(http.StatusOK)
+}
+
+// GetJob handles retrieving a single job by ID
+func (s *Server) GetJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("job_id")
+	if jobID == "" {
+		http.Error(w, "job_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows in result set") {
+			http.Error(w, "Job not found", http.StatusNotFound)
+		} else {
+			slog.Error("Failed to query job", "job_id", jobID, "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		slog.Error("Failed to encode job response", "error", err)
+		// Header already written, can't change status code
+	}
 }

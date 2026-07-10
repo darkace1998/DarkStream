@@ -666,6 +666,14 @@ Update the priority of a job (0-10):
 video-converter-cli priority --master-url http://storage-server:8080 --job-id abc123 --priority 10
 ```
 
+### Inspect a Single Job
+
+Get detailed information for a single job:
+
+```bash
+video-converter-cli job --master-url http://storage-server:8080 --job-id abc123
+```
+
 ### List Jobs
 
 List and filter jobs:

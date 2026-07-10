@@ -42,6 +42,8 @@ func main() {
 		commands.Prune(subArgs)
 	case "workers":
 		commands.Workers(subArgs)
+	case "job":
+		commands.Job(subArgs)
 	case "jobs":
 		commands.Jobs(subArgs)
 	case "priority":
@@ -91,6 +93,7 @@ Commands:
   worker-remove [opts]   Remove a worker
   queue-pause [opts]     Pause the global job queue
   queue-resume [opts]    Resume the global job queue
+  job [options]          Get details for a single job
   jobs [options]         List and manage jobs
 
 Status Options:
@@ -160,6 +163,7 @@ Examples:
   video-converter-cli status --master-url http://localhost:8080
   video-converter-cli status --watch
   video-converter-cli stats --detailed
+  video-converter-cli job --master-url http://localhost:8080 --job-id abc123
   video-converter-cli jobs --status pending --format json
   video-converter-cli workers --active
   video-converter-cli queue-pause
