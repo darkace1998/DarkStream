@@ -69,6 +69,10 @@ For a complete list of API endpoints, refer to the [API Reference](../docs/API.m
 └─────────────────────────────────────────────┘
 ```
 
+## Web UI
+
+The master coordinator includes a built-in Web UI dashboard to monitor the system in real-time, served on its root URL. The Web UI enforces XSS protection by requiring the use of DOM creation methods (e.g., `document.createElement`, `textContent`) instead of `innerHTML` when dynamically generating and rendering HTML elements in client-side JavaScript.
+
 ## Database Schema
 
 The master uses SQLite with four main tables:

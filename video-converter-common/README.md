@@ -28,76 +28,85 @@ video-converter-common/
 
 ### Job (`models/job.go`)
 
-Represents a video conversion job with the following key fields:
-- `ID`: Unique job identifier
-- `SourcePath`: Path to source video file
-- `OutputPath`: Path where converted video will be saved
-- `Status`: Job status (pending, processing, completed, failed)
-- `Priority`: Job priority (0-10)
-- `WorkerID`: ID of the worker processing the job
-- `StartedAt` / `CompletedAt`: Timestamps for job execution
-- `ErrorMessage`: Error details on failure
-- `RetryCount` / `MaxRetries`: Tracking retry attempts
-- `CreatedAt`: When the job was created
-- `SourceDuration` / `OutputSize`: Video duration and output file size
-- `SourceChecksum` / `OutputChecksum`: SHA-256 integrity checksums
-- `SourceWidth` / `SourceHeight`: Extracted video dimensions
-- `SourceVideoCodec` / `SourceAudioCodec`: Extracted media codecs
-- `SourceBitrate` / `SourceFileSize`: Extracted total bitrate and file size
+Represents a video conversion job with its lifecycle state and metadata:
+- `ID` (string): Unique job identifier
+- `SourcePath` (string): Path to source video file
+- `OutputPath` (string): Path where converted video will be saved
+- `Status` (string): Job status (pending, processing, completed, failed)
+- `Priority` (int): Job priority (0=low, 5=normal, 10=high)
+- `WorkerID` (string): ID of the worker processing the job
+- `StartedAt` (*time.Time): Timestamp for job execution start
+- `CompletedAt` (*time.Time): Timestamp for job execution completion
+- `ErrorMessage` (string): Error details on failure
+- `RetryCount` (int): Current retry attempt
+- `MaxRetries` (int): Maximum retry attempts
+- `CreatedAt` (time.Time): When the job was created
+- `SourceDuration` (float64): Video duration in seconds
+- `OutputSize` (int64): Output file size in bytes
+- `SourceChecksum` (string): SHA256 checksum of source file
+- `OutputChecksum` (string): SHA256 checksum of output file
+- `SourceWidth` (int): Video width in pixels (omitempty)
+- `SourceHeight` (int): Video height in pixels (omitempty)
+- `SourceVideoCodec` (string): e.g., h264, hevc (omitempty)
+- `SourceAudioCodec` (string): e.g., aac, mp3 (omitempty)
+- `SourceBitrate` (int64): Total bitrate in bits/second (omitempty)
+- `SourceFileSize` (int64): Source file size in bytes (omitempty)
 
 ### VideoMetadata (`models/job.go`)
 
 Contains extracted video information from FFprobe:
-- `Duration`: Video duration in seconds
-- `Width` / `Height`: Video dimensions in pixels
-- `VideoCodec` / `AudioCodec`: Media codecs
-- `Bitrate`: Total bitrate in bits/second
-- `FileSize`: File size in bytes
+- `Duration` (float64): Video duration in seconds
+- `Width` (int): Video dimensions in pixels
+- `Height` (int): Video dimensions in pixels
+- `VideoCodec` (string): e.g., h264, hevc
+- `AudioCodec` (string): e.g., aac, mp3
+- `Bitrate` (int64): Total bitrate in bits/second
+- `FileSize` (int64): File size in bytes
 
 ### ConversionConfig (`models/job.go`)
 
 Defines video conversion parameters:
-- `TargetResolution`: Target video resolution (e.g., "1920x1080")
-- `Codec`: Video codec (e.g., "h264")
-- `Bitrate`: Video bitrate (e.g., "5M")
-- `Preset`: Encoding preset (e.g., "fast")
-- `UseVulkan`: Whether to use Vulkan hardware acceleration
-- `AudioCodec`: Audio codec (e.g., "aac")
-- `AudioBitrate`: Audio bitrate (e.g., "128k")
-- `OutputFormat`: Output container format (e.g., "mp4")
+- `TargetResolution` (string): Target video resolution (e.g., "1920x1080")
+- `Codec` (string): Video codec (e.g., "h264")
+- `Bitrate` (string): Video bitrate (e.g., "5M")
+- `Preset` (string): Encoding preset (e.g., "fast", "medium", "slow")
+- `UseVulkan` (bool): Whether to use Vulkan hardware acceleration
+- `AudioCodec` (string): Audio codec (e.g., "aac")
+- `AudioBitrate` (string): Audio bitrate (e.g., "128k")
+- `OutputFormat` (string): Output container format (e.g., "mp4", "mkv", "webm", "avi")
 
 ### WorkerHeartbeat (`models/job.go`)
 
 Worker status information sent periodically to the master:
-- `WorkerID`: Worker identifier
-- `Hostname`: Machine hostname
-- `VulkanAvailable`: Whether Vulkan is available
-- `ActiveJobs`: Number of jobs currently being processed
-- `Status`: Worker status (e.g., "online")
-- `Timestamp`: When the heartbeat was generated
-- `GPU`: GPU model/name
-- `CPUUsage`: System CPU usage percentage
-- `MemoryUsage`: System Memory usage percentage
+- `WorkerID` (string): Worker identifier
+- `Hostname` (string): Machine hostname
+- `VulkanAvailable` (bool): Whether Vulkan is available
+- `ActiveJobs` (int): Number of jobs currently being processed
+- `Status` (string): Worker status (e.g., "online")
+- `Timestamp` (time.Time): When the heartbeat was generated
+- `GPU` (string): GPU model/name
+- `CPUUsage` (float64): System CPU usage percentage
+- `MemoryUsage` (float64): System Memory usage percentage
 
 ### VulkanDevice (`models/job.go`)
 
 Information about a Vulkan-capable GPU device:
-- `Name`: Device name
-- `Type`: Device type (discrete, integrated, virtual, cpu)
-- `DeviceID`: Device ID
-- `VendorID`: Vendor ID
-- `DriverVersion`: Driver version
-- `Available`: Whether the device is available
+- `Name` (string): Device name
+- `Type` (string): Device type (e.g. discrete, integrated, virtual, cpu)
+- `DeviceID` (uint32): Device ID
+- `VendorID` (uint32): Vendor ID
+- `DriverVersion` (string): Driver version
+- `Available` (bool): Whether the device is available
 
 ### JobProgress (`models/job.go`)
 
 Represents progress information for a running job:
-- `JobID`: ID of the job being processed
-- `WorkerID`: Worker executing the job
-- `Progress`: 0-100 percentage complete
-- `FPS`: Current encoding frames per second
-- `Stage`: Current stage (download, convert, upload)
-- `UpdatedAt`: Last progress update timestamp
+- `JobID` (string): ID of the job being processed
+- `WorkerID` (string): Worker executing the job
+- `Progress` (float64): 0-100 percentage complete
+- `FPS` (float64): Current encoding frames per second
+- `Stage` (string): Current stage (download, convert, upload)
+- `UpdatedAt` (time.Time): Last progress update timestamp
 
 ### MasterConfig (`models/config.go`)
 

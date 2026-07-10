@@ -374,8 +374,16 @@ CREATE TABLE worker_configs (
     use_vulkan BOOLEAN DEFAULT 1,
     ffmpeg_timeout INTEGER DEFAULT 7200,
     log_level TEXT DEFAULT 'info',
-    log_format TEXT DEFAULT 'json'
+    log_format TEXT DEFAULT 'json',
+    updated_at TIMESTAMP
 );
+
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
 ```
 
 ---
