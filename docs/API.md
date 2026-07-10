@@ -7,7 +7,7 @@ The Video Converter Master exposes a REST API for workers to fetch jobs and repo
 Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:
 `Authorization: Bearer <api_key>`
 
-CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service. For the CLI, you must set the `DARKSTREAM_API_KEY` environment variable when connecting to a master server that requires authentication.
+CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service. For the CLI, you must set the `DARKSTREAM_API_KEY` environment variable when connecting to a master server that requires authentication. The `video-converter-cli` uses the `newMasterRequest` function to automatically inject the `DARKSTREAM_API_KEY` into the `Authorization` header, eliminating the need for manual header injection in CLI commands.
 
 ## Worker API
 
@@ -160,12 +160,11 @@ Returns the overall system status (job counts, worker counts).
 Returns detailed statistics, including active workers and system metrics.
 
 ### `GET /api/jobs`
-Lists jobs with pagination and filtering.
+Lists jobs with filtering.
 
 **Query Parameters:**
 - `status` (string, optional): Filter by job status (e.g., `pending`, `processing`, `completed`, `failed`).
 - `limit` (integer, optional): Maximum number of jobs to return.
-- `offset` (integer, optional): Pagination offset.
 
 ### `GET /api/stats/stream`
 Server-Sent Events (SSE) endpoint for real-time dashboard updates.
