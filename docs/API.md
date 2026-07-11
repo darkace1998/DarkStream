@@ -166,6 +166,15 @@ Lists jobs with filtering.
 - `status` (string, optional): Filter by job status (e.g., `pending`, `processing`, `completed`, `failed`).
 - `limit` (integer, optional): Maximum number of jobs to return.
 
+### `GET /api/job`
+Gets detailed information for a single job.
+
+**Query Parameters:**
+- `job_id` (string, required): The ID of the job to retrieve.
+
+**Response (200 OK):**
+Returns a JSON object representing the job, or a `404 Not Found` if the job does not exist.
+
 ### `GET /api/stats/stream`
 Server-Sent Events (SSE) endpoint for real-time dashboard updates.
 
