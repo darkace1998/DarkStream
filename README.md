@@ -408,7 +408,7 @@ pending -> processing -> completed
 ### SQLite Schema
 
 ```sql
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     source_path TEXT NOT NULL,
     output_path TEXT NOT NULL,
@@ -433,7 +433,7 @@ CREATE TABLE jobs (
     source_file_size INTEGER
 );
 
-CREATE TABLE workers (
+CREATE TABLE IF NOT EXISTS workers (
     id TEXT PRIMARY KEY,
     hostname TEXT NOT NULL,
     last_heartbeat TIMESTAMP,
@@ -445,7 +445,7 @@ CREATE TABLE workers (
     status TEXT DEFAULT 'online'
 );
 
-CREATE TABLE job_progress (
+CREATE TABLE IF NOT EXISTS job_progress (
     job_id TEXT PRIMARY KEY,
     worker_id TEXT NOT NULL,
     progress REAL DEFAULT 0,
@@ -455,7 +455,7 @@ CREATE TABLE job_progress (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
-CREATE TABLE worker_configs (
+CREATE TABLE IF NOT EXISTS worker_configs (
     worker_id TEXT PRIMARY KEY,
     concurrency INTEGER DEFAULT 3,
     heartbeat_interval INTEGER DEFAULT 30,
