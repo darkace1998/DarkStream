@@ -123,6 +123,14 @@ Example output (illustrative):
 
 ```
 
+### Inspect a Single Job
+
+Get detailed information for a single job:
+
+```bash
+video-converter-cli job --master-url http://localhost:8080 --job-id abc123
+```
+
 ### List and Manage Jobs
 
 View jobs with optional filtering:
@@ -242,6 +250,7 @@ Environment:
 | `worker` | Start worker process | `<config-file>` |
 | `status` | Show conversion progress | `--watch`, `--interval`, `--format` |
 | `stats` | Show detailed statistics | `--detailed`, `--format` |
+| `job` | Inspect a single job | `--job-id`, `--format` |
 | `jobs` | List and manage jobs | `--status`, `--limit`, `--watch`, `--format` |
 | `workers` | List workers | `--active`, `--watch`, `--format` |
 | `retry` | Retry failed jobs | `--limit`, `--format` |
