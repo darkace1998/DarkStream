@@ -166,6 +166,8 @@ Lists jobs with filtering.
 - `status` (string, optional): Filter by job status (e.g., `pending`, `processing`, `completed`, `failed`).
 - `limit` (integer, optional): Maximum number of jobs to return.
 
+*Note: This endpoint does not support an `offset` parameter for pagination.*
+
 ### `GET /api/job`
 Gets detailed information for a single job.
 
@@ -274,6 +276,12 @@ Removes a specific worker and its configuration from the system.
 
 ### `GET /api/config`
 Retrieves the master configuration.
+
+### `POST /api/config`
+Updates the master configuration dynamically.
+
+**Body (JSON):**
+Accepts a JSON payload corresponding to the complete or partial master configuration (`server`, `scanner`, `database`, `conversion`, `worker_defaults`, `logging`, `notifications`).
 
 ### `POST /api/validate-config`
 Validates a configuration payload without applying it.

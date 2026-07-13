@@ -755,6 +755,14 @@ Cancel a pending or processing job:
 video-converter-cli cancel --master-url http://storage-server:8080 --job-id abc123
 ```
 
+### Cancel Multiple Jobs
+
+Cancel multiple jobs in bulk by their status (e.g., `pending`, `processing`, or `all`):
+
+```bash
+video-converter-cli cancel-jobs --master-url http://storage-server:8080 --status pending
+```
+
 ### Update Job Priority
 
 Update the priority of a job (0-10):
