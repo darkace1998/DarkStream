@@ -48,6 +48,15 @@ See `video-converter-master/config.yaml.example` for a complete example.
 
 ### `database`
 *   `path`: Path to the SQLite database file (e.g., `./jobs.db`).
+*   `max_open_connections`: Maximum number of open connections to the database (e.g., `25`).
+*   `max_idle_connections`: Maximum number of idle connections in the pool (e.g., `5`).
+*   `conn_max_lifetime`: Maximum lifetime of a connection in seconds (0 = unlimited).
+*   `conn_max_idle_time`: Maximum idle time of a connection in seconds (0 = unlimited).
+
+### `monitoring`
+*   `job_timeout`: Maximum time a job can be in processing state (default: `2h`).
+*   `worker_health_interval`: How often to check worker health (default: `30s`).
+*   `failed_job_retry_interval`: How often to check for failed jobs to retry (default: `1m`).
 
 ### `conversion`
 *Default conversion parameters applied to jobs.*
@@ -89,10 +98,18 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `concurrency`: Local override for concurrent jobs.
 *   `master_url`: **Required**. URL of the master server (e.g., `http://localhost:8080`).
 *   `api_key`: Must match the master's `api_key` if authentication is enabled.
+*   `heartbeat_interval`: Frequency of worker heartbeats (e.g., `30s`).
+*   `job_check_interval`: Frequency of polling for new jobs (e.g., `5s`).
+*   `job_timeout`: Maximum time allowed for a single job (e.g., `2h`).
+*   `max_api_requests_per_min`: Rate limit for API calls to master (0 = unlimited).
+*   `max_backoff_interval`: Maximum backoff when no jobs available (e.g., `30s`).
+*   `initial_backoff_interval`: Initial backoff when no jobs available (e.g., `1s`).
 
 ### `storage`
+*   `mount_path`: Local directory mounted for storage (e.g., `/mnt/storage`).
 *   `cache_path`: Local directory for caching source and converted videos during processing.
 *   `max_cache_size`: Local override for maximum cache size.
+*   `cache_cleanup_age`: Age after which cached files are cleaned up (e.g., `24h`).
 *   `chunk_size`: Size for chunked streaming (currently unused).
 *   `download_timeout` / `upload_timeout`: Local overrides for transfer timeouts.
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).
@@ -102,6 +119,10 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `path`: Path to the FFmpeg executable (e.g., `/usr/bin/ffmpeg`).
 *   `use_vulkan`: Enable Vulkan GPU acceleration.
 *   `timeout`: FFmpeg process timeout.
+
+### `vulkan`
+*   `preferred_device`: Name of the preferred Vulkan GPU device or `auto`.
+*   `enable_validation`: Enable Vulkan validation layers (e.g., `false`).
 
 ### `conversion` (Deprecated)
 *Note: Conversion settings in the worker config are deprecated. Settings are pulled dynamically from the master server. These are only used as a fallback.*
