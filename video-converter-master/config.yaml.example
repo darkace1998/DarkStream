@@ -26,8 +26,17 @@ scanner:
   detect_duplicates: true   # Detect and skip duplicate files based on content hash
   enable_watch: false       # Watch for filesystem changes using fsnotify
 
+monitoring:
+  job_timeout: 2h
+  worker_health_interval: 30s
+  failed_job_retry_interval: 1m
+
 database:
   path: ./jobs.db
+  max_open_connections: 0
+  max_idle_connections: 2
+  conn_max_lifetime: 0
+  conn_max_idle_time: 0
 
 notifications:
   webhook_url: ""         # Optional: URL to send job event webhooks to

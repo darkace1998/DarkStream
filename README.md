@@ -396,6 +396,28 @@ type JobProgress struct {
 }
 ```
 
+**WorkerSettings (`video-converter-common/models/config.go`)**
+```go
+type WorkerSettings struct {
+	WorkerID             string `json:"worker_id"`
+	Concurrency          int    `json:"concurrency"`
+	HeartbeatInterval    int    `json:"heartbeat_interval"`     // Duration in seconds
+	JobCheckInterval     int    `json:"job_check_interval"`     // Duration in seconds
+	JobTimeout           int    `json:"job_timeout"`            // Duration in seconds
+	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
+	DownloadTimeout      int    `json:"download_timeout"`       // Duration in seconds
+	UploadTimeout        int    `json:"upload_timeout"`         // Duration in seconds
+	MaxCacheSize         int64  `json:"max_cache_size"`         // Maximum cache size in bytes
+	CacheCleanupAge      int    `json:"cache_cleanup_age"`      // Duration in seconds
+	BandwidthLimit       int64  `json:"bandwidth_limit"`        // Bandwidth limit in bytes per second
+	EnableResumeDownload bool   `json:"enable_resume_download"`
+	UseVulkan            bool   `json:"use_vulkan"`
+	FFmpegTimeout        int    `json:"ffmpeg_timeout"`         // Duration in seconds
+	LogLevel             string `json:"log_level"`
+	LogFormat            string `json:"log_format"`
+}
+```
+
 ### Job States
 
 ```

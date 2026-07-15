@@ -275,6 +275,21 @@ Removes a specific worker and its configuration from the system.
 ### `GET /api/config`
 Retrieves the master configuration.
 
+### `POST /api/config`
+Updates the master configuration dynamically via a JSON payload. The payload can contain complete or partial configuration sections.
+
+**Body (JSON):**
+```json
+{
+  "conversion": {
+    "target_resolution": "1920x1080",
+    "codec": "h264",
+    "bitrate": "5M",
+    "preset": "fast"
+  }
+}
+```
+
 ### `POST /api/validate-config`
 Validates a configuration payload without applying it.
 

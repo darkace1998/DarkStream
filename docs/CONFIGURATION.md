@@ -46,8 +46,17 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `webhook_url`: Optional URL to send job event webhooks to.
 *   `events`: List of events to trigger webhooks (e.g., `completed`, `failed`).
 
+### `monitoring`
+*   `job_timeout`: Maximum time a job can be in processing state (e.g., `2h`).
+*   `worker_health_interval`: How often to check worker health (e.g., `30s`).
+*   `failed_job_retry_interval`: How often to check for failed jobs to retry (e.g., `1m`).
+
 ### `database`
 *   `path`: Path to the SQLite database file (e.g., `./jobs.db`).
+*   `max_open_connections`: Maximum number of open connections to the database.
+*   `max_idle_connections`: Maximum number of idle connections in the pool.
+*   `conn_max_lifetime`: Maximum lifetime of a connection in seconds (0 = unlimited).
+*   `conn_max_idle_time`: Maximum idle time of a connection in seconds (0 = unlimited).
 
 ### `conversion`
 *Default conversion parameters applied to jobs.*
