@@ -1,12 +1,12 @@
 # DarkStream Configuration Guide
 
-This document details the configuration options for the DarkStream distributed video converter system. Configuration is primarily managed via YAML files (`config.yaml`).
+This document details the configuration options for the DarkStream distributed video converter system. Configuration is primarily managed via YAML files (`config.yaml`) and corresponds closely to the configuration structures defined in `video-converter-common/models/config.go`.
 
 ## Dynamic Worker Configuration
 
 A key architectural feature of DarkStream is **Dynamic Worker Configuration**.
 
-Workers connect to the Master coordinator and automatically fetch their configuration settings (such as conversion parameters, timeouts, and rate limits). This means you only need to configure these settings once on the Master, and all workers will inherit them.
+Workers connect to the Master coordinator and automatically fetch their configuration settings (such as conversion parameters, timeouts, and rate limits). This means you only need to configure these settings once on the Master, and all workers will inherit them via the `RemoteWorkerConfig` struct.
 
 Workers can be started with just the master URL:
 ```bash
@@ -20,36 +20,45 @@ DARKSTREAM_API_KEY="your_api_key_here" ./worker -url http://master:8080
 
 ## Master Configuration (`config.yaml`)
 
-The master configuration file defines server settings, scanning behavior, database location, and the default settings that will be pushed to workers.
+The master configuration file maps to the `MasterConfig` struct in `video-converter-common/models/config.go`. It defines server settings, scanning behavior, database location, and the default settings that will be pushed to workers.
 
 See `video-converter-master/config.yaml.example` for a complete example.
 
-### `server`
+### `server` (Maps to `MasterConfig.Server`)
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
 *   `api_key`: (Optional) Require workers and CLI to authenticate with this Bearer token.
 *   `tls_cert` / `tls_key`: (Optional) Paths to TLS certificate and key files to enable HTTPS.
 
-### `scanner`
+### `scanner` (Maps to `MasterConfig.Scanner`)
 *   `root_path`: Directory to scan for source video files.
 *   `video_extensions`: List of file extensions to process (e.g., `.mp4`, `.mkv`).
 *   `output_base`: Directory where converted videos will be saved.
 *   `recursive_depth`: Depth for scanning (-1 for unlimited, 0 for root only).
 *   `scan_interval`: How often to periodically scan for new files (e.g., `5m`). Set to `0` to disable.
-*   `min_file_size` / `max_file_size`: Size limits for processing.
+*   `min_file_size` / `max_file_size`: Size limits for processing in bytes.
 *   `skip_hidden_files` / `skip_hidden_dirs`: Whether to ignore files/directories starting with `.`.
 *   `detect_duplicates`: Detect and skip duplicate files based on content hash.
 *   `replace_source`: Replace source file with output. Use with caution.
 *   `enable_watch`: Watch for filesystem changes using fsnotify.
 
-### `notifications`
+### `monitoring` (Maps to `MasterConfig.Monitoring`)
+*   `job_timeout`: Maximum time a job can be in processing state (default: 2 hours).
+*   `worker_health_interval`: How often to check worker health (default: 30 seconds).
+*   `failed_job_retry_interval`: How often to check for failed jobs to retry (default: 1 minute).
+
+### `database` (Maps to `MasterConfig.Database`)
+*   `path`: Path to the SQLite database file (e.g., `./jobs.db`).
+*   `max_open_connections`: Maximum number of open connections to the database.
+*   `max_idle_connections`: Maximum number of idle connections in the pool.
+*   `conn_max_lifetime`: Maximum lifetime of a connection in seconds (0 = unlimited).
+*   `conn_max_idle_time`: Maximum idle time of a connection in seconds (0 = unlimited).
+
+### `notifications` (Maps to `MasterConfig.Notifications`)
 *   `webhook_url`: Optional URL to send job event webhooks to.
 *   `events`: List of events to trigger webhooks (e.g., `completed`, `failed`).
 
-### `database`
-*   `path`: Path to the SQLite database file (e.g., `./jobs.db`).
-
-### `conversion`
+### `conversion` (Maps to `MasterConfig.Conversion`)
 *Default conversion parameters applied to jobs.*
 *   `target_resolution`: (e.g., `1920x1080`).
 *   `codec`: Video codec (e.g., `h264`).
@@ -59,49 +68,70 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `audio_bitrate`: Audio bitrate (e.g., `128k`).
 *   `output_format`: Output container format (e.g., `mp4`, `mkv`).
 
-### `worker_defaults`
+### `worker_defaults` (Maps to `MasterConfig.WorkerDefaults`)
 *These settings are automatically pushed to workers when they connect.*
-*   `concurrency`: Number of concurrent jobs per worker.
+*   `concurrency`: Number of concurrent jobs per worker (Default: 3).
 *   `heartbeat_interval`: Frequency of worker heartbeats (e.g., `30s`).
 *   `job_check_interval`: Frequency of polling for new jobs (e.g., `5s`).
 *   `job_timeout`: Maximum time allowed for a single job (e.g., `2h`).
-*   `max_api_requests_per_min`: Rate limit for API calls to master.
+*   `max_api_requests_per_min`: Rate limit for API calls to master (Default: 60).
 *   `max_backoff_interval` / `initial_backoff_interval`: Backoff settings when no jobs are available.
-*   `download_timeout` / `upload_timeout`: Timeouts for file transfers.
-*   `max_cache_size`: Maximum local cache size on the worker.
-*   `cache_cleanup_age`: Age after which cached files are cleaned up.
+*   `download_timeout` / `upload_timeout`: Timeouts for file transfers (Default: 30m).
+*   `max_cache_size`: Maximum local cache size on the worker (Default: 10GB).
+*   `cache_cleanup_age`: Age after which cached files are cleaned up (Default: 24h).
 *   `bandwidth_limit`: Bandwidth limit in bytes per second (0 = unlimited).
 *   `enable_resume_download`: Enable resume support for downloads.
 *   `use_vulkan`: Enable Vulkan GPU acceleration if available.
 *   `ffmpeg_timeout`: Timeout specifically for the FFmpeg process.
 *   `log_level` / `log_format`: Worker log level and format.
 
+### `logging` (Maps to `MasterConfig.Logging`)
+*   `level`: Master server log level (e.g., `info`, `debug`).
+*   `format`: Log format, either `json` or `text`.
+*   `output_path`: Path to log file.
+
 ---
 
 ## Worker Configuration (`config.yaml`)
 
-While workers can operate entirely via dynamic configuration, you can use a local `config.yaml` to override settings or if the master is unreachable.
+While workers can operate entirely via dynamic configuration, you can use a local `config.yaml` to override settings or if the master is unreachable. The local configuration maps to the `WorkerConfig` struct in `video-converter-common/models/config.go`.
 
 See `video-converter-worker/config.yaml.example` for a complete example.
 
-### `worker`
+### `worker` (Maps to `WorkerConfig.Worker`)
 *   `id`: Unique identifier for the worker (auto-generated if omitted).
 *   `concurrency`: Local override for concurrent jobs.
 *   `master_url`: **Required**. URL of the master server (e.g., `http://localhost:8080`).
 *   `api_key`: Must match the master's `api_key` if authentication is enabled.
+*   `heartbeat_interval`: Frequency of worker heartbeats.
+*   `job_check_interval`: Frequency of polling for new jobs.
+*   `job_timeout`: Job processing timeout duration.
+*   `max_api_requests_per_min`: Rate limit for API calls to master.
+*   `max_backoff_interval` / `initial_backoff_interval`: Backoff settings.
 
-### `storage`
+### `storage` (Maps to `WorkerConfig.Storage`)
+*   `mount_path`: Currently unused base mount path.
 *   `cache_path`: Local directory for caching source and converted videos during processing.
 *   `max_cache_size`: Local override for maximum cache size.
 *   `chunk_size`: Size for chunked streaming (currently unused).
 *   `download_timeout` / `upload_timeout`: Local overrides for transfer timeouts.
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).
 *   `enable_resume_download`: Enable resume support for interrupted downloads.
+*   `cache_cleanup_age`: Age after which cached files are cleaned up.
 
-### `ffmpeg`
+### `ffmpeg` (Maps to `WorkerConfig.FFmpeg`)
 *   `path`: Path to the FFmpeg executable (e.g., `/usr/bin/ffmpeg`).
 *   `use_vulkan`: Enable Vulkan GPU acceleration.
 *   `timeout`: FFmpeg process timeout.
 
-### `conversion` (Deprecated)
+### `vulkan` (Maps to `WorkerConfig.Vulkan`)
+*   `preferred_device`: Specific GPU name or `auto`.
+*   `enable_validation`: Enable Vulkan validation layers for debugging.
+
+### `logging` (Maps to `WorkerConfig.Logging`)
+*   `level`: Worker log level (e.g., `info`, `debug`).
+*   `format`: Log format, either `json` or `text`.
+*   `output_path`: Path to log file.
+
+### `conversion` (Maps to `WorkerConfig.Conversion` - Deprecated)
 *Note: Conversion settings in the worker config are deprecated. Settings are pulled dynamically from the master server. These are only used as a fallback.*
