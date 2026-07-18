@@ -754,6 +754,14 @@ Cancel a pending or processing job:
 video-converter-cli cancel --master-url http://storage-server:8080 --job-id abc123
 ```
 
+### Cancel Multiple Jobs
+
+Cancel multiple jobs in bulk by their status (e.g., `pending`, `processing`, or `all`):
+
+```bash
+video-converter-cli cancel-jobs --master-url http://storage-server:8080 --status pending
+```
+
 ### Update Job Priority
 
 Update the priority of a job (0-10):
@@ -867,4 +875,6 @@ For more detailed technical information, please refer to the following guides:
 - [Getting Started](docs/GETTING_STARTED.md): Step-by-step guide to setting up a DarkStream cluster.
 - [Configuration Guide](docs/CONFIGURATION.md): Details on Master and Worker configurations, including dynamic configuration.
 - [API Reference](docs/API.md): Details on the REST API for workers and management tools.
+- [API Examples](docs/API_EXAMPLES.md): Concrete curl examples for interacting with the REST API.
 - [Architecture](docs/ARCHITECTURE.md): Component interaction diagrams and data flow.
+- [Troubleshooting](docs/TROUBLESHOOTING.md): Solutions to common errors and problems.
