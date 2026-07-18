@@ -2,6 +2,52 @@
 
 The Video Converter Master exposes a REST API for workers to fetch jobs and report status, and for CLI/monitoring tools to manage and track jobs.
 
+## Models
+
+### Job
+The `Job` object represents a single video conversion task.
+
+```json
+{
+  "id": "string",
+  "source_path": "string",
+  "output_path": "string",
+  "status": "string",
+  "priority": 5,
+  "worker_id": "string",
+  "started_at": "timestamp",
+  "completed_at": "timestamp",
+  "error_message": "string",
+  "retry_count": 0,
+  "max_retries": 3,
+  "created_at": "timestamp",
+  "source_duration": 120.5,
+  "output_size": 1073741824,
+  "source_checksum": "string",
+  "output_checksum": "string",
+  "source_width": 1920,
+  "source_height": 1080,
+  "source_video_codec": "h264",
+  "source_audio_codec": "aac",
+  "source_bitrate": 5000000,
+  "source_file_size": 1073741824
+}
+```
+
+### JobProgress
+The `JobProgress` object represents the real-time progress of an active conversion task.
+
+```json
+{
+  "job_id": "string",
+  "worker_id": "string",
+  "progress": 45.5,
+  "fps": 30.0,
+  "stage": "convert",
+  "updated_at": "timestamp"
+}
+```
+
 ## Authentication
 
 Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:

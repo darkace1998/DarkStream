@@ -28,7 +28,8 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
 *   `api_key`: (Optional) Require workers and CLI to authenticate with this Bearer token.
-*   `tls_cert` / `tls_key`: (Optional) Paths to TLS certificate and key files to enable HTTPS.
+*   `tls_cert`: Path to TLS certificate file (enables HTTPS when set).
+*   `tls_key`: Path to TLS private key file.
 
 ### `scanner` (Maps to `MasterConfig.Scanner`)
 *   `root_path`: Directory to scan for source video files.
