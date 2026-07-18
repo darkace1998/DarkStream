@@ -475,7 +475,6 @@ CREATE TABLE IF NOT EXISTS worker_configs (
     updated_at TIMESTAMP
 );
 
-
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
