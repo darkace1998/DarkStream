@@ -164,7 +164,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <tbody id="pending-jobs">
                         {{range .PendingJobs}}
                         <tr>
-                            <td><code>{{.ID}}</code></td>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
                             <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
                             <td><span class="badge badge-pending">{{.Priority}}</span></td>
                             <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
@@ -201,7 +201,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <tbody id="processing-jobs">
                         {{range .ProcessingJobs}}
                         <tr>
-                            <td><code>{{.ID}}</code></td>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
                             <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
                             <td>{{.WorkerID}}</td>
                             <td>
@@ -244,7 +244,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <tbody id="recent-jobs">
                         {{range .RecentJobs}}
                         <tr>
-                            <td><code>{{.ID}}</code></td>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
                             <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
                             <td><span class="badge {{if eq .Status "completed"}}badge-completed{{else if eq .Status "failed"}}badge-failed{{else}}badge-pending{{end}}">{{.Status}}</span></td>
                             <td>{{.WorkerID}}</td>
@@ -867,8 +867,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             const prio = job.priority !== undefined ? job.priority : 5;
 
                             const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
                             const codeId = createElement('code', {text: job.id});
-                            tdId.appendChild(codeId);
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
 
                             const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
 
@@ -906,8 +908,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             }
 
                             const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
                             const codeId = createElement('code', {text: job.id});
-                            tdId.appendChild(codeId);
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
 
                             const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
                             const tdWorker = createElement('td', {text: job.worker_id || ''});
@@ -946,8 +950,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             }
 
                             const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
                             const codeId = createElement('code', {text: job.id});
-                            tdId.appendChild(codeId);
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
 
                             const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
 
@@ -1421,6 +1427,275 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	err = json.NewEncoder(w).Encode(s.configMgr.Get())
 	if err != nil {
 		slog.Error("Failed to encode updated config", "error", err)
+		return
+	}
+}
+
+
+// jobDetailsTemplate is the HTML template for the individual job details page
+var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DarkStream - Job Details</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; line-height: 1.6; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        h1 { color: #00d9ff; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+        h2 { color: #00d9ff; margin: 20px 0 15px 0; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .card { background: #16213e; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 150px 1fr; gap: 10px; margin-bottom: 15px; }
+        .label { color: #aaa; font-weight: bold; }
+        .value { word-break: break-all; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; }
+        .badge-pending { background: #333; color: #ddd; }
+        .badge-completed { background: #1b4332; color: #95d5b2; }
+        .badge-failed { background: #5c2323; color: #f8d7da; }
+        .btn { padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; transition: all 0.2s; margin-right: 5px; text-decoration: none; display: inline-block; }
+        .btn-primary { background: #00d9ff; color: #000; font-weight: bold; }
+        .btn-primary:hover { background: #00b8d4; }
+        .btn-secondary { background: #333; color: #fff; }
+        .btn-secondary:hover { background: #444; }
+        .btn-danger { background: #dc3545; color: #fff; }
+        .btn-danger:hover { background: #c82333; }
+        .progress-bar { background: #0f0f23; border-radius: 4px; height: 20px; overflow: hidden; margin-top: 10px; }
+        .progress-fill { background: #00d9ff; height: 100%; transition: width 0.3s ease; }
+        .error-box { background: #5c2323; color: #f8d7da; padding: 15px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap; font-family: monospace; }
+        code { background: #0f0f23; padding: 2px 5px; border-radius: 3px; font-family: monospace; color: #00d9ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <span>Job Details</span>
+            <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+        </h1>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <h2 style="margin-top: 0;">Status</h2>
+                    <div class="grid">
+                        <div class="label">Job ID</div>
+                        <div class="value"><code>{{.ID}}</code></div>
+
+                        <div class="label">Status</div>
+                        <div class="value">
+                            <span class="badge {{if eq .Status "completed"}}badge-completed{{else if eq .Status "failed"}}badge-failed{{else}}badge-pending{{end}}">
+                                {{.Status}}
+                            </span>
+                        </div>
+
+                        <div class="label">Worker ID</div>
+                        <div class="value">{{if .WorkerID}}<code>{{.WorkerID}}</code>{{else}}-{{end}}</div>
+
+                        <div class="label">Priority</div>
+                        <div class="value">{{.Priority}}</div>
+
+                        <div class="label">Retries</div>
+                        <div class="value">{{.RetryCount}} / {{.MaxRetries}}</div>
+                    </div>
+                </div>
+                <div style="text-align: right;" id="action-buttons">
+                    <!-- JS will populate buttons -->
+                </div>
+            </div>
+
+            {{if eq .Status "failed"}}
+            <div class="error-box">
+                <strong>Error:</strong><br/>
+                {{.ErrorMessage}}
+            </div>
+            {{end}}
+
+            {{if eq .Status "processing"}}
+            <div style="margin-top: 20px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span class="label">Progress: <span id="progress-text">0%</span></span>
+                    <span class="label">Stage: <span id="stage-text">Unknown</span></span>
+                    <span class="label">FPS: <span id="fps-text">0</span></span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill" style="width: 0%;"></div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>File Information</h2>
+            <div class="grid">
+                <div class="label">Source Path</div>
+                <div class="value"><code>{{.SourcePath}}</code></div>
+
+                <div class="label">Output Path</div>
+                <div class="value"><code>{{.OutputPath}}</code></div>
+
+                <div class="label">Source Checksum</div>
+                <div class="value">{{if .SourceChecksum}}<code>{{.SourceChecksum}}</code>{{else}}-{{end}}</div>
+
+                <div class="label">Output Checksum</div>
+                <div class="value">{{if .OutputChecksum}}<code>{{.OutputChecksum}}</code>{{else}}-{{end}}</div>
+
+                <div class="label">Output Size</div>
+                <div class="value">{{if .OutputSize}}{{.OutputSize}} bytes{{else}}-{{end}}</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Timestamps</h2>
+            <div class="grid">
+                <div class="label">Created At</div>
+                <div class="value">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</div>
+
+                <div class="label">Started At</div>
+                <div class="value">{{if .StartedAt}}{{.StartedAt.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</div>
+
+                <div class="label">Completed At</div>
+                <div class="value">{{if .CompletedAt}}{{.CompletedAt.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</div>
+
+                <div class="label">Duration</div>
+                <div class="value">
+                    {{if and .StartedAt .CompletedAt}}
+                        {{/* Go template trick to format duration */}}
+                        {{.CompletedAt.Sub .StartedAt}}
+                    {{else}}
+                        -
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        {{if or .SourceWidth .SourceHeight .SourceVideoCodec}}
+        <div class="card">
+            <h2>Source Video Metadata</h2>
+            <div class="grid">
+                <div class="label">Resolution</div>
+                <div class="value">{{.SourceWidth}}x{{.SourceHeight}}</div>
+
+                <div class="label">Duration</div>
+                <div class="value">{{printf "%.2f" .SourceDuration}}s</div>
+
+                <div class="label">Video Codec</div>
+                <div class="value">{{.SourceVideoCodec}}</div>
+
+                <div class="label">Audio Codec</div>
+                <div class="value">{{.SourceAudioCodec}}</div>
+
+                <div class="label">Bitrate</div>
+                <div class="value">{{.SourceBitrate}} bps</div>
+
+                <div class="label">File Size</div>
+                <div class="value">{{.SourceFileSize}} bytes</div>
+            </div>
+        </div>
+        {{end}}
+
+    </div>
+
+    <script>
+        const jobId = '{{.ID}}';
+        const jobStatus = '{{.Status}}';
+
+        function createElement(tag, options = {}) {
+            const el = document.createElement(tag);
+            if (options.id) el.id = options.id;
+            if (options.className) el.className = options.className;
+            if (options.text) el.textContent = options.text;
+            if (options.href) el.href = options.href;
+            if (options.onclick) el.onclick = options.onclick;
+            if (options.title) el.title = options.title;
+            return el;
+        }
+
+        async function doAction(action) {
+            const apiKey = localStorage.getItem('darkstream_api_key') || '';
+            let url = '/api/job/' + action + '?id=' + encodeURIComponent(jobId);
+            if (apiKey) {
+                url += '&api_key=' + encodeURIComponent(apiKey);
+            }
+            try {
+                const response = await fetch(url, { method: 'POST' });
+                if (!response.ok) {
+                    const text = await response.text();
+                    alert('Action failed: ' + text);
+                } else {
+                    location.reload();
+                }
+            } catch (err) {
+                alert('Request failed: ' + err);
+            }
+        }
+
+        // Setup action buttons
+        const btnContainer = document.getElementById('action-buttons');
+        if (jobStatus === 'failed') {
+            const btnRetry = createElement('button', {text: 'Retry Job', className: 'btn btn-primary'});
+            btnRetry.onclick = () => doAction('retry');
+            btnContainer.appendChild(btnRetry);
+        }
+        if (jobStatus === 'completed' || jobStatus === 'failed' || jobStatus === 'cancelled') {
+            const btnRequeue = createElement('button', {text: 'Re-queue Job', className: 'btn btn-secondary'});
+            btnRequeue.onclick = () => doAction('requeue');
+            btnContainer.appendChild(btnRequeue);
+        }
+        if (jobStatus === 'pending' || jobStatus === 'processing') {
+            const btnCancel = createElement('button', {text: 'Cancel Job', className: 'btn btn-danger'});
+            btnCancel.onclick = () => doAction('cancel');
+            btnContainer.appendChild(btnCancel);
+        }
+
+        // Progress polling for processing jobs
+        if (jobStatus === 'processing') {
+            setInterval(async () => {
+                let url = '/api/job/progress?id=' + encodeURIComponent(jobId);
+                const apiKey = localStorage.getItem('darkstream_api_key');
+                if (apiKey) url += '&api_key=' + encodeURIComponent(apiKey);
+
+                try {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        const progress = data.progress || 0;
+                        document.getElementById('progress-fill').style.width = progress + '%';
+                        document.getElementById('progress-text').textContent = progress.toFixed(1) + '%';
+                        document.getElementById('stage-text').textContent = data.stage || 'Unknown';
+                        document.getElementById('fps-text').textContent = data.fps ? data.fps.toFixed(1) : '0';
+                    } else if (res.status === 404) {
+                        // Job might have finished, reload the page
+                        location.reload();
+                    }
+                } catch (e) {
+                    console.error('Progress fetch error:', e);
+                }
+            }, 2000);
+        }
+    </script>
+</body>
+</html>`))
+
+func (s *Server) handleJobDetailsUI(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("id")
+	if jobID == "" {
+		http.Error(w, "Missing job ID", http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		slog.Error("Failed to get job for details UI", "error", err, "job_id", jobID)
+		http.Error(w, "Job not found or error retrieving job", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	err = jobDetailsTemplate.Execute(w, job)
+	if err != nil {
+		slog.Error("Error rendering job details template", "error", err)
+		// We can't send a 500 error properly here if headers are already sent,
+		// but typically Execute writes headers only when it writes the body.
 		return
 	}
 }
