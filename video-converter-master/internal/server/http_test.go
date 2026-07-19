@@ -932,3 +932,51 @@ func TestGetJob(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleJobDetailsUI(t *testing.T) {
+	srv := newTestServer(t)
+
+
+	// 1. Setup a test job in the DB
+	jobID := "test_ui_job_123"
+	job := &models.Job{
+		ID:         jobID,
+		SourcePath: "/test/source.mp4",
+		OutputPath: "/test/output.mp4",
+		Status:     "pending",
+		Priority:   5,
+	}
+	err := srv.db.CreateJob(job)
+	require.NoError(t, err)
+
+	t.Run("Valid Job ID", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "/ui/job?id="+jobID, nil)
+		rr := httptest.NewRecorder()
+
+		// Call handler directly
+		srv.handleJobDetailsUI(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		body := rr.Body.String()
+		require.Contains(t, body, jobID)
+		require.Contains(t, body, "/test/source.mp4")
+	})
+
+	t.Run("Missing Job ID", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "/ui/job", nil)
+		rr := httptest.NewRecorder()
+
+		srv.handleJobDetailsUI(rr, req)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("Invalid Job ID", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "/ui/job?id=invalid_id", nil)
+		rr := httptest.NewRecorder()
+
+		srv.handleJobDetailsUI(rr, req)
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+	})
+}

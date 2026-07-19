@@ -207,6 +207,7 @@ func (s *Server) Start() (err error) {
 
 	// Web UI
 	mux.HandleFunc("/", s.ServeWebUI)
+	mux.HandleFunc("/ui/job", s.handleJobDetailsUI)
 
 	// Health check endpoints (no rate limiting or correlation for probes)
 	mux.HandleFunc("/healthz", s.HealthzLive)
