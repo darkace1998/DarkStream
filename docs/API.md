@@ -48,10 +48,133 @@ The `JobProgress` object represents the real-time progress of an active conversi
 }
 ```
 
+### VideoMetadata
+The `VideoMetadata` object contains extracted video information from FFprobe.
+
+```json
+{
+  "duration": 120.5,
+  "width": 1920,
+  "height": 1080,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "bitrate": 5000000,
+  "file_size": 1073741824
+}
+```
+
+### ConversionConfig
+The `ConversionConfig` object defines the parameters for video conversion operations.
+
+```json
+{
+  "target_resolution": "1920x1080",
+  "codec": "h264",
+  "bitrate": "5M",
+  "preset": "fast",
+  "use_vulkan": true,
+  "audio_codec": "aac",
+  "audio_bitrate": "128k",
+  "output_format": "mp4"
+}
+```
+
+### WorkerHeartbeat
+The `WorkerHeartbeat` object contains status information sent periodically from workers to the master.
+
+```json
+{
+  "worker_id": "string",
+  "hostname": "string",
+  "vulkan_available": true,
+  "active_jobs": 2,
+  "status": "string",
+  "timestamp": "timestamp",
+  "gpu": "string",
+  "cpu_usage": 45.5,
+  "memory_usage": 60.2
+}
+```
+
+### VulkanDevice
+The `VulkanDevice` object represents information about a Vulkan-capable GPU device.
+
+```json
+{
+  "name": "string",
+  "type": "string",
+  "device_id": 1234,
+  "vendor_id": 5678,
+  "driver_version": "string",
+  "available": true
+}
+```
+
+### RemoteWorkerConfig
+The `RemoteWorkerConfig` object represents the configuration that workers fetch from the master at startup.
+
+```json
+{
+  "concurrency": 3,
+  "heartbeat_interval": 30,
+  "job_check_interval": 5,
+  "job_timeout": 7200,
+  "max_api_requests_per_min": 60,
+  "max_backoff_interval": 30,
+  "initial_backoff_interval": 1,
+  "download_timeout": 1800,
+  "upload_timeout": 1800,
+  "max_cache_size": 10737418240,
+  "cache_cleanup_age": 86400,
+  "bandwidth_limit": 0,
+  "enable_resume_download": true,
+  "use_vulkan": true,
+  "ffmpeg_timeout": 7200,
+  "conversion": {
+    "resolution": "1920x1080",
+    "codec": "h264",
+    "bitrate": "5M",
+    "preset": "fast",
+    "audio_codec": "aac",
+    "audio_bitrate": "128k",
+    "output_format": "mp4"
+  },
+  "log_level": "info",
+  "log_format": "json",
+  "api_key": "string"
+}
+```
+
+### WorkerSettings
+The `WorkerSettings` object represents per-worker configuration stored in the database.
+
+```json
+{
+  "worker_id": "string",
+  "concurrency": 3,
+  "heartbeat_interval": 30,
+  "job_check_interval": 5,
+  "job_timeout": 7200,
+  "max_api_requests_per_min": 60,
+  "download_timeout": 1800,
+  "upload_timeout": 1800,
+  "max_cache_size": 10737418240,
+  "cache_cleanup_age": 86400,
+  "bandwidth_limit": 0,
+  "enable_resume_download": true,
+  "use_vulkan": true,
+  "ffmpeg_timeout": 7200,
+  "log_level": "info",
+  "log_format": "json"
+}
+```
+
 ## Authentication
 
 Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:
 `Authorization: Bearer <api_key>`
+
+Alternatively, the API accepts the API key via an `api_key` URL query parameter (e.g., `?api_key=<api_key>`) as a fallback. This is specifically to support connections like `EventSource` (SSE) that cannot send custom HTTP headers.
 
 CLI and dashboard endpoints also rely on API key authentication, and rate-limiting is applied to protect the service. For the CLI, you must set the `DARKSTREAM_API_KEY` environment variable when connecting to a master server that requires authentication. The `video-converter-cli` uses the `newMasterRequest` function to automatically inject the `DARKSTREAM_API_KEY` into the `Authorization` header, eliminating the need for manual header injection in CLI commands.
 
@@ -169,18 +292,20 @@ Updates per-worker configuration settings dynamically.
 ```json
 {
   "concurrency": 3,
-  "heartbeat_interval": "30s",
-  "job_check_interval": "5s",
-  "job_timeout": "2h",
+  "heartbeat_interval": 30,
+  "job_check_interval": 5,
+  "job_timeout": 7200,
   "max_api_requests_per_min": 60,
-  "download_timeout": "30m",
-  "upload_timeout": "30m",
+  "download_timeout": 1800,
+  "upload_timeout": 1800,
   "max_cache_size": 10737418240,
-  "cache_cleanup_age": "24h",
+  "cache_cleanup_age": 86400,
   "bandwidth_limit": 0,
   "enable_resume_download": true,
   "use_vulkan": true,
-  "ffmpeg_timeout": "2h"
+  "ffmpeg_timeout": 7200,
+  "log_level": "info",
+  "log_format": "json"
 }
 ```
 
