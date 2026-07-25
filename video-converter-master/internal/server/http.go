@@ -4,8 +4,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -249,7 +252,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/job/retry", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RetryJob))))
 	mux.HandleFunc("/api/job/requeue", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.RequeueJob))))
 	mux.HandleFunc("/api/jobs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListJobs))))
-	mux.HandleFunc("/api/job", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJob))))
+	mux.HandleFunc("/api/job", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleJob))))
 	mux.HandleFunc("/api/job/priority", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UpdateJobPriority))))
 	mux.HandleFunc("/api/job/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJob)))
 	mux.HandleFunc("/api/jobs/cancel", s.correlationMiddleware(s.rateLimitMiddleware(s.CancelJobs)))
@@ -2898,8 +2901,118 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// GetJob handles retrieving a single job by ID
-func (s *Server) GetJob(w http.ResponseWriter, r *http.Request) {
+// HandleJob routes to the appropriate handler based on the HTTP method
+func (s *Server) HandleJob(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.getJob(w, r)
+	case http.MethodPost:
+		s.submitJob(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// submitJobRequest represents a manual job submission request
+type submitJobRequest struct {
+	SourcePath string `json:"source_path"`
+	OutputPath string `json:"output_path,omitempty"`
+	Priority   *int   `json:"priority,omitempty"`
+}
+
+// submitJob handles the manual creation of a new job
+func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
+	var req submitJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SourcePath == "" {
+		http.Error(w, "source_path is required", http.StatusBadRequest)
+		return
+	}
+
+	priority := 5 // Default priority
+	if req.Priority != nil {
+		if *req.Priority < 0 || *req.Priority > 10 {
+			priority = 5
+		} else {
+			priority = *req.Priority
+		}
+	}
+
+	// Validate paths
+	validatedSource, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.SourcePath)
+	if err != nil {
+		slog.Error("Path validation failed for source file", "path", req.SourcePath, "error", err)
+		http.Error(w, "Invalid source path", http.StatusForbidden)
+		return
+	}
+
+	// Check if the source file exists
+	if !utils.FileExists(validatedSource) {
+		http.Error(w, "Source file does not exist", http.StatusNotFound)
+		return
+	}
+
+	var outputPath string
+	if req.OutputPath != "" {
+		validatedOutput, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.OutputPath)
+		if err != nil {
+			slog.Error("Path validation failed for output file", "path", req.OutputPath, "error", err)
+			http.Error(w, "Invalid output path", http.StatusForbidden)
+			return
+		}
+		outputPath = validatedOutput
+	} else {
+		// Use default output base
+		ext := filepath.Ext(validatedSource)
+		relPath, relErr := filepath.Rel(s.masterCfg.Scanner.RootPath, validatedSource)
+		if relErr != nil {
+			slog.Warn("Failed to compute relative path, using absolute base name", "path", validatedSource, "error", relErr)
+			outputPath = filepath.Join(s.masterCfg.Scanner.OutputBase, strings.TrimSuffix(filepath.Base(validatedSource), ext)+".mp4")
+		} else {
+			outputPath = filepath.Join(s.masterCfg.Scanner.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
+		}
+	}
+
+	// Generate Job ID
+	hash := sha256.Sum256([]byte(validatedSource))
+	jobID := hex.EncodeToString(hash[:])[:16]
+
+	// Create Job struct
+	job := &models.Job{
+		ID:         jobID,
+		SourcePath: validatedSource,
+		OutputPath: outputPath,
+		Status:     "pending",
+		Priority:   priority,
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	err = s.db.CreateJob(job)
+	if err != nil {
+		if errors.Is(err, db.ErrJobAlreadyExists) {
+			http.Error(w, "Job already exists", http.StatusConflict)
+		} else {
+			slog.Error("Failed to create job in database", "job_id", jobID, "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		slog.Error("Failed to encode job response", "error", err)
+	}
+}
+
+// getJob handles retrieving a single job by ID
+func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

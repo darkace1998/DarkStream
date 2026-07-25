@@ -770,6 +770,14 @@ Update the priority of a job (0-10):
 video-converter-cli priority --master-url http://storage-server:8080 --job-id abc123 --priority 10
 ```
 
+### Submit a Job
+
+Manually submit a new conversion job:
+
+```bash
+video-converter-cli submit --master-url http://storage-server:8080 --source-path /mnt/storage/videos/new_video.mp4 --priority 8
+```
+
 ### Inspect a Single Job
 
 Get detailed information for a single job:

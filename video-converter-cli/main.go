@@ -42,6 +42,8 @@ func main() {
 		commands.Prune(subArgs)
 	case "workers":
 		commands.Workers(subArgs)
+	case "submit":
+		commands.Submit(subArgs)
 	case "job":
 		commands.Job(subArgs)
 	case "jobs":

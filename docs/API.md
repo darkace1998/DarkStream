@@ -339,6 +339,22 @@ Lists jobs with filtering.
 
 *Note: This endpoint does not support an `offset` parameter for pagination.*
 
+### `POST /api/job`
+Submits a new manual conversion job.
+
+**Body (JSON):**
+```json
+{
+  "source_path": "/mnt/storage/videos/new_video.mp4",
+  "output_path": "/mnt/storage/converted/new_video.mp4",
+  "priority": 5
+}
+```
+*Note: `output_path` and `priority` are optional. If `output_path` is omitted, the default output directory will be used. If `priority` is omitted, it defaults to 5.*
+
+**Response (201 Created):**
+Returns a JSON object representing the newly created job. Returns `409 Conflict` if the job already exists.
+
 ### `GET /api/job`
 Gets detailed information for a single job.
 
