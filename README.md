@@ -396,6 +396,157 @@ type JobProgress struct {
 }
 ```
 
+
+
+**MasterConfig (`video-converter-common/models/config.go`)**
+```go
+type MasterConfig struct {
+	Server struct {
+		Port    int    `yaml:"port"`
+		Host    string `yaml:"host"`
+		APIKey  string `yaml:"api_key"`  // API key for worker authentication
+		TLSCert string `yaml:"tls_cert"` // Path to TLS certificate file (enables HTTPS when set)
+		TLSKey  string `yaml:"tls_key"`  // Path to TLS private key file
+	} `yaml:"server"`
+
+	Scanner struct {
+		RootPath         string        `yaml:"root_path"`
+		VideoExtensions  []string      `yaml:"video_extensions"`
+		OutputBase       string        `yaml:"output_base"`
+		RecursiveDepth   int           `yaml:"recursive_depth"`   // -1 for unlimited
+		ScanInterval     time.Duration `yaml:"scan_interval"`     // How often to scan for new files (0 = no periodic scanning)
+		MinFileSize      int64         `yaml:"min_file_size"`     // Minimum file size in bytes (0 = no minimum)
+		MaxFileSize      int64         `yaml:"max_file_size"`     // Maximum file size in bytes (0 = no maximum)
+		SkipHiddenFiles  bool          `yaml:"skip_hidden_files"` // Skip files starting with '.'
+		SkipHiddenDirs   bool          `yaml:"skip_hidden_dirs"`  // Skip directories starting with '.'
+		ReplaceSource    bool          `yaml:"replace_source"`    // Replace source file with output
+		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
+		EnableWatch      bool          `yaml:"enable_watch"`      // Watch for filesystem changes using fsnotify
+	} `yaml:"scanner"`
+
+	Monitoring struct {
+		JobTimeout             time.Duration `yaml:"job_timeout"`               // Maximum time a job can be in processing state (default: 2 hours)
+		WorkerHealthInterval   time.Duration `yaml:"worker_health_interval"`    // How often to check worker health (default: 30 seconds)
+		FailedJobRetryInterval time.Duration `yaml:"failed_job_retry_interval"` // How often to check for failed jobs to retry (default: 1 minute)
+	} `yaml:"monitoring"`
+
+	Database struct {
+		Path               string `yaml:"path"`
+		MaxOpenConnections int    `yaml:"max_open_connections"` // Maximum number of open connections to the database
+		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
+		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
+		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
+	} `yaml:"database"`
+
+	Notifications struct {
+		WebhookURL string   `yaml:"webhook_url"`
+		Events     []string `yaml:"events"`
+	} `yaml:"notifications"`
+
+	Conversion ConversionSettings `yaml:"conversion"`
+	Logging    LoggingSettings    `yaml:"logging"`
+
+	WorkerDefaults struct {
+		Concurrency            int           `yaml:"concurrency"`              // Default: 3
+		HeartbeatInterval      time.Duration `yaml:"heartbeat_interval"`       // Default: 30s
+		JobCheckInterval       time.Duration `yaml:"job_check_interval"`       // Default: 5s
+		JobTimeout             time.Duration `yaml:"job_timeout"`              // Default: 2h
+		MaxAPIRequestsPerMin   int           `yaml:"max_api_requests_per_min"` // Default: 60
+		MaxBackoffInterval     time.Duration `yaml:"max_backoff_interval"`     // Default: 30s
+		InitialBackoffInterval time.Duration `yaml:"initial_backoff_interval"` // Default: 1s
+		DownloadTimeout        time.Duration `yaml:"download_timeout"`         // Default: 30m
+		UploadTimeout          time.Duration `yaml:"upload_timeout"`           // Default: 30m
+		MaxCacheSize           int64         `yaml:"max_cache_size"`           // Default: 10GB
+		CacheCleanupAge        time.Duration `yaml:"cache_cleanup_age"`        // Default: 24h
+		BandwidthLimit         int64         `yaml:"bandwidth_limit"`          // Default: 0 (unlimited)
+		EnableResumeDownload   bool          `yaml:"enable_resume_download"`   // Default: true
+		UseVulkan              bool          `yaml:"use_vulkan"`               // Default: true
+		FFmpegTimeout          time.Duration `yaml:"ffmpeg_timeout"`           // Default: 2h
+		LogLevel               string        `yaml:"log_level"`                // Default: info
+		LogFormat              string        `yaml:"log_format"`               // Default: json
+	} `yaml:"worker_defaults"`
+}
+```
+
+
+**RemoteWorkerConfig (`video-converter-common/models/config.go`)**
+```go
+type RemoteWorkerConfig struct {
+	Concurrency            int   `json:"concurrency"`
+	HeartbeatInterval      int64 `json:"heartbeat_interval"`       // Duration in seconds
+	JobCheckInterval       int64 `json:"job_check_interval"`       // Duration in seconds
+	JobTimeout             int64 `json:"job_timeout"`              // Duration in seconds
+	MaxAPIRequestsPerMin   int   `json:"max_api_requests_per_min"` // Rate limit for API calls
+	MaxBackoffInterval     int64 `json:"max_backoff_interval"`     // Duration in seconds
+	InitialBackoffInterval int64 `json:"initial_backoff_interval"` // Duration in seconds
+
+	DownloadTimeout      int64 `json:"download_timeout"`        // Duration in seconds
+	UploadTimeout        int64 `json:"upload_timeout"`          // Duration in seconds
+	MaxCacheSize         int64 `json:"max_cache_size"`          // Maximum cache size in bytes
+	CacheCleanupAge      int64 `json:"cache_cleanup_age"`       // Duration in seconds
+	BandwidthLimit       int64 `json:"bandwidth_limit"`         // Bandwidth limit in bytes per second
+	EnableResumeDownload bool  `json:"enable_resume_download"`  // Enable resume support for downloads
+
+	UseVulkan    bool  `json:"use_vulkan"`     // Whether to use Vulkan hardware acceleration
+	FFmpegTimeout int64 `json:"ffmpeg_timeout"` // Duration in seconds
+
+	Conversion ConversionSettings `json:"conversion"`
+
+	LogLevel  string `json:"log_level"`  // debug, info, warn, error
+	LogFormat string `json:"log_format"` // json, text
+
+	APIKey string `json:"api_key,omitempty"`
+}
+```
+
+
+**WorkerSettings (`video-converter-common/models/config.go`)**
+```go
+type WorkerSettings struct {
+	WorkerID             string `json:"worker_id"`
+	Concurrency          int    `json:"concurrency"`
+	HeartbeatInterval    int    `json:"heartbeat_interval"`     // Duration in seconds
+	JobCheckInterval     int    `json:"job_check_interval"`     // Duration in seconds
+	JobTimeout           int    `json:"job_timeout"`            // Duration in seconds
+	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
+	DownloadTimeout      int    `json:"download_timeout"`       // Duration in seconds
+	UploadTimeout        int    `json:"upload_timeout"`         // Duration in seconds
+	MaxCacheSize         int64  `json:"max_cache_size"`         // Maximum cache size in bytes
+	CacheCleanupAge      int    `json:"cache_cleanup_age"`      // Duration in seconds
+	BandwidthLimit       int64  `json:"bandwidth_limit"`        // Bandwidth limit in bytes per second
+	EnableResumeDownload bool   `json:"enable_resume_download"`
+	UseVulkan            bool   `json:"use_vulkan"`
+	FFmpegTimeout        int    `json:"ffmpeg_timeout"`         // Duration in seconds
+	LogLevel             string `json:"log_level"`
+	LogFormat            string `json:"log_format"`
+}
+```
+
+
+**VulkanCapabilities (`video-converter-common/models/vulkan.go`)**
+```go
+type VulkanCapabilities struct {
+	Supported           bool         `json:"supported"`
+	Device              VulkanDevice `json:"device"`
+	APIVersion          string       `json:"api_version"`
+	SupportedExtensions []string     `json:"supported_extensions"`
+	CanEncode           bool         `json:"can_encode"`
+	CanDecode           bool         `json:"can_decode"`
+	MaxWidth            uint32       `json:"max_width"`
+	MaxHeight           uint32       `json:"max_height"`
+	PreferredFormat     string       `json:"preferred_format"`
+}
+```
+
+
+**VulkanDeviceList (`video-converter-common/models/vulkan.go`)**
+```go
+type VulkanDeviceList struct {
+	Devices       []VulkanDevice `json:"devices"`
+	DefaultDevice string         `json:"default_device"`
+}
+```
+
 ### Job States
 
 ```
