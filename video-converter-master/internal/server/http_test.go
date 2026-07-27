@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -919,7 +921,7 @@ func TestGetJob(t *testing.T) {
 			require.NoError(t, err)
 
 			rr := httptest.NewRecorder()
-			srv.GetJob(rr, req)
+			srv.HandleJob(rr, req)
 
 			require.Equal(t, tt.wantStatus, rr.Code)
 
@@ -935,7 +937,6 @@ func TestGetJob(t *testing.T) {
 
 func TestHandleJobDetailsUI(t *testing.T) {
 	srv := newTestServer(t)
-
 
 	// 1. Setup a test job in the DB
 	jobID := "test_ui_job_123"
@@ -979,4 +980,71 @@ func TestHandleJobDetailsUI(t *testing.T) {
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 	})
+}
+
+func TestSubmitJob(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Ensure the source directory exists and create a test file
+	err := os.MkdirAll(srv.masterCfg.Scanner.RootPath, 0755)
+	require.NoError(t, err)
+
+	testFilePath := filepath.Join(srv.masterCfg.Scanner.RootPath, "test_submit.mp4")
+	err = os.WriteFile(testFilePath, []byte("dummy content"), 0644)
+	require.NoError(t, err)
+	defer os.Remove(testFilePath)
+
+	// Test case 1: Successful job submission
+	reqBody := `{"source_path": "test_submit.mp4"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rw := httptest.NewRecorder()
+
+	srv.HandleJob(rw, req)
+
+	res := rw.Result()
+	defer res.Body.Close()
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+
+	var job models.Job
+	err = json.NewDecoder(res.Body).Decode(&job)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(srv.masterCfg.Scanner.RootPath, "test_submit.mp4"), job.SourcePath)
+	require.Equal(t, 5, job.Priority)
+	require.Equal(t, "pending", job.Status)
+
+	// Test case 2: Job already exists
+	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rw = httptest.NewRecorder()
+
+	srv.HandleJob(rw, req)
+
+	res = rw.Result()
+	defer res.Body.Close()
+	require.Equal(t, http.StatusConflict, res.StatusCode)
+
+	// Test case 3: Invalid path traversal
+	reqBody = `{"source_path": "../test_submit.mp4"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rw = httptest.NewRecorder()
+
+	srv.HandleJob(rw, req)
+
+	res = rw.Result()
+	defer res.Body.Close()
+	require.Equal(t, http.StatusForbidden, res.StatusCode)
+
+	// Test case 4: File does not exist
+	reqBody = `{"source_path": "non_existent.mp4"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rw = httptest.NewRecorder()
+
+	srv.HandleJob(rw, req)
+
+	res = rw.Result()
+	defer res.Body.Close()
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
 }
