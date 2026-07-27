@@ -15,12 +15,12 @@ The `Job` object represents a single video conversion task.
   "status": "string",
   "priority": 5,
   "worker_id": "string",
-  "started_at": "timestamp",
-  "completed_at": "timestamp",
+  "started_at": "2025-11-07T20:56:59Z",
+  "completed_at": "2025-11-07T20:56:59Z",
   "error_message": "string",
   "retry_count": 0,
   "max_retries": 3,
-  "created_at": "timestamp",
+  "created_at": "2025-11-07T20:56:59Z",
   "source_duration": 120.5,
   "output_size": 1073741824,
   "source_checksum": "string",
@@ -44,7 +44,7 @@ The `JobProgress` object represents the real-time progress of an active conversi
   "progress": 45.5,
   "fps": 30.0,
   "stage": "convert",
-  "updated_at": "timestamp"
+  "updated_at": "2025-11-07T20:56:59Z"
 }
 ```
 
@@ -89,7 +89,7 @@ The `WorkerHeartbeat` object contains status information sent periodically from 
   "vulkan_available": true,
   "active_jobs": 2,
   "status": "string",
-  "timestamp": "timestamp",
+  "timestamp": "2025-11-07T20:56:59Z",
   "gpu": "string",
   "cpu_usage": 45.5,
   "memory_usage": 60.2

@@ -416,6 +416,62 @@ type VulkanCapabilities struct {
 type VulkanDeviceList struct {
 	Devices       []VulkanDevice `json:"devices"`
 	DefaultDevice string         `json:"default_device"`
+
+**RemoteWorkerConfig (`video-converter-common/models/config.go`)**
+```go
+type RemoteWorkerConfig struct {
+	// Worker settings
+	Concurrency            int   `json:"concurrency"`
+	HeartbeatInterval      int64 `json:"heartbeat_interval"`       // Duration in seconds
+	JobCheckInterval       int64 `json:"job_check_interval"`       // Duration in seconds
+	JobTimeout             int64 `json:"job_timeout"`              // Duration in seconds
+	MaxAPIRequestsPerMin   int   `json:"max_api_requests_per_min"` // Rate limit for API calls
+	MaxBackoffInterval     int64 `json:"max_backoff_interval"`     // Duration in seconds
+	InitialBackoffInterval int64 `json:"initial_backoff_interval"` // Duration in seconds
+
+	// Storage settings
+	DownloadTimeout      int64 `json:"download_timeout"`        // Duration in seconds
+	UploadTimeout        int64 `json:"upload_timeout"`          // Duration in seconds
+	MaxCacheSize         int64 `json:"max_cache_size"`          // Maximum cache size in bytes
+	CacheCleanupAge      int64 `json:"cache_cleanup_age"`       // Duration in seconds
+	BandwidthLimit       int64 `json:"bandwidth_limit"`         // Bandwidth limit in bytes per second
+	EnableResumeDownload bool  `json:"enable_resume_download"`  // Enable resume support for downloads
+
+	// FFmpeg settings
+	UseVulkan    bool  `json:"use_vulkan"`     // Whether to use Vulkan hardware acceleration
+	FFmpegTimeout int64 `json:"ffmpeg_timeout"` // Duration in seconds
+
+	// Conversion settings
+	Conversion ConversionSettings `json:"conversion"`
+
+	// Logging settings
+	LogLevel  string `json:"log_level"`  // debug, info, warn, error
+	LogFormat string `json:"log_format"` // json, text
+
+	// API key for authentication (if required)
+	APIKey string `json:"api_key,omitempty"`
+}
+```
+
+**WorkerSettings (`video-converter-common/models/config.go`)**
+```go
+type WorkerSettings struct {
+	WorkerID             string `json:"worker_id"`
+	Concurrency          int    `json:"concurrency"`
+	HeartbeatInterval    int    `json:"heartbeat_interval"`     // Duration in seconds
+	JobCheckInterval     int    `json:"job_check_interval"`     // Duration in seconds
+	JobTimeout           int    `json:"job_timeout"`            // Duration in seconds
+	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
+	DownloadTimeout      int    `json:"download_timeout"`       // Duration in seconds
+	UploadTimeout        int    `json:"upload_timeout"`         // Duration in seconds
+	MaxCacheSize         int64  `json:"max_cache_size"`         // Maximum cache size in bytes
+	CacheCleanupAge      int    `json:"cache_cleanup_age"`      // Duration in seconds
+	BandwidthLimit       int64  `json:"bandwidth_limit"`        // Bandwidth limit in bytes per second
+	EnableResumeDownload bool   `json:"enable_resume_download"`
+	UseVulkan            bool   `json:"use_vulkan"`
+	FFmpegTimeout        int    `json:"ffmpeg_timeout"`         // Duration in seconds
+	LogLevel             string `json:"log_level"`
+	LogFormat            string `json:"log_format"`
 }
 ```
 
@@ -533,6 +589,26 @@ type WorkerSettings struct {
 	FFmpegTimeout        int    `json:"ffmpeg_timeout"`
 	LogLevel             string `json:"log_level"`
 	LogFormat            string `json:"log_format"`
+**VulkanCapabilities (`video-converter-common/models/vulkan.go`)**
+```go
+type VulkanCapabilities struct {
+	Supported           bool         `json:"supported"`
+	Device              VulkanDevice `json:"device"`
+	APIVersion          string       `json:"api_version"`
+	SupportedExtensions []string     `json:"supported_extensions"`
+	CanEncode           bool         `json:"can_encode"`
+	CanDecode           bool         `json:"can_decode"`
+	MaxWidth            uint32       `json:"max_width"`
+	MaxHeight           uint32       `json:"max_height"`
+	PreferredFormat     string       `json:"preferred_format"`
+}
+```
+
+**VulkanDeviceList (`video-converter-common/models/vulkan.go`)**
+```go
+type VulkanDeviceList struct {
+	Devices       []VulkanDevice `json:"devices"`
+	DefaultDevice string         `json:"default_device"`
 }
 ```
 
