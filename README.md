@@ -441,7 +441,7 @@ type RemoteWorkerConfig struct {
 	UseVulkan    bool  `json:"use_vulkan"`     // Whether to use Vulkan hardware acceleration
 	FFmpegTimeout int64 `json:"ffmpeg_timeout"` // Duration in seconds
 
-	// Conversion settings
+	// Conversion settings (already fetched via /api/config, but included for completeness)
 	Conversion ConversionSettings `json:"conversion"`
 
 	// Logging settings
@@ -523,6 +523,8 @@ type MasterConfig struct {
 	Conversion ConversionSettings `yaml:"conversion"`
 	Logging    LoggingSettings    `yaml:"logging"`
 
+	// WorkerDefaults contains default settings that are provided to workers when they
+	// fetch their configuration from the master. These can be overridden by local worker config.
 	WorkerDefaults struct {
 		Concurrency            int           `yaml:"concurrency"`              // Default: 3
 		HeartbeatInterval      time.Duration `yaml:"heartbeat_interval"`       // Default: 30s
@@ -545,50 +547,6 @@ type MasterConfig struct {
 }
 ```
 
-**RemoteWorkerConfig (`video-converter-common/models/config.go`)**
-```go
-type RemoteWorkerConfig struct {
-	Concurrency            int   `json:"concurrency"`
-	HeartbeatInterval      int64 `json:"heartbeat_interval"`
-	JobCheckInterval       int64 `json:"job_check_interval"`
-	JobTimeout             int64 `json:"job_timeout"`
-	MaxAPIRequestsPerMin   int   `json:"max_api_requests_per_min"`
-	MaxBackoffInterval     int64 `json:"max_backoff_interval"`
-	InitialBackoffInterval int64 `json:"initial_backoff_interval"`
-	DownloadTimeout        int64 `json:"download_timeout"`
-	UploadTimeout          int64 `json:"upload_timeout"`
-	MaxCacheSize           int64 `json:"max_cache_size"`
-	CacheCleanupAge        int64 `json:"cache_cleanup_age"`
-	BandwidthLimit         int64 `json:"bandwidth_limit"`
-	EnableResumeDownload   bool  `json:"enable_resume_download"`
-	UseVulkan              bool  `json:"use_vulkan"`
-	FFmpegTimeout          int64 `json:"ffmpeg_timeout"`
-	Conversion             ConversionSettings `json:"conversion"`
-	LogLevel               string `json:"log_level"`
-	LogFormat              string `json:"log_format"`
-	APIKey                 string `json:"api_key,omitempty"`
-}
-```
-
-**WorkerSettings (`video-converter-common/models/config.go`)**
-```go
-type WorkerSettings struct {
-	WorkerID             string `json:"worker_id"`
-	Concurrency          int    `json:"concurrency"`
-	HeartbeatInterval    int    `json:"heartbeat_interval"`
-	JobCheckInterval     int    `json:"job_check_interval"`
-	JobTimeout           int    `json:"job_timeout"`
-	MaxAPIRequestsPerMin int    `json:"max_api_requests_per_min"`
-	DownloadTimeout      int    `json:"download_timeout"`
-	UploadTimeout        int    `json:"upload_timeout"`
-	MaxCacheSize         int64  `json:"max_cache_size"`
-	CacheCleanupAge      int    `json:"cache_cleanup_age"`
-	BandwidthLimit       int64  `json:"bandwidth_limit"`
-	EnableResumeDownload bool   `json:"enable_resume_download"`
-	UseVulkan            bool   `json:"use_vulkan"`
-	FFmpegTimeout        int    `json:"ffmpeg_timeout"`
-	LogLevel             string `json:"log_level"`
-	LogFormat            string `json:"log_format"`
 **VulkanCapabilities (`video-converter-common/models/vulkan.go`)**
 ```go
 type VulkanCapabilities struct {
