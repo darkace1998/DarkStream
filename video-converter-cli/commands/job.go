@@ -35,7 +35,7 @@ func runJob(args []string) error {
 	}
 
 	queryParams := url.Values{}
-	queryParams.Set("job_id", *jobID)
+	queryParams.Set(paramJobID, *jobID)
 
 	reqURL, err := utils.BuildURL(*masterURL, "/api/job", queryParams)
 	if err != nil {
@@ -76,7 +76,7 @@ func runJob(args []string) error {
 		return err
 	}
 
-	if *format == "json" {
+	if *format == string(formatter.FormatJSON) {
 		out, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			slog.Error("Failed to encode job as JSON", "error", err)
@@ -86,7 +86,7 @@ func runJob(args []string) error {
 	} else {
 		// Use the existing table formatter but just for one job
 		out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
-		out.PrintTable([]string{"ID", "Status", "Source", "Output"}, [][]string{{job.ID, job.Status, job.SourcePath, job.OutputPath}})
+		out.PrintTable([]string{"ID", colStatus, colSource, "Output"}, [][]string{{job.ID, job.Status, job.SourcePath, job.OutputPath}})
 	}
 	return nil
 }

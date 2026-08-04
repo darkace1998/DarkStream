@@ -91,7 +91,7 @@ func runDisplayStatus(masterURL, format string) error {
 	case formatter.FormatJSON:
 		_ = out.PrintJSON(stats)
 	case formatter.FormatCSV:
-		headers := []string{"Status", "Count"}
+		headers := []string{colStatus, "Count"}
 		rows := [][]string{
 			{statusCompleted, fmt.Sprintf("%d", getIntValue(stats, statusCompleted))},
 			{statusProcessing, fmt.Sprintf("%d", getIntValue(stats, statusProcessing))},

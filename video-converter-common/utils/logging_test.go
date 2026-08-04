@@ -43,7 +43,7 @@ func TestInitLogger_JSON_Debug(t *testing.T) {
 		t.Fatal("expected output, got none")
 	}
 
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	err := json.Unmarshal([]byte(output), &logEntry)
 	if err != nil {
 		t.Fatalf("expected JSON output, but unmarshal failed: %v\nOutput was: %s", err, output)
@@ -81,7 +81,7 @@ func TestInitLogger_Text_Info(t *testing.T) {
 	}
 
 	// Make sure it's not JSON
-	var dummy map[string]interface{}
+	var dummy map[string]any
 	if err := json.Unmarshal([]byte(output), &dummy); err == nil {
 		t.Errorf("output appears to be JSON, but text format was requested")
 	}
@@ -104,7 +104,7 @@ func TestInitLogger_Fallback(t *testing.T) {
 	}
 
 	// Default format is Text, so it should not be valid JSON
-	var dummy map[string]interface{}
+	var dummy map[string]any
 	if err := json.Unmarshal([]byte(output), &dummy); err == nil {
 		t.Errorf("expected default text format, but output parsed as JSON: %s", output)
 	}
@@ -155,7 +155,7 @@ func TestComponentLogLevel(t *testing.T) {
 		var wg sync.WaitGroup
 		const numGoroutines = 100
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()

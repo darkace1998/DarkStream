@@ -51,6 +51,19 @@ const (
 	statusAll        = "all"
 )
 
+// JSON response and query parameter field names used across the HTTP handlers.
+const (
+	fieldJobs      = "jobs"
+	fieldCount     = "count"
+	fieldWorkers   = "workers"
+	fieldWorkerID  = "worker_id"
+	fieldJobID     = "job_id"
+	fieldStatus    = "status"
+	fieldProgress  = "progress"
+	fieldTimestamp = "timestamp"
+	fieldMessage   = "message"
+)
+
 // validateJobID checks if a job ID is valid
 func validateJobID(jobID string) bool {
 	if jobID == "" || len(jobID) > 100 {
@@ -340,7 +353,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate worker_id parameter
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -360,7 +373,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 		for _, worker := range workers {
 			if worker.WorkerID == workerID {
 				if worker.Status == "paused" {
-					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
+					slog.Info("Worker is paused, not assigning new jobs", fieldWorkerID, workerID)
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
@@ -369,7 +382,7 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 				const maxJobsPerWorker = 5
 				if worker.ActiveJobs >= maxJobsPerWorker {
 					slog.Info("Worker at capacity, not assigning new job",
-						"worker_id", workerID,
+						fieldWorkerID, workerID,
 						"active_jobs", worker.ActiveJobs,
 						"max_jobs", maxJobsPerWorker)
 					w.WriteHeader(http.StatusNoContent)
@@ -416,7 +429,7 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate worker_id parameter
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -449,7 +462,7 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		for _, worker := range workers {
 			if worker.WorkerID == workerID {
 				if worker.Status == "paused" {
-					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
+					slog.Info("Worker is paused, not assigning new jobs", fieldWorkerID, workerID)
 					w.Header().Set("Content-Type", "application/json")
 					if encErr := json.NewEncoder(w).Encode([]*models.Job{}); encErr != nil {
 						slog.Error("Failed to encode response", "error", encErr)
@@ -460,13 +473,13 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 				availableSlots = maxJobsPerWorker - worker.ActiveJobs
 				if availableSlots <= 0 {
 					slog.Info("Worker at capacity, not assigning new jobs",
-						"worker_id", workerID,
+						fieldWorkerID, workerID,
 						"active_jobs", worker.ActiveJobs,
 						"max_jobs", maxJobsPerWorker)
 					w.Header().Set("Content-Type", "application/json")
 					response := map[string]any{
-						"jobs":  []*models.Job{},
-						"count": 0,
+						fieldJobs:  []*models.Job{},
+						fieldCount: 0,
 					}
 					encErr := json.NewEncoder(w).Encode(response)
 					if encErr != nil {
@@ -488,8 +501,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to get pending jobs", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
-			"jobs":  []*models.Job{},
-			"count": 0,
+			fieldJobs:  []*models.Job{},
+			fieldCount: 0,
 		}
 		encErr := json.NewEncoder(w).Encode(response)
 		if encErr != nil {
@@ -501,8 +514,8 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	if len(pendingJobs) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
-			"jobs":  []*models.Job{},
-			"count": 0,
+			fieldJobs:  []*models.Job{},
+			fieldCount: 0,
 		}
 		encErr := json.NewEncoder(w).Encode(response)
 		if encErr != nil {
@@ -518,15 +531,15 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	s.updateQueueDepthMetric()
 
 	slog.Info("Batch job assignment",
-		"worker_id", workerID,
+		fieldWorkerID, workerID,
 		"requested", limit,
 		"assigned", len(pendingJobs),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"jobs":  pendingJobs,
-		"count": len(pendingJobs),
+		fieldJobs:  pendingJobs,
+		fieldCount: len(pendingJobs),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -567,14 +580,14 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 	// Fetch the existing job first
 	job, err := s.db.GetJobByID(req.JobID)
 	if err != nil {
-		slog.Error("Failed to fetch job", "job_id", req.JobID, "error", err)
+		slog.Error("Failed to fetch job", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
 	updated, err := s.db.MarkJobCompleted(job.ID, req.WorkerID, req.OutputSize, "", job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
+		slog.Error("Failed to update job", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -592,10 +605,10 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 
 	// Notify webhook if configured
 	if updatedJob, fetchErr := s.db.GetJobByID(job.ID); fetchErr == nil {
-		s.notifier.Notify("completed", updatedJob)
+		s.notifier.Notify(statusCompleted, updatedJob)
 	}
 
-	slog.Info("Job completed", "job_id", req.JobID, "worker_id", req.WorkerID)
+	slog.Info("Job completed", fieldJobID, req.JobID, fieldWorkerID, req.WorkerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -631,14 +644,14 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	// Fetch the existing job first
 	job, err := s.db.GetJobByID(req.JobID)
 	if err != nil {
-		slog.Error("Failed to fetch job", "job_id", req.JobID, "error", err)
+		slog.Error("Failed to fetch job", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
 	updated, err := s.db.MarkJobFailed(job.ID, req.WorkerID, req.ErrorMessage, job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to update job", "job_id", req.JobID, "error", err)
+		slog.Error("Failed to update job", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -670,10 +683,10 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 
 	// Notify webhook if configured
 	if updatedJob, fetchErr := s.db.GetJobByID(req.JobID); fetchErr == nil {
-		s.notifier.Notify("failed", updatedJob)
+		s.notifier.Notify(statusFailed, updatedJob)
 	}
 
-	slog.Warn("Job failed", "job_id", req.JobID, "worker_id", req.WorkerID, "error", req.ErrorMessage)
+	slog.Warn("Job failed", fieldJobID, req.JobID, fieldWorkerID, req.WorkerID, "error", req.ErrorMessage)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -698,7 +711,7 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	err = s.db.UpdateWorkerHeartbeat(&hb)
 	if err != nil {
-		slog.Error("Failed to update worker heartbeat", "worker_id", hb.WorkerID, "error", err)
+		slog.Error("Failed to update worker heartbeat", fieldWorkerID, hb.WorkerID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -713,7 +726,7 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.metrics.SetWorkerCounts(len(workers), len(activeWorkers))
 	}
 
-	slog.Debug("Worker heartbeat received", "worker_id", hb.WorkerID)
+	slog.Debug("Worker heartbeat received", fieldWorkerID, hb.WorkerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -806,13 +819,13 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 					onlineWorkers++
 				}
 				workerMetrics = append(workerMetrics, map[string]any{
-					"worker_id":    wk.WorkerID,
+					fieldWorkerID:  wk.WorkerID,
 					"hostname":     wk.Hostname,
 					"cpu_usage":    wk.CPUUsage,
 					"memory_usage": wk.MemoryUsage,
 					"active_jobs":  wk.ActiveJobs,
 					"gpu":          wk.GPU,
-					"status":       wk.Status,
+					fieldStatus:    wk.Status,
 					"is_online":    isOnline,
 					"last_seen":    wk.Timestamp,
 				})
@@ -820,28 +833,28 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 		}
 
 		stats := map[string]any{
-			"pending":      0,
-			"processing":   0,
-			"completed":    0,
-			"failed":       0,
-			"workers":      onlineWorkers,
-			"queue_paused": s.queuePaused.Load(),
+			statusPending:    0,
+			statusProcessing: 0,
+			statusCompleted:  0,
+			statusFailed:     0,
+			fieldWorkers:     onlineWorkers,
+			"queue_paused":   s.queuePaused.Load(),
 		}
-		if v, ok := jobStats["pending"].(int); ok {
-			stats["pending"] = v
+		if v, ok := jobStats[statusPending].(int); ok {
+			stats[statusPending] = v
 		}
-		if v, ok := jobStats["processing"].(int); ok {
-			stats["processing"] = v
+		if v, ok := jobStats[statusProcessing].(int); ok {
+			stats[statusProcessing] = v
 		}
-		if v, ok := jobStats["completed"].(int); ok {
-			stats["completed"] = v
+		if v, ok := jobStats[statusCompleted].(int); ok {
+			stats[statusCompleted] = v
 		}
-		if v, ok := jobStats["failed"].(int); ok {
-			stats["failed"] = v
+		if v, ok := jobStats[statusFailed].(int); ok {
+			stats[statusFailed] = v
 		}
 
-		pendingJobs, _ := s.db.GetJobsByStatus("pending", 20)
-		processingJobs, _ := s.db.GetJobsByStatus("processing", 20)
+		pendingJobs, _ := s.db.GetJobsByStatus(statusPending, 20)
+		processingJobs, _ := s.db.GetJobsByStatus(statusProcessing, 20)
 
 		// Include progress for processing jobs
 		processingJobsData := make([]map[string]any, 0, len(processingJobs))
@@ -849,31 +862,31 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 			pData := map[string]any{
 				"id":          pj.ID,
 				"source_path": pj.SourcePath,
-				"worker_id":   pj.WorkerID,
+				fieldWorkerID: pj.WorkerID,
 				"started_at":  pj.StartedAt,
-				"progress":    0.0,
+				fieldProgress: 0.0,
 			}
 			progress, progressErr := s.db.GetJobProgress(pj.ID)
 			if progressErr == nil {
-				pData["progress"] = progress.Progress
+				pData[fieldProgress] = progress.Progress
 			}
 			processingJobsData = append(processingJobsData, pData)
 		}
 
 		recentJobs := make([]*models.Job, 0)
-		completed, err := s.db.GetJobsByStatus("completed", 25)
+		completed, err := s.db.GetJobsByStatus(statusCompleted, 25)
 		if err == nil {
 			recentJobs = append(recentJobs, completed...)
 		}
-		failed, err := s.db.GetJobsByStatus("failed", 25)
+		failed, err := s.db.GetJobsByStatus(statusFailed, 25)
 		if err == nil {
 			recentJobs = append(recentJobs, failed...)
 		}
 
 		response := map[string]any{
-			"timestamp":       time.Now(),
+			fieldTimestamp:    time.Now(),
 			"stats":           stats,
-			"workers":         workerMetrics,
+			fieldWorkers:      workerMetrics,
 			"pending_jobs":    pendingJobs,
 			"processing_jobs": processingJobsData,
 			"recent_jobs":     recentJobs,
@@ -913,22 +926,22 @@ func (s *Server) GetStats(w http.ResponseWriter, r *http.Request) {
 	if workerErr == nil {
 		for _, wk := range workers {
 			workerMetrics = append(workerMetrics, map[string]any{
-				"worker_id":    wk.WorkerID,
+				fieldWorkerID:  wk.WorkerID,
 				"hostname":     wk.Hostname,
 				"cpu_usage":    wk.CPUUsage,
 				"memory_usage": wk.MemoryUsage,
 				"active_jobs":  wk.ActiveJobs,
 				"gpu":          wk.GPU,
-				"status":       wk.Status,
+				fieldStatus:    wk.Status,
 				"last_seen":    wk.Timestamp,
 			})
 		}
 	}
 
 	response := map[string]any{
-		"timestamp": time.Now(),
-		"jobs":      stats,
-		"workers":   workerMetrics,
+		fieldTimestamp: time.Now(),
+		fieldJobs:      stats,
+		fieldWorkers:   workerMetrics,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -963,8 +976,8 @@ func (s *Server) HealthzLive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	response := map[string]any{
-		"status":    "alive",
-		"timestamp": time.Now(),
+		fieldStatus:    "alive",
+		fieldTimestamp: time.Now(),
 	}
 	encErr := json.NewEncoder(w).Encode(response)
 	if encErr != nil {
@@ -987,9 +1000,9 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		response := map[string]any{
-			"status":    "not_ready",
-			"timestamp": time.Now(),
-			"reason":    "database unavailable",
+			fieldStatus:    "not_ready",
+			fieldTimestamp: time.Now(),
+			"reason":       "database unavailable",
 		}
 		encErr := json.NewEncoder(w).Encode(response)
 		if encErr != nil {
@@ -1001,8 +1014,8 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	response := map[string]any{
-		"status":    "ready",
-		"timestamp": time.Now(),
+		fieldStatus:    "ready",
+		fieldTimestamp: time.Now(),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -1077,7 +1090,7 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	checks["workers"] = workerStatus
+	checks[fieldWorkers] = workerStatus
 
 	// Check for stale jobs (jobs stuck in processing)
 	staleJobStatus := HealthStatus{Status: statusHealthy}
@@ -1112,13 +1125,13 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 		// Count jobs by status
 		var completed, failed, processing int
-		if v, ok := jobStats["completed"].(int); ok {
+		if v, ok := jobStats[statusCompleted].(int); ok {
 			completed = v
 		}
-		if v, ok := jobStats["failed"].(int); ok {
+		if v, ok := jobStats[statusFailed].(int); ok {
 			failed = v
 		}
-		if v, ok := jobStats["processing"].(int); ok {
+		if v, ok := jobStats[statusProcessing].(int); ok {
 			processing = v
 		}
 
@@ -1236,11 +1249,11 @@ func (s *Server) serveVideoRange(w http.ResponseWriter, jobID, sourcePath, range
 		}
 	}
 	if err != nil {
-		slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
+		slog.Error("Failed to stream file range", fieldJobID, jobID, "error", err)
 		return true
 	}
 
-	slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+	slog.Info("Video file range downloaded", fieldJobID, jobID, "start", start, "end", end, "size", contentLength)
 	return true
 }
 
@@ -1252,7 +1265,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get job_id from query parameters
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
 		return
@@ -1261,7 +1274,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
-		slog.Error("Failed to fetch job", "job_id", jobID, "error", err)
+		slog.Error("Failed to fetch job", fieldJobID, jobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
@@ -1278,7 +1291,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file",
-			"job_id", jobID,
+			fieldJobID, jobID,
 			"path", job.SourcePath,
 			"error", err)
 		http.Error(w, "Invalid file path", http.StatusForbidden)
@@ -1290,7 +1303,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Log both paths for debugging: database value and validated path
 		slog.Error("Failed to open source file",
-			"job_id", jobID,
+			fieldJobID, jobID,
 			"db_path", job.SourcePath,
 			"validated_path", validatedPath,
 			"error", err)
@@ -1339,11 +1352,11 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		slog.Error("Failed to stream file", "job_id", jobID, "error", err)
+		slog.Error("Failed to stream file", fieldJobID, jobID, "error", err)
 		return
 	}
 
-	slog.Info("Video file downloaded", "job_id", jobID, "size", fileSize)
+	slog.Info("Video file downloaded", fieldJobID, jobID, "size", fileSize)
 }
 
 // UploadVideo handles video file upload requests from workers
@@ -1356,7 +1369,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get job_id from query parameters
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
 		return
@@ -1365,14 +1378,14 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
-		slog.Error("Failed to fetch job", "job_id", jobID, "error", err)
+		slog.Error("Failed to fetch job", fieldJobID, jobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
 	// Validate job is in processing status
 	if job.Status != statusProcessing {
-		slog.Warn("Upload rejected - job not in processing status", "job_id", jobID, "status", job.Status)
+		slog.Warn("Upload rejected - job not in processing status", fieldJobID, jobID, fieldStatus, job.Status)
 		http.Error(w, "Job is not in processing status", http.StatusBadRequest)
 		return
 	}
@@ -1383,7 +1396,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
 	if err != nil {
 		slog.Error("Path validation failed for output file",
-			"job_id", jobID,
+			fieldJobID, jobID,
 			"path", job.OutputPath,
 			"error", err)
 		http.Error(w, "Invalid file path", http.StatusForbidden)
@@ -1397,7 +1410,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// This can happen if path normalization occurred (e.g., /path//file -> /path/file)
 	if outputPath != job.OutputPath {
 		slog.Info("Output path normalized during validation",
-			"job_id", jobID,
+			fieldJobID, jobID,
 			"original", job.OutputPath,
 			"validated", outputPath)
 		job.OutputPath = outputPath
@@ -1500,7 +1513,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// Update job status to completed (only after successful file write)
 	updated, err := s.db.MarkJobCompleted(job.ID, job.WorkerID, bytesWritten, outputChecksum, job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to update job", "job_id", jobID, "error", err)
+		slog.Error("Failed to update job", fieldJobID, jobID, "error", err)
 		// File is saved but status update failed - this is acceptable
 		// The job will remain in processing state and can be retried
 		http.Error(w, "Failed to update job status", http.StatusInternalServerError)
@@ -1511,13 +1524,13 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Video file uploaded", "job_id", jobID, "size", bytesWritten, "checksum", outputChecksum)
+	slog.Info("Video file uploaded", fieldJobID, jobID, "size", bytesWritten, "checksum", outputChecksum)
 
 	// Return success response with file size
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
 		"file_size": bytesWritten,
-		"status":    "completed",
+		fieldStatus: statusCompleted,
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -1555,15 +1568,15 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 
 	err = s.db.UpdateJobProgress(&progress)
 	if err != nil {
-		slog.Error("Failed to update job progress", "job_id", progress.JobID, "error", err)
+		slog.Error("Failed to update job progress", fieldJobID, progress.JobID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	slog.Debug("Job progress updated",
-		"job_id", progress.JobID,
-		"worker_id", progress.WorkerID,
-		"progress", progress.Progress,
+		fieldJobID, progress.JobID,
+		fieldWorkerID, progress.WorkerID,
+		fieldProgress, progress.Progress,
 		"stage", progress.Stage,
 	)
 	w.WriteHeader(http.StatusOK)
@@ -1576,7 +1589,7 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
 		return
@@ -1593,11 +1606,11 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 
 		// Return job status without detailed progress
 		response := map[string]any{
-			"job_id":     jobID,
-			"status":     job.Status,
-			"progress":   0.0,
-			"stage":      job.Status,
-			"updated_at": job.CreatedAt,
+			fieldJobID:    jobID,
+			fieldStatus:   job.Status,
+			fieldProgress: 0.0,
+			"stage":       job.Status,
+			"updated_at":  job.CreatedAt,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		encErr := json.NewEncoder(w).Encode(response)
@@ -1623,7 +1636,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
 		return
@@ -1650,14 +1663,14 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial event with job status
 	initialEvent := map[string]any{
-		"job_id":   jobID,
-		"status":   job.Status,
-		"progress": 0.0,
-		"stage":    job.Status,
+		fieldJobID:    jobID,
+		fieldStatus:   job.Status,
+		fieldProgress: 0.0,
+		"stage":       job.Status,
 	}
 	progress, progressErr := s.db.GetJobProgress(jobID)
 	if progressErr == nil {
-		initialEvent["progress"] = progress.Progress
+		initialEvent[fieldProgress] = progress.Progress
 		initialEvent["fps"] = progress.FPS
 		initialEvent["stage"] = progress.Stage
 		initialEvent["updated_at"] = progress.UpdatedAt
@@ -1699,12 +1712,12 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 
 			// Build event data
 			progressEvent := map[string]any{
-				"job_id": jobID,
-				"status": currentJob.Status,
+				fieldJobID:  jobID,
+				fieldStatus: currentJob.Status,
 			}
 
 			if progressErr == nil {
-				progressEvent["progress"] = progress.Progress
+				progressEvent[fieldProgress] = progress.Progress
 				progressEvent["fps"] = progress.FPS
 				progressEvent["stage"] = progress.Stage
 				progressEvent["updated_at"] = progress.UpdatedAt
@@ -1726,7 +1739,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 
 			// Check if job completed or failed
 			if currentJob.Status == constants.JobStatusCompleted || currentJob.Status == constants.JobStatusFailed {
-				progressEvent["progress"] = 100.0
+				progressEvent[fieldProgress] = 100.0
 				if currentJob.Status == constants.JobStatusFailed {
 					progressEvent["error"] = currentJob.ErrorMessage
 				}
@@ -1776,9 +1789,9 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		if i >= limit {
 			break
 		}
-		updated, err := s.db.ResetJobToPending(job.ID, true, "failed", "", job.StartedAt)
+		updated, err := s.db.ResetJobToPending(job.ID, true, statusFailed, "", job.StartedAt)
 		if err != nil {
-			slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
+			slog.Error("Failed to reset job for retry", fieldJobID, job.ID, "error", err)
 			continue
 		}
 		if !updated {
@@ -1786,15 +1799,15 @@ func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		retriedCount++
 		s.RecordJobRetry("cli")
-		slog.Info("Retried failed job via CLI", "job_id", job.ID)
+		slog.Info("Retried failed job via CLI", fieldJobID, job.ID)
 	}
 
 	s.RefreshQueueDepth()
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"retried": retriedCount,
-		"message": fmt.Sprintf("Successfully retried %d job(s)", retriedCount),
+		"retried":    retriedCount,
+		fieldMessage: fmt.Sprintf("Successfully retried %d job(s)", retriedCount),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -1811,7 +1824,7 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get query parameters
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(fieldStatus)
 	limitStr := r.URL.Query().Get("limit")
 	limit := 100
 	if limitStr != "" {
@@ -1836,11 +1849,11 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 		jobs, err = s.db.GetJobsByStatus(status, limit)
 	} else {
 		// Get all jobs (pending first as most relevant)
-		jobs, err = s.db.GetJobsByStatus("pending", limit)
+		jobs, err = s.db.GetJobsByStatus(statusPending, limit)
 		if err == nil {
 			// Also get processing and failed jobs
-			processingJobs, _ := s.db.GetJobsByStatus("processing", limit)
-			failedJobs, _ := s.db.GetJobsByStatus("failed", limit)
+			processingJobs, _ := s.db.GetJobsByStatus(statusProcessing, limit)
+			failedJobs, _ := s.db.GetJobsByStatus(statusFailed, limit)
 			jobs = append(jobs, processingJobs...)
 			jobs = append(jobs, failedJobs...)
 		}
@@ -1854,8 +1867,8 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"jobs":  jobs,
-		"count": len(jobs),
+		fieldJobs:  jobs,
+		fieldCount: len(jobs),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -1871,7 +1884,7 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
 		return
@@ -1880,7 +1893,7 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
-		slog.Error("Failed to fetch job for retry", "job_id", jobID, "error", err)
+		slog.Error("Failed to fetch job for retry", fieldJobID, jobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
@@ -1893,7 +1906,7 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.db.ResetJobToPending(job.ID, true, statusFailed, "", job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to reset job for retry", "job_id", job.ID, "error", err)
+		slog.Error("Failed to reset job for retry", fieldJobID, job.ID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -1903,7 +1916,7 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.RecordJobRetry("ui_single")
-	slog.Info("Retried specific job", "job_id", job.ID)
+	slog.Info("Retried specific job", fieldJobID, job.ID)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -1956,7 +1969,7 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		req.JobID = r.URL.Query().Get("job_id")
+		req.JobID = r.URL.Query().Get(fieldJobID)
 		priorityStr := r.URL.Query().Get("priority")
 		if priorityStr != "" {
 			parsedPriority, err := parseInt(priorityStr)
@@ -1982,24 +1995,24 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job to ensure it exists
 	_, err := s.db.GetJobByID(req.JobID)
 	if err != nil {
-		slog.Error("Failed to fetch job for priority update", "job_id", req.JobID, "error", err)
+		slog.Error("Failed to fetch job for priority update", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
 	err = s.db.UpdateJobPriority(req.JobID, req.Priority)
 	if err != nil {
-		slog.Error("Failed to update job priority", "job_id", req.JobID, "priority", req.Priority, "error", err)
+		slog.Error("Failed to update job priority", fieldJobID, req.JobID, "priority", req.Priority, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Updated job priority", "job_id", req.JobID, "priority", req.Priority)
+	slog.Info("Updated job priority", fieldJobID, req.JobID, "priority", req.Priority)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]string{
-		"message": "Job priority updated successfully",
-		"job_id":  req.JobID,
+		fieldMessage: "Job priority updated successfully",
+		fieldJobID:   req.JobID,
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -2017,7 +2030,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
 		return
@@ -2026,7 +2039,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
-		slog.Error("Failed to fetch job for requeue", "job_id", jobID, "error", err)
+		slog.Error("Failed to fetch job for requeue", fieldJobID, jobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
@@ -2034,7 +2047,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 	// Reset job to pending, do not increment retry count
 	updated, err := s.db.ResetJobToPending(job.ID, false, job.Status, "", job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to reset job for requeue", "job_id", job.ID, "error", err)
+		slog.Error("Failed to reset job for requeue", fieldJobID, job.ID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -2044,7 +2057,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.RecordJobRetry("ui_requeue")
-	slog.Info("Requeued specific job", "job_id", job.ID)
+	slog.Info("Requeued specific job", fieldJobID, job.ID)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -2059,7 +2072,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {
 		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
 		return
@@ -2068,7 +2081,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	// Fetch the job
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
-		slog.Error("Failed to fetch job for cancellation", "job_id", jobID, "error", err)
+		slog.Error("Failed to fetch job for cancellation", fieldJobID, jobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
@@ -2085,7 +2098,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	// Update job status to the terminal 'cancelled' state.
 	updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user", job.StartedAt)
 	if err != nil {
-		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
+		slog.Error("Failed to cancel job", fieldJobID, jobID, "error", err)
 		http.Error(w, "Failed to cancel job", http.StatusInternalServerError)
 		return
 	}
@@ -2094,13 +2107,13 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Job cancelled via CLI", "job_id", jobID, "previous_status", previousStatus)
+	slog.Info("Job cancelled via CLI", fieldJobID, jobID, "previous_status", previousStatus)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"job_id":  jobID,
-		"status":  "cancelled",
-		"message": "Job cancelled successfully",
+		fieldJobID:   jobID,
+		fieldStatus:  "cancelled",
+		fieldMessage: "Job cancelled successfully",
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -2116,7 +2129,7 @@ func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(fieldStatus)
 	if status != statusCompleted && status != statusFailed && status != statusCancelled && status != "all" {
 		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', 'cancelled', or 'all'", http.StatusBadRequest)
 		return
@@ -2124,18 +2137,18 @@ func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 
 	deletedCount, err := s.db.PruneJobs(status)
 	if err != nil {
-		slog.Error("Failed to prune jobs", "status", status, "error", err)
+		slog.Error("Failed to prune jobs", fieldStatus, status, "error", err)
 		http.Error(w, "Failed to prune jobs", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Jobs pruned", "status", status, "deleted_count", deletedCount)
+	slog.Info("Jobs pruned", fieldStatus, status, "deleted_count", deletedCount)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
 		"deleted_count": deletedCount,
 		"status_filter": status,
-		"message":       fmt.Sprintf("Successfully pruned %d jobs", deletedCount),
+		fieldMessage:    fmt.Sprintf("Successfully pruned %d jobs", deletedCount),
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -2154,7 +2167,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(fieldStatus)
 	if status != statusPending && status != statusProcessing && status != statusAll {
 		http.Error(w, "Invalid status parameter. Must be 'pending', 'processing', or 'all'", http.StatusBadRequest)
 		return
@@ -2196,7 +2209,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		"failed_count":    failedCount,
 		"cancelled_ids":   cancelledIDs,
 		"status_filter":   status,
-		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
+		fieldMessage:      fmt.Sprintf("Cancelled %d jobs", cancelledCount),
 	}
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -2246,12 +2259,12 @@ func (s *Server) cancelJobBatch(jobs []*models.Job, limit int) (cancelledCount, 
 
 		updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user (batch cancellation)", job.StartedAt)
 		if err != nil {
-			slog.Error("Failed to cancel job", "job_id", job.ID, "error", err)
+			slog.Error("Failed to cancel job", fieldJobID, job.ID, "error", err)
 			failedCount++
 			continue
 		}
 		if !updated {
-			slog.Warn("Skipped cancellation for job that changed state", "job_id", job.ID)
+			slog.Warn("Skipped cancellation for job that changed state", fieldJobID, job.ID)
 			failedCount++
 			continue
 		}
@@ -2297,9 +2310,9 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"workers": workers,
-		"count":   len(workers),
-		"stats":   workerStats,
+		fieldWorkers: workers,
+		fieldCount:   len(workers),
+		"stats":      workerStats,
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -2615,13 +2628,13 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if worker_id is provided for per-worker config
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 
 	var response *models.RemoteWorkerConfig
 	if workerID != "" {
 		// Get worker-specific config (or defaults if no custom config)
 		response = s.buildRemoteWorkerConfigForWorker(workerID)
-		slog.Debug("Worker-specific configuration requested", "worker_id", workerID)
+		slog.Debug("Worker-specific configuration requested", fieldWorkerID, workerID)
 	} else {
 		// Use global defaults
 		response = s.buildRemoteWorkerConfig()
@@ -2767,7 +2780,7 @@ func (s *Server) buildRemoteWorkerConfigForWorker(workerID string) *models.Remot
 
 // HandleWorkerSettings handles GET/POST for per-worker settings
 func (s *Server) HandleWorkerSettings(w http.ResponseWriter, r *http.Request) {
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id is required", http.StatusBadRequest)
 		return
@@ -2861,12 +2874,12 @@ func (s *Server) saveWorkerSettings(w http.ResponseWriter, r *http.Request, work
 
 	err = s.db.SaveWorkerConfig(&settings)
 	if err != nil {
-		slog.Error("Failed to save worker settings", "error", err, "worker_id", workerID)
+		slog.Error("Failed to save worker settings", "error", err, fieldWorkerID, workerID)
 		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Worker settings saved", "worker_id", workerID)
+	slog.Info("Worker settings saved", fieldWorkerID, workerID)
 
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(settings)
@@ -2879,12 +2892,12 @@ func (s *Server) saveWorkerSettings(w http.ResponseWriter, r *http.Request, work
 func (s *Server) deleteWorkerSettings(w http.ResponseWriter, workerID string) {
 	err := s.db.DeleteWorkerConfig(workerID)
 	if err != nil {
-		slog.Error("Failed to delete worker settings", "error", err, "worker_id", workerID)
+		slog.Error("Failed to delete worker settings", "error", err, fieldWorkerID, workerID)
 		http.Error(w, "Failed to delete settings", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Worker settings deleted, will use defaults", "worker_id", workerID)
+	slog.Info("Worker settings deleted, will use defaults", fieldWorkerID, workerID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2895,7 +2908,7 @@ func (s *Server) PauseWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -2903,12 +2916,12 @@ func (s *Server) PauseWorker(w http.ResponseWriter, r *http.Request) {
 
 	err := s.db.SetWorkerStatus(workerID, constants.WorkerStatusPaused)
 	if err != nil {
-		slog.Error("Failed to pause worker", "worker_id", workerID, "error", err)
+		slog.Error("Failed to pause worker", fieldWorkerID, workerID, "error", err)
 		http.Error(w, "Failed to pause worker", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Paused worker", "worker_id", workerID)
+	slog.Info("Paused worker", fieldWorkerID, workerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -2919,7 +2932,7 @@ func (s *Server) ResumeWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -2927,12 +2940,12 @@ func (s *Server) ResumeWorker(w http.ResponseWriter, r *http.Request) {
 
 	err := s.db.SetWorkerStatus(workerID, constants.WorkerStatusOnline)
 	if err != nil {
-		slog.Error("Failed to resume worker", "worker_id", workerID, "error", err)
+		slog.Error("Failed to resume worker", fieldWorkerID, workerID, "error", err)
 		http.Error(w, "Failed to resume worker", http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Resumed worker", "worker_id", workerID)
+	slog.Info("Resumed worker", fieldWorkerID, workerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -2943,7 +2956,7 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workerID := r.URL.Query().Get("worker_id")
+	workerID := r.URL.Query().Get(fieldWorkerID)
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -2951,7 +2964,7 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 
 	err := s.db.DeleteWorker(workerID)
 	if err != nil {
-		slog.Error("Failed to delete worker", "worker_id", workerID, "error", err)
+		slog.Error("Failed to delete worker", fieldWorkerID, workerID, "error", err)
 		http.Error(w, "Failed to delete worker", http.StatusInternalServerError)
 		return
 	}
@@ -2965,7 +2978,7 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RemoveWorkerHeartbeat(workerID)
 	}
 
-	slog.Info("Deleted worker", "worker_id", workerID)
+	slog.Info("Deleted worker", fieldWorkerID, workerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -3054,7 +3067,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		ID:         jobID,
 		SourcePath: validatedSource,
 		OutputPath: outputPath,
-		Status:     "pending",
+		Status:     statusPending,
 		Priority:   priority,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
@@ -3066,7 +3079,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, db.ErrJobAlreadyExists) {
 			http.Error(w, "Job already exists", http.StatusConflict)
 		} else {
-			slog.Error("Failed to create job in database", "job_id", jobID, "error", err)
+			slog.Error("Failed to create job in database", fieldJobID, jobID, "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -3086,7 +3099,7 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := r.URL.Query().Get("job_id")
+	jobID := r.URL.Query().Get(fieldJobID)
 	if jobID == "" {
 		http.Error(w, "job_id parameter is required", http.StatusBadRequest)
 		return
@@ -3097,7 +3110,7 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(err.Error(), "no rows in result set") {
 			http.Error(w, "Job not found", http.StatusNotFound)
 		} else {
-			slog.Error("Failed to query job", "job_id", jobID, "error", err)
+			slog.Error("Failed to query job", fieldJobID, jobID, "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return

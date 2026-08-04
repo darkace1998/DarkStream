@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+// Shared fixtures for the formatter output tests.
+const (
+	testColName   = "Name"
+	testColStatus = "Status"
+	testRowJobID  = "job-1"
+	testRowStatus = "pending"
+)
+
 func TestParseFormat(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -54,18 +62,18 @@ func TestOutput_PrintTable(t *testing.T) {
 	var buf bytes.Buffer
 	out := New(&buf, FormatTable)
 
-	headers := []string{"Name", "Status"}
+	headers := []string{testColName, testColStatus}
 	rows := [][]string{
-		{"job-1", "pending"},
+		{testRowJobID, testRowStatus},
 		{"job-2", "completed"},
 	}
 	out.PrintTable(headers, rows)
 
 	output := buf.String()
-	if !strings.Contains(output, "Name") {
+	if !strings.Contains(output, testColName) {
 		t.Error("Table output missing header 'Name'")
 	}
-	if !strings.Contains(output, "job-1") {
+	if !strings.Contains(output, testRowJobID) {
 		t.Error("Table output missing row 'job-1'")
 	}
 	if !strings.Contains(output, "completed") {
@@ -92,9 +100,9 @@ func TestOutput_PrintCSV(t *testing.T) {
 	var buf bytes.Buffer
 	out := New(&buf, FormatCSV)
 
-	headers := []string{"Name", "Status"}
+	headers := []string{testColName, testColStatus}
 	rows := [][]string{
-		{"job-1", "pending"},
+		{testRowJobID, testRowStatus},
 		{"job-2", "completed"},
 	}
 	err := out.PrintCSV(headers, rows)
@@ -116,9 +124,9 @@ func TestOutput_PrintCSV(t *testing.T) {
 }
 
 func TestOutput_Print_AllFormats(t *testing.T) {
-	headers := []string{"Name", "Status"}
-	rows := [][]string{{"job-1", "pending"}}
-	jsonData := map[string]string{"name": "job-1", "status": "pending"}
+	headers := []string{testColName, testColStatus}
+	rows := [][]string{{testRowJobID, testRowStatus}}
+	jsonData := map[string]string{"name": testRowJobID, "status": testRowStatus}
 
 	tests := []struct {
 		name   string

@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 )
 
 // Test fixture constants used across the config test suite.
 const (
-	testCodecH264 = "h264"
-	testFormatMP4 = "mp4"
+	testCodecH264    = "h264"
+	testFormatMP4    = "mp4"
+	testResolution   = "1920x1080"
+	testAudioBitrate = "128k"
 )
 
 func TestNewManager_FallsBackToYAMLDefaults(t *testing.T) {
@@ -19,12 +22,12 @@ func TestNewManager_FallsBackToYAMLDefaults(t *testing.T) {
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 		OutputFormat:     testFormatMP4,
 	}
 
@@ -34,13 +37,13 @@ func TestNewManager_FallsBackToYAMLDefaults(t *testing.T) {
 	}
 
 	cfg := mgr.Get()
-	if cfg.Video.Resolution != "1920x1080" {
+	if cfg.Video.Resolution != testResolution {
 		t.Errorf("Video.Resolution = %q, want \"1920x1080\"", cfg.Video.Resolution)
 	}
 	if cfg.Video.Codec != testCodecH264 {
 		t.Errorf("Video.Codec = %q, want \"h264\"", cfg.Video.Codec)
 	}
-	if cfg.Audio.Codec != "aac" {
+	if cfg.Audio.Codec != constants.AudioCodecAAC {
 		t.Errorf("Audio.Codec = %q, want \"aac\"", cfg.Audio.Codec)
 	}
 	if cfg.Output.Format != testFormatMP4 {
@@ -57,14 +60,14 @@ func TestNewManager_WithWorkerDefaults(t *testing.T) {
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1280x720",
-		Codec:            "h265",
+		Codec:            constants.CodecH265,
 	}
 	workerDefaults := &WorkerConfig{
 		Concurrency:       5,
 		HeartbeatInterval: 60,
 		JobCheckInterval:  10,
 		JobTimeout:        3600,
-		LogLevel:          "debug",
+		LogLevel:          constants.LogLevelDebug,
 		LogFormat:         "text",
 	}
 
@@ -80,7 +83,7 @@ func TestNewManager_WithWorkerDefaults(t *testing.T) {
 	if wc.HeartbeatInterval != 60 {
 		t.Errorf("Worker.HeartbeatInterval = %d, want 60", wc.HeartbeatInterval)
 	}
-	if wc.LogLevel != "debug" {
+	if wc.LogLevel != constants.LogLevelDebug {
 		t.Errorf("Worker.LogLevel = %q, want \"debug\"", wc.LogLevel)
 	}
 }
@@ -91,12 +94,12 @@ func TestNewManager_LoadsExistingJSON(t *testing.T) {
 
 	// Create initial config
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 	}
 	mgr1, err := NewManager(jsonPath, yamlDefaults, nil)
 	if err != nil {
@@ -105,7 +108,7 @@ func TestNewManager_LoadsExistingJSON(t *testing.T) {
 
 	// Update config to create a new version
 	cfg := mgr1.Get()
-	cfg.Video.Codec = "h265"
+	cfg.Video.Codec = constants.CodecH265
 	err = mgr1.Update(cfg)
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -118,7 +121,7 @@ func TestNewManager_LoadsExistingJSON(t *testing.T) {
 	}
 
 	cfg2 := mgr2.Get()
-	if cfg2.Video.Codec != "h265" {
+	if cfg2.Video.Codec != constants.CodecH265 {
 		t.Errorf("Video.Codec = %q, want \"h265\" (loaded from JSON)", cfg2.Video.Codec)
 	}
 	if cfg2.Version != 2 {
@@ -131,12 +134,12 @@ func TestManager_Update_ValidConfig(t *testing.T) {
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 	}
 	mgr, err := NewManager(jsonPath, yamlDefaults, nil)
 	if err != nil {
@@ -164,12 +167,12 @@ func TestManager_Update_InvalidConfig(t *testing.T) {
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 	}
 	mgr, err := NewManager(jsonPath, yamlDefaults, nil)
 	if err != nil {
@@ -189,12 +192,12 @@ func TestManager_GetConversionSettings(t *testing.T) {
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 		OutputFormat:     testFormatMP4,
 	}
 	mgr, err := NewManager(jsonPath, yamlDefaults, nil)
@@ -206,7 +209,7 @@ func TestManager_GetConversionSettings(t *testing.T) {
 	if cs.Codec != testCodecH264 {
 		t.Errorf("Codec = %q, want \"h264\"", cs.Codec)
 	}
-	if cs.AudioCodec != "aac" {
+	if cs.AudioCodec != constants.AudioCodecAAC {
 		t.Errorf("AudioCodec = %q, want \"aac\"", cs.AudioCodec)
 	}
 	if cs.OutputFormat != testFormatMP4 {
@@ -223,7 +226,7 @@ func TestGetDefaultWorkerConfig(t *testing.T) {
 	if cfg.HeartbeatInterval != 30 {
 		t.Errorf("HeartbeatInterval = %d, want 30", cfg.HeartbeatInterval)
 	}
-	if cfg.LogLevel != "info" {
+	if cfg.LogLevel != constants.LogLevelInfo {
 		t.Errorf("LogLevel = %q, want \"info\"", cfg.LogLevel)
 	}
 	if !cfg.UseVulkan {
@@ -240,8 +243,8 @@ func TestGetDefaultFormat(t *testing.T) {
 		expected string
 	}{
 		{"", testFormatMP4},
-		{"mkv", "mkv"},
-		{"webm", "webm"},
+		{constants.FormatMKV, constants.FormatMKV},
+		{constants.FormatWebM, constants.FormatWebM},
 	}
 
 	for _, tt := range tests {
@@ -261,8 +264,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
-				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
+				Video:  VideoConfig{Resolution: testResolution, Codec: testCodecH264, Bitrate: "5M", Preset: constants.PresetFast},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC, Bitrate: testAudioBitrate},
 				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
@@ -271,8 +274,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid resolution format",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "invalid", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
-				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
+				Video:  VideoConfig{Resolution: "invalid", Codec: testCodecH264, Bitrate: "5M", Preset: constants.PresetFast},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC, Bitrate: testAudioBitrate},
 				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
@@ -281,8 +284,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid video codec",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: "badcodec", Bitrate: "5M", Preset: "fast"},
-				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
+				Video:  VideoConfig{Resolution: testResolution, Codec: "badcodec", Bitrate: "5M", Preset: constants.PresetFast},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC, Bitrate: testAudioBitrate},
 				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
@@ -291,8 +294,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid preset",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "badpreset"},
-				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
+				Video:  VideoConfig{Resolution: testResolution, Codec: testCodecH264, Bitrate: "5M", Preset: "badpreset"},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC, Bitrate: testAudioBitrate},
 				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
@@ -301,8 +304,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid output format",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
-				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
+				Video:  VideoConfig{Resolution: testResolution, Codec: testCodecH264, Bitrate: "5M", Preset: constants.PresetFast},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC, Bitrate: testAudioBitrate},
 				Output: OutputConfig{Format: "flv"},
 				Worker: getDefaultWorkerConfig(),
 			},
@@ -311,8 +314,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "concurrency below minimum",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Codec: testCodecH264, Preset: "fast"},
-				Audio:  AudioConfig{Codec: "aac"},
+				Video:  VideoConfig{Codec: testCodecH264, Preset: constants.PresetFast},
+				Audio:  AudioConfig{Codec: constants.AudioCodecAAC},
 				Output: OutputConfig{Format: testFormatMP4},
 				Worker: WorkerConfig{Concurrency: 0, HeartbeatInterval: 30, JobCheckInterval: 5, JobTimeout: 3600},
 			},
@@ -335,12 +338,12 @@ func TestManager_PersistsToFile(t *testing.T) {
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
-		TargetResolution: "1920x1080",
+		TargetResolution: testResolution,
 		Codec:            testCodecH264,
 		Bitrate:          "5M",
-		Preset:           "fast",
-		AudioCodec:       "aac",
-		AudioBitrate:     "128k",
+		Preset:           constants.PresetFast,
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     testAudioBitrate,
 	}
 	_, err := NewManager(jsonPath, yamlDefaults, nil)
 	if err != nil {

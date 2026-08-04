@@ -101,11 +101,11 @@ func TestHealthCheck_HighPendingJobs(t *testing.T) {
 	srv := newTestServer(t)
 
 	// Create 1001 jobs
-	for i := 0; i < 1001; i++ {
+	for i := range 1001 {
 		job := &models.Job{
 			ID:         fmt.Sprintf("job-%d", i),
-			SourcePath: "/tmp/source.mp4",
-			OutputPath: "/tmp/output.mp4",
+			SourcePath: testSourcePath,
+			OutputPath: testOutputPath,
 			Status:     statusPending,
 			Priority:   5,
 			CreatedAt:  time.Now(),
@@ -149,9 +149,9 @@ func TestHealthCheck_StaleJobs(t *testing.T) {
 	// Create a stale processing job
 	job := &models.Job{
 		ID:         "stale-job",
-		SourcePath: "/tmp/source.mp4",
-		OutputPath: "/tmp/output.mp4",
-		Status:     "processing",
+		SourcePath: testSourcePath,
+		OutputPath: testOutputPath,
+		Status:     statusProcessing,
 		Priority:   5,
 		CreatedAt:  time.Now().Add(-4 * time.Hour),
 	}
@@ -199,9 +199,9 @@ func TestHealthCheck_JobStatsDegraded(t *testing.T) {
 	// Complete 1 job
 	jobCompleted := &models.Job{
 		ID:         "completed-job",
-		SourcePath: "/tmp/source.mp4",
-		OutputPath: "/tmp/output.mp4",
-		Status:     "completed",
+		SourcePath: testSourcePath,
+		OutputPath: testOutputPath,
+		Status:     statusCompleted,
 		Priority:   5,
 		CreatedAt:  time.Now(),
 	}
@@ -209,12 +209,12 @@ func TestHealthCheck_JobStatsDegraded(t *testing.T) {
 		t.Fatalf("Failed to create job: %v", err)
 	}
 	// Fail 11 jobs
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		jobFailed := &models.Job{
 			ID:         fmt.Sprintf("failed-job-%d", i),
-			SourcePath: "/tmp/source.mp4",
-			OutputPath: "/tmp/output.mp4",
-			Status:     "failed",
+			SourcePath: testSourcePath,
+			OutputPath: testOutputPath,
+			Status:     statusFailed,
 			Priority:   5,
 			CreatedAt:  time.Now(),
 		}
@@ -289,7 +289,7 @@ func TestHealthCheck_WorkersHealthy(t *testing.T) {
 
 	// Register a worker
 	worker := &models.WorkerHeartbeat{
-		WorkerID:  "worker-1",
+		WorkerID:  testWorkerID,
 		Hostname:  "localhost",
 		Timestamp: time.Now(),
 	}

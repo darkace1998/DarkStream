@@ -9,6 +9,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// Prometheus namespace, subsystem and label names for the master's metrics.
+const (
+	namespace = "darkstream"
+
+	subsystemJobs     = "jobs"
+	subsystemWorkers  = "workers"
+	subsystemTransfer = "transfer"
+
+	labelStatus = "status"
+)
+
 var (
 	globalMetrics     *Metrics
 	globalMetricsOnce sync.Once
@@ -53,43 +64,43 @@ func newMetrics() *Metrics {
 		// Job metrics
 		JobsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "total",
 				Help:      "Total number of jobs processed by status",
 			},
-			[]string{"status"},
+			[]string{labelStatus},
 		),
 		JobsInProgress: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "in_progress",
 				Help:      "Number of jobs currently being processed",
 			},
 		),
 		JobDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "duration_seconds",
 				Help:      "Duration of job processing in seconds",
 				Buckets:   []float64{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
 			},
-			[]string{"status"},
+			[]string{labelStatus},
 		),
 		JobQueueDepth: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "queue_depth",
 				Help:      "Number of jobs waiting in the queue (pending status)",
 			},
 		),
 		JobRetries: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "retries_total",
 				Help:      "Total number of job retries",
 			},
@@ -97,8 +108,8 @@ func newMetrics() *Metrics {
 		),
 		JobErrors: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
-				Subsystem: "jobs",
+				Namespace: namespace,
+				Subsystem: subsystemJobs,
 				Name:      "errors_total",
 				Help:      "Total number of job errors by type",
 			},
@@ -108,24 +119,24 @@ func newMetrics() *Metrics {
 		// Worker metrics
 		WorkersTotal: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Namespace: "darkstream",
-				Subsystem: "workers",
+				Namespace: namespace,
+				Subsystem: subsystemWorkers,
 				Name:      "registered",
 				Help:      "Total number of registered workers",
 			},
 		),
 		WorkersActive: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Namespace: "darkstream",
-				Subsystem: "workers",
+				Namespace: namespace,
+				Subsystem: subsystemWorkers,
 				Name:      "active",
 				Help:      "Number of active workers (sent heartbeat recently)",
 			},
 		),
 		WorkerHeartbeat: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Namespace: "darkstream",
-				Subsystem: "workers",
+				Namespace: namespace,
+				Subsystem: subsystemWorkers,
 				Name:      "last_heartbeat_timestamp",
 				Help:      "Timestamp of last heartbeat from worker",
 			},
@@ -135,7 +146,7 @@ func newMetrics() *Metrics {
 		// API metrics
 		APIRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
+				Namespace: namespace,
 				Subsystem: "api",
 				Name:      "requests_total",
 				Help:      "Total number of API requests by endpoint and status",
@@ -144,7 +155,7 @@ func newMetrics() *Metrics {
 		),
 		APILatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "darkstream",
+				Namespace: namespace,
 				Subsystem: "api",
 				Name:      "latency_seconds",
 				Help:      "API request latency in seconds",
@@ -156,24 +167,24 @@ func newMetrics() *Metrics {
 		// File transfer metrics
 		BytesDownloaded: prometheus.NewCounter(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
-				Subsystem: "transfer",
+				Namespace: namespace,
+				Subsystem: subsystemTransfer,
 				Name:      "bytes_downloaded_total",
 				Help:      "Total bytes downloaded by workers",
 			},
 		),
 		BytesUploaded: prometheus.NewCounter(
 			prometheus.CounterOpts{
-				Namespace: "darkstream",
-				Subsystem: "transfer",
+				Namespace: namespace,
+				Subsystem: subsystemTransfer,
 				Name:      "bytes_uploaded_total",
 				Help:      "Total bytes uploaded by workers",
 			},
 		),
 		TransferSpeed: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "darkstream",
-				Subsystem: "transfer",
+				Namespace: namespace,
+				Subsystem: subsystemTransfer,
 				Name:      "speed_bytes_per_second",
 				Help:      "File transfer speeds in bytes per second",
 				Buckets:   []float64{1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024, 50 * 1024 * 1024, 100 * 1024 * 1024, 500 * 1024 * 1024, 1024 * 1024 * 1024}, // 1MB/s to 1GB/s

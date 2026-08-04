@@ -12,7 +12,7 @@ func TestWatcher(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize scanner
-	scn := New(tempDir, []string{".mp4", ".mkv"}, tempDir)
+	scn := New(tempDir, []string{extMP4, extMKV}, tempDir)
 	scn.SetOptions(ScanOptions{
 		MaxDepth:        -1,
 		SkipHiddenFiles: true,

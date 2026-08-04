@@ -40,8 +40,8 @@ func runCancelJobs(args []string) error {
 	}
 
 	requestURL, err := utils.BuildURL(*masterURL, "/api/jobs/cancel", url.Values{
-		"status": []string{*status},
-		"limit":  []string{fmt.Sprintf("%d", *limit)},
+		"status":   []string{*status},
+		paramLimit: []string{fmt.Sprintf("%d", *limit)},
 	})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)

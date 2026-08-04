@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Testing**: Unit tests for the master config loader (`config_test.go` and `manager_test.go`).
 
 ### Changed
+- **Lint**: Cleared all 126 `goconst` and `modernize` findings surfaced by golangci-lint v2.12.2
+  across all four modules by extracting named constants and adopting modern Go idioms
+  (`interface{}` → `any`, `for range N`, `atomic.Int64`/`atomic.Int32`, `min`). Existing shared
+  constants (`constants.CodecH264`, `constants.PresetFast`, `statusPending`, …) are reused rather
+  than duplicated.
+- **CI**: Pinned `golangci-lint` to v2.12.2 in all four lint steps. `.golangci.yml` uses
+  `default: all`, so `version: latest` meant any new golangci-lint release could enable new
+  linters and break CI with no code change — which is exactly what happened. Linter upgrades
+  are now a deliberate, reviewable change.
 - **Vulkan**: Upgraded `github.com/darkace1998/golang-vulkan-api` from v1.1.0 to
   [v1.2.0](https://github.com/darkace1998/Golang-Vulkan-api/releases/tag/v1.2.0), which brings
   CGO pointer-arithmetic and memory-management fixes, resource leak detection, and expanded

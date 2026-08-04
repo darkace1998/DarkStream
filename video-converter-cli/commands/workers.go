@@ -124,7 +124,7 @@ func watchWorkers(masterURL string, activeOnly bool, format string) {
 }
 
 func workersToTable(result map[string]any) ([]string, [][]string) {
-	headers := []string{"ID", "Hostname", "Status", "Active Jobs", "GPU", "CPU%", "Mem%", "Last Heartbeat"}
+	headers := []string{"ID", "Hostname", colStatus, "Active Jobs", "GPU", "CPU%", "Mem%", "Last Heartbeat"}
 
 	workers, ok := result["workers"].([]any)
 	if !ok || len(workers) == 0 {

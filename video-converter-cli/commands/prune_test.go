@@ -41,7 +41,7 @@ func TestPruneSuccess(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the prune command
-	args := []string{"--master-url", server.URL, "--status", "failed"}
+	args := []string{flagMasterURL, server.URL, flagStatus, "failed"}
 	Prune(args)
 
 	// Verify log output contains success message

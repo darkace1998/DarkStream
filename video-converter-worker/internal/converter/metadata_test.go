@@ -7,10 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 )
 
-const testAudioCodecAAC = "aac"
+// testScenarioSuccess is the TEST_FFPROBE_SCENARIO value that makes the helper
+// process emit a well-formed ffprobe response.
+const testScenarioSuccess = "success"
 
 // TestHelperProcess isn't a real test. It's used as a helper process
 // for TestGetVideoMetadata.
@@ -49,7 +52,7 @@ func TestHelperProcess(t *testing.T) {
 
 	scenario := os.Getenv("TEST_FFPROBE_SCENARIO")
 	switch scenario {
-	case "success":
+	case testScenarioSuccess:
 		fmt.Print(`{
 			"format": {
 				"duration": "120.5",
@@ -94,7 +97,7 @@ func TestNewMetadataExtractor(t *testing.T) {
 	}{
 		{
 			name:       "standard linux path",
-			ffmpegPath: "/usr/bin/ffmpeg",
+			ffmpegPath: testFFmpegPath,
 			expected:   "/usr/bin/ffprobe",
 		},
 		{
@@ -167,7 +170,7 @@ func TestGetVideoMetadata(t *testing.T) {
 		{
 			name:        "successful extraction",
 			sourcePath:  tmpFileName,
-			scenario:    "success",
+			scenario:    testScenarioSuccess,
 			expectError: false,
 			checkMetadata: func(t *testing.T, m *models.VideoMetadata) {
 				t.Helper()
@@ -177,7 +180,7 @@ func TestGetVideoMetadata(t *testing.T) {
 				if m.Bitrate != 5000000 {
 					t.Errorf("Expected bitrate 5000000, got %v", m.Bitrate)
 				}
-				if m.VideoCodec != "h264" {
+				if m.VideoCodec != constants.CodecH264 {
 					t.Errorf("Expected video codec h264, got %s", m.VideoCodec)
 				}
 				if m.Width != 1920 {
@@ -186,7 +189,7 @@ func TestGetVideoMetadata(t *testing.T) {
 				if m.Height != 1080 {
 					t.Errorf("Expected height 1080, got %d", m.Height)
 				}
-				if m.AudioCodec != testAudioCodecAAC {
+				if m.AudioCodec != constants.AudioCodecAAC {
 					t.Errorf("Expected audio codec aac, got %s", m.AudioCodec)
 				}
 			},
@@ -194,13 +197,13 @@ func TestGetVideoMetadata(t *testing.T) {
 		{
 			name:        "file does not exist",
 			sourcePath:  "non_existent_file.mp4",
-			scenario:    "success",
+			scenario:    testScenarioSuccess,
 			expectError: true,
 		},
 		{
 			name:        "path is a directory",
 			sourcePath:  tmpDir,
-			scenario:    "success",
+			scenario:    testScenarioSuccess,
 			expectError: true,
 		},
 		{
@@ -245,8 +248,8 @@ func TestApplyMetadataToJob(t *testing.T) {
 		Duration:   120.5,
 		Width:      1920,
 		Height:     1080,
-		VideoCodec: "h264",
-		AudioCodec: testAudioCodecAAC,
+		VideoCodec: constants.CodecH264,
+		AudioCodec: constants.AudioCodecAAC,
 		Bitrate:    5000000,
 		FileSize:   1024000,
 	}
@@ -262,10 +265,10 @@ func TestApplyMetadataToJob(t *testing.T) {
 	if job.SourceHeight != 1080 {
 		t.Errorf("Expected SourceHeight 1080, got %v", job.SourceHeight)
 	}
-	if job.SourceVideoCodec != "h264" {
+	if job.SourceVideoCodec != constants.CodecH264 {
 		t.Errorf("Expected SourceVideoCodec h264, got %s", job.SourceVideoCodec)
 	}
-	if job.SourceAudioCodec != testAudioCodecAAC {
+	if job.SourceAudioCodec != constants.AudioCodecAAC {
 		t.Errorf("Expected SourceAudioCodec aac, got %s", job.SourceAudioCodec)
 	}
 	if job.SourceBitrate != 5000000 {

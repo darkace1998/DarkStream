@@ -8,11 +8,18 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+const (
+	// testFFmpegPath is the stand-in ffmpeg binary path used across converter tests.
+	testFFmpegPath = "/usr/bin/ffmpeg"
+	// testCodecUnknown exercises the fallback branches of the codec/format selectors.
+	testCodecUnknown = "unknown"
+)
+
 // TestBuildFFmpegCommandHwaccelOrder ensures Vulkan hardware-acceleration flags
 // are emitted as input options (before "-i <source>"). ffmpeg rejects them when
 // they appear after the input, so this ordering is load-bearing.
 func TestBuildFFmpegCommandHwaccelOrder(t *testing.T) {
-	fc := &FFmpegConverter{ffmpegPath: "/usr/bin/ffmpeg"}
+	fc := &FFmpegConverter{ffmpegPath: testFFmpegPath}
 	job := &models.Job{SourcePath: "/in.mkv", OutputPath: "/out.mp4"}
 	cfg := &models.ConversionConfig{
 		UseVulkan:        true,
@@ -53,7 +60,7 @@ func TestBuildFFmpegCommandHwaccelOrder(t *testing.T) {
 // TestGetVideoCodec tests video codec selection
 func TestGetVideoCodec(t *testing.T) {
 	fc := &FFmpegConverter{
-		ffmpegPath: "/usr/bin/ffmpeg",
+		ffmpegPath: testFFmpegPath,
 	}
 
 	tests := []struct {
@@ -66,7 +73,7 @@ func TestGetVideoCodec(t *testing.T) {
 			name:      "h264 with Vulkan",
 			codec:     constants.CodecH264,
 			useVulkan: true,
-			expected:  "h264_vulkan",
+			expected:  encoderH264Vulkan,
 		},
 		{
 			name:      "h265 with Vulkan",
@@ -78,7 +85,7 @@ func TestGetVideoCodec(t *testing.T) {
 			name:      "h264 without Vulkan",
 			codec:     constants.CodecH264,
 			useVulkan: false,
-			expected:  "libx264",
+			expected:  encoderLibx264,
 		},
 		{
 			name:      "h265 without Vulkan",
@@ -100,15 +107,15 @@ func TestGetVideoCodec(t *testing.T) {
 		},
 		{
 			name:      "unknown codec with Vulkan fallback",
-			codec:     "unknown",
+			codec:     testCodecUnknown,
 			useVulkan: true,
-			expected:  "h264_vulkan",
+			expected:  encoderH264Vulkan,
 		},
 		{
 			name:      "unknown codec without Vulkan fallback",
-			codec:     "unknown",
+			codec:     testCodecUnknown,
 			useVulkan: false,
-			expected:  "libx264",
+			expected:  encoderLibx264,
 		},
 	}
 
@@ -125,7 +132,7 @@ func TestGetVideoCodec(t *testing.T) {
 // TestGetAudioCodec tests audio codec selection
 func TestGetAudioCodec(t *testing.T) {
 	fc := &FFmpegConverter{
-		ffmpegPath: "/usr/bin/ffmpeg",
+		ffmpegPath: testFFmpegPath,
 	}
 
 	tests := []struct {
@@ -136,7 +143,7 @@ func TestGetAudioCodec(t *testing.T) {
 		{
 			name:     "aac codec",
 			codec:    constants.AudioCodecAAC,
-			expected: "aac",
+			expected: encoderAAC,
 		},
 		{
 			name:     "mp3 codec",
@@ -155,8 +162,8 @@ func TestGetAudioCodec(t *testing.T) {
 		},
 		{
 			name:     "unknown codec fallback",
-			codec:    "unknown",
-			expected: "aac",
+			codec:    testCodecUnknown,
+			expected: encoderAAC,
 		},
 	}
 
@@ -173,7 +180,7 @@ func TestGetAudioCodec(t *testing.T) {
 // TestGetOutputFormat tests output format selection
 func TestGetOutputFormat(t *testing.T) {
 	fc := &FFmpegConverter{
-		ffmpegPath: "/usr/bin/ffmpeg",
+		ffmpegPath: testFFmpegPath,
 	}
 
 	tests := []struct {
@@ -184,7 +191,7 @@ func TestGetOutputFormat(t *testing.T) {
 		{
 			name:     "mp4 format",
 			format:   constants.FormatMP4,
-			expected: "mp4",
+			expected: muxerMP4,
 		},
 		{
 			name:     "mkv format",
@@ -203,8 +210,8 @@ func TestGetOutputFormat(t *testing.T) {
 		},
 		{
 			name:     "unknown format fallback",
-			format:   "unknown",
-			expected: "mp4",
+			format:   testCodecUnknown,
+			expected: muxerMP4,
 		},
 	}
 
@@ -221,13 +228,13 @@ func TestGetOutputFormat(t *testing.T) {
 // TestNewFFmpegConverter tests the constructor
 func TestNewFFmpegConverter(t *testing.T) {
 	detector := NewVulkanDetector("auto")
-	converter := NewFFmpegConverter("/usr/bin/ffmpeg", detector, 3600)
+	converter := NewFFmpegConverter(testFFmpegPath, detector, 3600)
 
 	if converter == nil {
 		t.Fatal("Expected non-nil converter")
 	}
 
-	if converter.ffmpegPath != "/usr/bin/ffmpeg" {
+	if converter.ffmpegPath != testFFmpegPath {
 		t.Errorf("Expected ffmpegPath /usr/bin/ffmpeg, got %s", converter.ffmpegPath)
 	}
 

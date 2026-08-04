@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+// Shared fixtures for the command tests in this package.
+const (
+	// flagMasterURL is the CLI flag every command test uses to point at its test server.
+	flagMasterURL = "--master-url"
+	// testJobID is the job identifier served by the job command's test fixtures.
+	testJobID = "test-job-123"
+	// flagStatus is the status-filter flag shared by the bulk command tests.
+	flagStatus = "--status"
+)
+
 func TestNewMasterRequest_RejectsInsecureAuthTransport(t *testing.T) {
 	t.Setenv(masterAPIKeyEnvVar, "secret")
 

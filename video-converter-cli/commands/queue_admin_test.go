@@ -42,7 +42,7 @@ func TestQueuePauseSuccess(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the queue-pause command
-	args := []string{"--master-url", server.URL}
+	args := []string{flagMasterURL, server.URL}
 	QueuePause(args)
 
 	// Verify log output contains success message
@@ -84,7 +84,7 @@ func TestQueueResumeSuccess(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the queue-resume command
-	args := []string{"--master-url", server.URL}
+	args := []string{flagMasterURL, server.URL}
 	QueueResume(args)
 
 	// Verify log output contains success message
