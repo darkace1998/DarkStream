@@ -48,7 +48,7 @@ func TestJob(t *testing.T) {
 	Job([]string{"--master-url", ts.URL, "--job-id", "not-found"})
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf strings.Builder

@@ -33,6 +33,12 @@ func Workers(args []string) {
 }
 
 func displayWorkers(masterURL string, activeOnly bool, format string) {
+	if err := runDisplayWorkers(masterURL, activeOnly, format); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runDisplayWorkers(masterURL string, activeOnly bool, format string) error {
 	query := url.Values{}
 	if activeOnly {
 		query.Set("active_only", "true")
@@ -40,20 +46,20 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 	requestURL, err := utils.BuildURL(masterURL, "/api/workers", query)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	req, err := newMasterRequest(http.MethodGet, requestURL, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -68,20 +74,20 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 		if len(body) > 0 {
 			slog.Info(string(body))
 		}
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -95,6 +101,7 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 	default:
 		printWorkersTable(result)
 	}
+	return nil
 }
 
 func watchWorkers(masterURL string, activeOnly bool, format string) {

@@ -26,23 +26,29 @@ func Stats(args []string) {
 }
 
 func displayStats(masterURL, format string, detailed bool) {
+	if err := runDisplayStats(masterURL, format, detailed); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runDisplayStats(masterURL, format string, detailed bool) error {
 	url, err := utils.BuildURL(masterURL, "/api/stats", nil)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	req, err := newMasterRequest(http.MethodGet, url, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -57,53 +63,26 @@ func displayStats(masterURL, format string, detailed bool) {
 		if len(body) > 0 {
 			slog.Info(string(body))
 		}
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	var stats map[string]any
 	err = json.Unmarshal(body, &stats)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	// If detailed, also fetch workers
 	var workerData map[string]any
 	if detailed {
-		workerURL, err := utils.BuildURL(masterURL, "/api/workers", nil)
-		if err != nil {
-			slog.Warn("Failed to build detailed worker stats URL", "error", err)
-			workerURL = ""
-		}
-		workerReq, err := newMasterRequest(http.MethodGet, workerURL, nil, "")
-		if err == nil {
-			workerResp, err := doMasterRequest(workerReq)
-			if err == nil {
-				defer func() {
-					_ = workerResp.Body.Close()
-				}()
-				workerBody, err := io.ReadAll(workerResp.Body)
-				if err == nil {
-					if workerResp.StatusCode == http.StatusOK {
-						_ = json.Unmarshal(workerBody, &workerData)
-					} else {
-						slog.Warn("Failed to fetch detailed worker stats", "status", workerResp.StatusCode, "body", string(workerBody))
-					}
-				} else {
-					slog.Warn("Failed to read detailed worker stats response", "error", err)
-				}
-			} else {
-				slog.Warn("Failed to fetch detailed worker stats", "error", err)
-			}
-		} else {
-			slog.Warn("Failed to create detailed worker stats request", "error", err)
-		}
+		workerData = fetchDetailedWorkerStats(masterURL)
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -120,6 +99,43 @@ func displayStats(masterURL, format string, detailed bool) {
 	default:
 		printStatsTable(stats, workerData, detailed)
 	}
+	return nil
+}
+
+// fetchDetailedWorkerStats retrieves worker statistics for the detailed view.
+// Any failure is reported as a warning and results in a nil map, matching the
+// best-effort semantics of the detailed stats display.
+func fetchDetailedWorkerStats(masterURL string) map[string]any {
+	workerURL, err := utils.BuildURL(masterURL, "/api/workers", nil)
+	if err != nil {
+		slog.Warn("Failed to build detailed worker stats URL", "error", err)
+		workerURL = ""
+	}
+	workerReq, err := newMasterRequest(http.MethodGet, workerURL, nil, "")
+	if err != nil {
+		slog.Warn("Failed to create detailed worker stats request", "error", err)
+		return nil
+	}
+	workerResp, err := doMasterRequest(workerReq)
+	if err != nil {
+		slog.Warn("Failed to fetch detailed worker stats", "error", err)
+		return nil
+	}
+	defer func() {
+		_ = workerResp.Body.Close()
+	}()
+	workerBody, err := io.ReadAll(workerResp.Body)
+	if err != nil {
+		slog.Warn("Failed to read detailed worker stats response", "error", err)
+		return nil
+	}
+	if workerResp.StatusCode != http.StatusOK {
+		slog.Warn("Failed to fetch detailed worker stats", "status", workerResp.StatusCode, "body", string(workerBody))
+		return nil
+	}
+	var workerData map[string]any
+	_ = json.Unmarshal(workerBody, &workerData)
+	return workerData
 }
 
 func statsToCSV(stats map[string]any) ([]string, [][]string) {
@@ -152,7 +168,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 		slog.Info("📋 Job Status:")
 
 		// Print in order
-		statusOrder := []string{"completed", "processing", "pending", "failed", "cancelled"}
+		statusOrder := []string{statusCompleted, statusProcessing, statusPending, statusFailed, statusCancelled}
 		for _, status := range statusOrder {
 			if count, ok := jobs[status]; ok {
 				icon := getStatusIcon(status)
@@ -202,15 +218,15 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 
 		// Calculate some derived metrics
 		if jobs, ok := stats["jobs"].(map[string]any); ok {
-			completed := getIntValueFromAny(jobs["completed"])
-			failed := getIntValueFromAny(jobs["failed"])
+			completed := getIntValueFromAny(jobs[statusCompleted])
+			failed := getIntValueFromAny(jobs[statusFailed])
 			if completed+failed > 0 {
 				successRate := float64(completed) / float64(completed+failed) * 100
 				slog.Info(fmt.Sprintf("  ├─ Success Rate: %.1f%%", successRate))
 			}
 
-			processing := getIntValueFromAny(jobs["processing"])
-			pending := getIntValueFromAny(jobs["pending"])
+			processing := getIntValueFromAny(jobs[statusProcessing])
+			pending := getIntValueFromAny(jobs[statusPending])
 			if processing > 0 || pending > 0 {
 				slog.Info(fmt.Sprintf("  ├─ Queue Depth: %d pending, %d processing", pending, processing))
 			}

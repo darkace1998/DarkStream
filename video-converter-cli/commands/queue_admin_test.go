@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+//nolint:dupl // parallel admin command tests, kept separate for clarity
 func TestQueuePauseSuccess(t *testing.T) {
 	// Start a local HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -50,6 +51,7 @@ func TestQueuePauseSuccess(t *testing.T) {
 	}
 }
 
+//nolint:dupl // parallel admin command tests, kept separate for clarity
 func TestQueueResumeSuccess(t *testing.T) {
 	// Start a local HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {

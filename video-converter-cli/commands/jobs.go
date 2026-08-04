@@ -34,6 +34,12 @@ func Jobs(args []string) {
 }
 
 func displayJobs(masterURL, status string, limit int, format string) {
+	if err := runDisplayJobs(masterURL, status, limit, format); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runDisplayJobs(masterURL, status string, limit int, format string) error {
 	query := map[string]string{"limit": fmt.Sprintf("%d", limit)}
 	if status != "" {
 		query["status"] = status
@@ -41,20 +47,20 @@ func displayJobs(masterURL, status string, limit int, format string) {
 	requestURL, err := utils.BuildURL(masterURL, "/api/jobs", mapToValues(query))
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	req, err := newMasterRequest(http.MethodGet, requestURL, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -67,20 +73,20 @@ func displayJobs(masterURL, status string, limit int, format string) {
 		body, _ := io.ReadAll(resp.Body)
 		slog.Error("Error: received status code from master server", "status", resp.StatusCode)
 		slog.Info(string(body))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -94,6 +100,7 @@ func displayJobs(masterURL, status string, limit int, format string) {
 	default:
 		printJobsTable(result, status)
 	}
+	return nil
 }
 
 func mapToValues(values map[string]string) url.Values {
@@ -201,7 +208,7 @@ func printJobsTable(result map[string]any, filterStatus string) {
 	}
 
 	// Print in order: processing, pending, failed, completed
-	order := []string{"processing", "pending", "failed", "completed"}
+	order := []string{statusProcessing, statusPending, statusFailed, statusCompleted}
 	for _, status := range order {
 		jobList, exists := statusGroups[status]
 		if !exists || len(jobList) == 0 {
@@ -234,12 +241,12 @@ func printJobsTable(result map[string]any, filterStatus string) {
 			}
 
 			switch {
-			case status == "failed" && errorMsg != "":
+			case status == statusFailed && errorMsg != "":
 				if len(errorMsg) > 40 {
 					errorMsg = errorMsg[:40] + "..."
 				}
 				slog.Info(fmt.Sprintf("  %s %s: %s", prefix, id, errorMsg))
-			case status == "processing" && workerID != "":
+			case status == statusProcessing && workerID != "":
 				slog.Info(fmt.Sprintf("  %s %s (worker: %s)", prefix, id, workerID))
 			default:
 				slog.Info(fmt.Sprintf("  %s %s: %s", prefix, id, sourcePath))
@@ -251,15 +258,15 @@ func printJobsTable(result map[string]any, filterStatus string) {
 
 func getStatusIcon(status string) string {
 	switch status {
-	case "pending":
+	case statusPending:
 		return "⏳"
-	case "processing":
+	case statusProcessing:
 		return "⚙️"
-	case "completed":
+	case statusCompleted:
 		return "✅"
-	case "failed":
+	case statusFailed:
 		return "❌"
-	case "cancelled":
+	case statusCancelled:
 		return "🚫"
 	default:
 		return "❓"

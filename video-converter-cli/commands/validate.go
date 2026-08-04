@@ -16,6 +16,12 @@ import (
 
 // Validate validates a configuration file.
 func Validate(args []string) {
+	if err := runValidate(args); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	configType := fs.String("type", "", "Config type: 'master' or 'worker' (required)")
 	configPath := fs.String("file", "", "Path to config file (required)")
@@ -26,18 +32,18 @@ func Validate(args []string) {
 	if *configType == "" {
 		slog.Error("Config type is required")
 		slog.Info("Usage: video-converter-cli validate --type <master|worker> --file <config-file>")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	if *configType != "master" && *configType != "worker" {
 		slog.Error("Invalid config type. Must be 'master' or 'worker'")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	if *configPath == "" {
 		slog.Error("Config file path is required")
 		slog.Info("Usage: video-converter-cli validate --type <master|worker> --file <config-file>")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	// Read config file
@@ -45,7 +51,7 @@ func Validate(args []string) {
 	configData, err := os.ReadFile(*configPath)
 	if err != nil {
 		slog.Error("Failed to read config file", "error", err, "path", *configPath)
-		os.Exit(1)
+		return err
 	}
 
 	if *local {
@@ -53,28 +59,28 @@ func Validate(args []string) {
 		errors := validateConfigLocally(*configType, configData)
 		printValidationResult(*configPath, *configType, errors)
 		if len(errors) > 0 {
-			os.Exit(1)
+			return errCommandFailed
 		}
-		return
+		return nil
 	}
 
 	// Remote validation via master server
 	requestURL, err := utils.BuildURL(*masterURL, "/api/validate-config", url.Values{"type": []string{*configType}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, bytes.NewReader(configData), "application/yaml")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info("Use --local flag to validate without master server")
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -86,20 +92,20 @@ func Validate(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Validation request failed", "status", resp.StatusCode)
 		slog.Info(string(body))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	var errors []string
@@ -115,8 +121,9 @@ func Validate(args []string) {
 	if len(errors) > 0 {
 		// Exit non-zero so scripts/CI can detect an invalid config, matching the
 		// local-validation path above.
-		os.Exit(1)
+		return errCommandFailed
 	}
+	return nil
 }
 
 func validateConfigLocally(configType string, content []byte) []string {

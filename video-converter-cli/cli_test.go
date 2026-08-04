@@ -153,7 +153,7 @@ func TestWorkerCommandNoConfig(t *testing.T) {
 
 func TestEndToEndWithMaster(t *testing.T) {
 	// This test requires the master and worker binaries to be built
-	repoRoot := filepath.Join("..")
+	repoRoot := ".."
 	masterBinary := filepath.Join(repoRoot, "video-converter-master", "master")
 	buildBinary(t, masterBinary, filepath.Join(repoRoot, "video-converter-master"))
 
