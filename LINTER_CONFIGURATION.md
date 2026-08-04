@@ -50,6 +50,30 @@ Current status: the golangci-lint configuration is tuned to the repo's current c
 ### Naming Rules
 - **revive var-naming**: Disabled to allow package names like `utils`.
 
+### golangci-lint v2 migration
+
+The `.golangci.yml` is a v2-schema config and now declares `version: "2"` at the
+top. Without that declaration golangci-lint v2 (used by `golangci-lint-action@v8`)
+refuses to load the file, which had left the lint job unable to start. During the
+v1→v2 migration the disable list had also drifted from the intent documented here,
+so it was realigned:
+
+- **wsl** and **wsl_v5**: both whitespace linters are disabled (v2 ships them as
+  two separate linters).
+- **err113**, **mnd**, **intrange**: re-added to the disable list to match the
+  rationale already documented above; they had been dropped from the yaml.
+- New opinionated v2 linters disabled for the same "too strict / not practical"
+  reasons: **noinlineerr** (inline `if err := …` is idiomatic), **funcorder**
+  (method ordering), **wrapcheck** (mandatory error wrapping), **containedctx**
+  and **contextcheck** (storing/deriving contexts is intentional here, e.g. the
+  client's shutdown-propagation context), **nonamedreturns**, and
+  **embeddedstructfieldcheck**.
+
+Remaining findings from the still-enabled bug-finding linters (errcheck, gocritic,
+goconst, dupl, nilnil, complexity, etc.) are pre-existing and tracked by the
+todo.md item "Re-enable and address findings from currently disabled linters";
+they are intentionally not addressed here.
+
 ## Adjusted Settings
 
 ### Complexity Thresholds

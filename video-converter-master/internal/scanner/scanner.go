@@ -20,13 +20,13 @@ import (
 
 // ScanOptions configures scanner behavior
 type ScanOptions struct {
-	MaxDepth         int   // -1 for unlimited, 0 for root only, >0 for specific depth
-	MinFileSize      int64 // Minimum file size in bytes (0 = no minimum)
-	MaxFileSize      int64 // Maximum file size in bytes (0 = no maximum)
-	SkipHiddenFiles  bool  // Skip files starting with '.'
-	SkipHiddenDirs   bool  // Skip directories starting with '.'
-	ReplaceSource    bool  // Replace source file with output (output path = source path)
-	DetectDuplicates bool  // Track file hashes to detect duplicates
+	MaxDepth         int                                 // -1 for unlimited, 0 for root only, >0 for specific depth
+	MinFileSize      int64                               // Minimum file size in bytes (0 = no minimum)
+	MaxFileSize      int64                               // Maximum file size in bytes (0 = no maximum)
+	SkipHiddenFiles  bool                                // Skip files starting with '.'
+	SkipHiddenDirs   bool                                // Skip directories starting with '.'
+	ReplaceSource    bool                                // Replace source file with output (output path = source path)
+	DetectDuplicates bool                                // Track file hashes to detect duplicates
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
 }
 

@@ -1839,7 +1839,6 @@ func TestDeleteWorker(t *testing.T) {
 	}
 }
 
-
 func TestHasJobWithSourceChecksum(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test_tracker.db")
 	tracker, err := New(dbPath)

@@ -312,6 +312,9 @@ func (s *Server) Start() (err error) {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.rateLimiter.stop()
 
+	// Drain in-flight webhook deliveries within the shutdown grace period.
+	s.notifier.Shutdown(ctx)
+
 	if s.server == nil {
 		return nil
 	}

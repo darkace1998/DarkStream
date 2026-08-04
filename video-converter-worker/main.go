@@ -3,13 +3,14 @@ package main
 
 import (
 	"flag"
-	"github.com/darkace1998/video-converter-common/utils"
 	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/darkace1998/video-converter-common/utils"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-worker/internal/client"

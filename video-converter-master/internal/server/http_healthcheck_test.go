@@ -43,7 +43,7 @@ func TestHealthCheck_Healthy(t *testing.T) {
 	}
 
 	if body.Status != statusDegraded {
-        // Degraded because there are 0 workers
+		// Degraded because there are 0 workers
 		t.Errorf("Expected status to be degraded, got %s", body.Status)
 	}
 
@@ -59,7 +59,7 @@ func TestHealthCheck_Healthy(t *testing.T) {
 	if _, ok := body.Checks["stale_jobs"]; !ok {
 		t.Error("Expected 'stale_jobs' check in response")
 	}
-    if _, ok := body.Checks["job_stats"]; !ok {
+	if _, ok := body.Checks["job_stats"]; !ok {
 		t.Error("Expected 'job_stats' check in response")
 	}
 }
@@ -67,8 +67,8 @@ func TestHealthCheck_Healthy(t *testing.T) {
 func TestHealthCheck_UnhealthyDatabase(t *testing.T) {
 	srv := newTestServer(t)
 
-    // Simulate a database failure by closing the underlying connection
-    srv.db.Close()
+	// Simulate a database failure by closing the underlying connection
+	srv.db.Close()
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -89,9 +89,9 @@ func TestHealthCheck_UnhealthyDatabase(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["database"]; ok {
-        if check.Status != statusUnhealthy {
-             t.Errorf("Expected database check to be unhealthy, got %s", check.Status)
-        }
+		if check.Status != statusUnhealthy {
+			t.Errorf("Expected database check to be unhealthy, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'database' check in response")
 	}
@@ -135,9 +135,9 @@ func TestHealthCheck_HighPendingJobs(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["queue"]; ok {
-        if check.Status != statusDegraded {
-             t.Errorf("Expected queue check to be degraded, got %s", check.Status)
-        }
+		if check.Status != statusDegraded {
+			t.Errorf("Expected queue check to be degraded, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'queue' check in response")
 	}
@@ -185,9 +185,9 @@ func TestHealthCheck_StaleJobs(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["stale_jobs"]; ok {
-        if check.Status != statusDegraded {
-             t.Errorf("Expected stale_jobs check to be degraded, got %s", check.Status)
-        }
+		if check.Status != statusDegraded {
+			t.Errorf("Expected stale_jobs check to be degraded, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'stale_jobs' check in response")
 	}
@@ -196,7 +196,7 @@ func TestHealthCheck_StaleJobs(t *testing.T) {
 func TestHealthCheck_JobStatsDegraded(t *testing.T) {
 	srv := newTestServer(t)
 
-    // Complete 1 job
+	// Complete 1 job
 	jobCompleted := &models.Job{
 		ID:         "completed-job",
 		SourcePath: "/tmp/source.mp4",
@@ -208,20 +208,20 @@ func TestHealthCheck_JobStatsDegraded(t *testing.T) {
 	if err := srv.db.CreateJob(jobCompleted); err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
-    // Fail 11 jobs
-    for i := 0; i < 11; i++ {
-        jobFailed := &models.Job{
-            ID:         fmt.Sprintf("failed-job-%d", i),
-            SourcePath: "/tmp/source.mp4",
-            OutputPath: "/tmp/output.mp4",
-            Status:     "failed",
-            Priority:   5,
-            CreatedAt:  time.Now(),
-        }
-        if err := srv.db.CreateJob(jobFailed); err != nil {
-            t.Fatalf("Failed to create job: %v", err)
-        }
-    }
+	// Fail 11 jobs
+	for i := 0; i < 11; i++ {
+		jobFailed := &models.Job{
+			ID:         fmt.Sprintf("failed-job-%d", i),
+			SourcePath: "/tmp/source.mp4",
+			OutputPath: "/tmp/output.mp4",
+			Status:     "failed",
+			Priority:   5,
+			CreatedAt:  time.Now(),
+		}
+		if err := srv.db.CreateJob(jobFailed); err != nil {
+			t.Fatalf("Failed to create job: %v", err)
+		}
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
@@ -243,9 +243,9 @@ func TestHealthCheck_JobStatsDegraded(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["job_stats"]; ok {
-        if check.Status != statusDegraded {
-             t.Errorf("Expected job_stats check to be degraded, got %s", check.Status)
-        }
+		if check.Status != statusDegraded {
+			t.Errorf("Expected job_stats check to be degraded, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'job_stats' check in response")
 	}
@@ -276,9 +276,9 @@ func TestHealthCheck_NoWorkersDegraded(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["workers"]; ok {
-        if check.Status != statusDegraded {
-             t.Errorf("Expected workers check to be degraded, got %s", check.Status)
-        }
+		if check.Status != statusDegraded {
+			t.Errorf("Expected workers check to be degraded, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'workers' check in response")
 	}
@@ -287,15 +287,15 @@ func TestHealthCheck_NoWorkersDegraded(t *testing.T) {
 func TestHealthCheck_WorkersHealthy(t *testing.T) {
 	srv := newTestServer(t)
 
-    // Register a worker
-    worker := &models.WorkerHeartbeat{
-        WorkerID: "worker-1",
-        Hostname: "localhost",
-        Timestamp: time.Now(),
-    }
-    if err := srv.db.UpdateWorkerHeartbeat(worker); err != nil {
-        t.Fatalf("Failed to add worker: %v", err)
-    }
+	// Register a worker
+	worker := &models.WorkerHeartbeat{
+		WorkerID:  "worker-1",
+		Hostname:  "localhost",
+		Timestamp: time.Now(),
+	}
+	if err := srv.db.UpdateWorkerHeartbeat(worker); err != nil {
+		t.Fatalf("Failed to add worker: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
@@ -317,9 +317,9 @@ func TestHealthCheck_WorkersHealthy(t *testing.T) {
 	}
 
 	if check, ok := body.Checks["workers"]; ok {
-        if check.Status != statusHealthy {
-             t.Errorf("Expected workers check to be healthy, got %s", check.Status)
-        }
+		if check.Status != statusHealthy {
+			t.Errorf("Expected workers check to be healthy, got %s", check.Status)
+		}
 	} else {
 		t.Error("Expected 'workers' check in response")
 	}
@@ -340,12 +340,12 @@ func TestHealthCheck_JSONEncodeFailure(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 
-    w := &jsonFailWriter{ResponseWriter: rec}
+	w := &jsonFailWriter{ResponseWriter: rec}
 
 	srv.HealthCheck(w, req)
 
-    // We expect the error to be logged, but the response is still technically generated (though the write failed)
-    if rec.Code != http.StatusOK {
-        t.Errorf("HealthCheck GET status = %d, want %d", rec.Code, http.StatusOK)
-    }
+	// We expect the error to be logged, but the response is still technically generated (though the write failed)
+	if rec.Code != http.StatusOK {
+		t.Errorf("HealthCheck GET status = %d, want %d", rec.Code, http.StatusOK)
+	}
 }

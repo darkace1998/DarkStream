@@ -160,7 +160,9 @@ func TestSleepWithContext(t *testing.T) {
 		t.Errorf("returned too early: %v", elapsed)
 	}
 
-	// A nil context falls back to a plain sleep and returns nil.
+	// A nil context falls back to a plain sleep and returns nil. Passing nil is
+	// exactly the fallback behavior under test here.
+	//nolint:staticcheck // SA1012: deliberately exercising the nil-context fallback path
 	if err := sleepWithContext(nil, time.Millisecond); err != nil {
 		t.Errorf("expected nil for nil context, got %v", err)
 	}

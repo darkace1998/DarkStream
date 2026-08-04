@@ -223,6 +223,11 @@ func (c *Coordinator) Start() error {
 	slog.Info("Waiting for monitoring goroutines to stop")
 	c.wg.Wait()
 
+	// Drain in-flight webhook deliveries from the coordinator's notifier.
+	notifierCtx, notifierCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c.notifier.Shutdown(notifierCtx)
+	notifierCancel()
+
 	// Close database connection
 	dbErr := c.db.Close()
 	if dbErr != nil {

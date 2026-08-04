@@ -64,10 +64,19 @@ type MasterClient struct {
 }
 
 // SetContext wires a context whose cancellation aborts inter-attempt retry
-// backoff, so an in-flight download/upload does not keep sleeping after the
-// worker begins shutting down.
+// backoff and in-flight HTTP requests, so a download/upload/heartbeat does not
+// keep running after the worker begins shutting down.
 func (mc *MasterClient) SetContext(ctx context.Context) {
 	mc.ctx = ctx
+}
+
+// reqContext returns the context to attach to outgoing requests. It falls back
+// to context.Background() when none has been wired (e.g. in tests).
+func (mc *MasterClient) reqContext() context.Context {
+	if mc.ctx != nil {
+		return mc.ctx
+	}
+	return context.Background()
 }
 
 // New creates a new MasterClient instance
@@ -120,7 +129,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 		return nil, fmt.Errorf("failed to build request URL: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -183,7 +192,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		return nil, fmt.Errorf("failed to build request URL: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -248,7 +257,7 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 	if err != nil {
 		return fmt.Errorf("failed to build request URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -297,7 +306,7 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 	if err != nil {
 		return fmt.Errorf("failed to build request URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -342,7 +351,7 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 		slog.Error("Failed to build heartbeat request URL", "error", err)
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create heartbeat request", "error", err)
 		return
@@ -390,7 +399,7 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 		slog.Error("Failed to build job progress request URL", "error", err)
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create job progress request", "error", err)
 		return
@@ -742,7 +751,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	}
 
 	// Create HTTP request with Range header for resume
-	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
@@ -948,7 +957,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	if err != nil {
 		return fmt.Errorf("failed to build upload URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, pipeReader)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, pipeReader)
 	if err != nil {
 		return fmt.Errorf("failed to create upload request: %w", err)
 	}

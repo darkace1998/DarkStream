@@ -196,7 +196,17 @@ func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
 func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error) {
 	url := fmt.Sprintf("%s/api/config", cf.baseURL)
 
-	resp, err := cf.client.Get(url)
+	cf.mu.RLock()
+	ctx := cf.ctx
+	cf.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create config request: %w", err)
+	}
+	resp, err := cf.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to request config: %w", err)
 	}

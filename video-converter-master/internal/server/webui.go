@@ -1433,7 +1433,6 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
 // jobDetailsTemplate is the HTML template for the individual job details page
 var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
