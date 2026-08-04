@@ -124,7 +124,7 @@ logging:
 	}()
 
 	insertSQL := `INSERT INTO jobs (id, source_path, output_path, status, priority, retry_count, max_retries, created_at, source_checksum, worker_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = db.Exec(insertSQL, jobID, testVideoPath, outputPath, "processing", 5, 0, 3, time.Now(), "", "worker-test")
+	_, err = db.Exec(insertSQL, jobID, testVideoPath, outputPath, statusProcessing, 5, 0, 3, time.Now(), "", "worker-test")
 	if err != nil {
 		t.Fatalf("Failed to insert test job: %v", err)
 	}
@@ -411,8 +411,8 @@ func TestJobStatusTransitions(t *testing.T) {
 		initialStatus  string
 		expectedStatus string
 	}{
-		{"PendingToProcessing", "pending", "processing"},
-		{"ProcessingToCompleted", "processing", statusCompleted},
+		{"PendingToProcessing", "pending", statusProcessing},
+		{"ProcessingToCompleted", statusProcessing, statusCompleted},
 	}
 
 	for _, tc := range testCases {

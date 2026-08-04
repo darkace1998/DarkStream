@@ -12,7 +12,7 @@ func BenchmarkCacheManager_Cleanup(b *testing.B) {
 	tempDir := b.TempDir()
 
 	// Create 1000 dummy files
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		filePath := filepath.Join(tempDir, fmt.Sprintf("test_%d.tmp", i))
 		_ = os.WriteFile(filePath, make([]byte, 1024), 0644)
 	}
@@ -23,7 +23,7 @@ func BenchmarkCacheManager_Cleanup(b *testing.B) {
 		cm := NewCacheManager(tempDir, 200*1024, 24*time.Hour) // This triggers both maxAge and maxSize
 
 		// Restore files for next run
-		for j := 0; j < 1000; j++ {
+		for j := range 1000 {
 			filePath := filepath.Join(tempDir, fmt.Sprintf("test_%d.tmp", j))
 			_ = os.WriteFile(filePath, make([]byte, 1024), 0644)
 			if j < 500 {

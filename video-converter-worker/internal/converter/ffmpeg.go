@@ -24,6 +24,16 @@ const (
 	MinOutputFileSize = 1024 * 1024
 )
 
+// FFmpeg encoder and muxer names. These are FFmpeg's own identifiers and are
+// distinct from the codec/format identifiers in the shared constants package,
+// which name the codec rather than the specific FFmpeg implementation.
+const (
+	encoderH264Vulkan = "h264_vulkan"
+	encoderLibx264    = "libx264"
+	encoderAAC        = "aac"
+	muxerMP4          = "mp4"
+)
+
 var (
 	// ffmpegTimePattern matches FFmpeg's out_time_ms field (in microseconds)
 	ffmpegTimePattern = regexp.MustCompile(`out_time_ms=(\d+)`)
@@ -242,20 +252,20 @@ func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool,
 	if useVulkan {
 		switch codec {
 		case constants.CodecH264, "avc":
-			return "h264_vulkan"
+			return encoderH264Vulkan
 		case constants.CodecH265, "hevc":
 			return "hevc_vulkan"
 		default:
 			// Fallback to h264_vulkan for unknown codecs
 			log.Warn("Unknown codec for Vulkan encoding, falling back to h264_vulkan", "codec", codec)
-			return "h264_vulkan"
+			return encoderH264Vulkan
 		}
 	}
 
 	// CPU encoding fallback
 	switch codec {
 	case constants.CodecH264, "avc":
-		return "libx264"
+		return encoderLibx264
 	case constants.CodecH265, "hevc":
 		return "libx265"
 	case constants.CodecVP9:
@@ -265,7 +275,7 @@ func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool,
 	default:
 		// Fallback to libx264
 		log.Warn("Unknown codec, falling back to libx264", "codec", codec)
-		return "libx264"
+		return encoderLibx264
 	}
 }
 
@@ -281,7 +291,7 @@ func (fc *FFmpegConverter) getAudioCodecWithLogger(codec string, log *slog.Logge
 
 	switch codec {
 	case constants.AudioCodecAAC:
-		return "aac"
+		return encoderAAC
 	case constants.AudioCodecMP3:
 		return "libmp3lame"
 	case constants.AudioCodecOPUS:
@@ -291,7 +301,7 @@ func (fc *FFmpegConverter) getAudioCodecWithLogger(codec string, log *slog.Logge
 	default:
 		// Fallback to aac
 		log.Warn("Unknown audio codec, falling back to aac", "codec", codec)
-		return "aac"
+		return encoderAAC
 	}
 }
 
@@ -307,7 +317,7 @@ func (fc *FFmpegConverter) getOutputFormatWithLogger(format string, log *slog.Lo
 
 	switch format {
 	case constants.FormatMP4:
-		return "mp4"
+		return muxerMP4
 	case constants.FormatMKV:
 		return "matroska"
 	case constants.FormatWebM:
@@ -317,7 +327,7 @@ func (fc *FFmpegConverter) getOutputFormatWithLogger(format string, log *slog.Lo
 	default:
 		// Fallback to mp4
 		log.Warn("Unknown output format, falling back to mp4", "format", format)
-		return "mp4"
+		return muxerMP4
 	}
 }
 

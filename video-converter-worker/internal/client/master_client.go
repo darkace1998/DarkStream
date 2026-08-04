@@ -49,6 +49,12 @@ const (
 	ThrottleMaxWaitDuration = 100 * time.Millisecond
 )
 
+// Request parameter and log field names shared across master API calls.
+const (
+	paramWorkerID = "worker_id"
+	paramJobID    = "job_id"
+)
+
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
 	baseURL              string
@@ -121,7 +127,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 		return nil, err
 	}
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-job", url.Values{
-		"worker_id":     {mc.workerID},
+		paramWorkerID:   {mc.workerID},
 		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
 	})
 
@@ -183,7 +189,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		return nil, err
 	}
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-jobs", url.Values{
-		"worker_id":     {mc.workerID},
+		paramWorkerID:   {mc.workerID},
 		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
 		"limit":         {fmt.Sprintf("%d", limit)},
 	})
@@ -243,8 +249,8 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 		return err
 	}
 	payload := map[string]any{
-		"job_id":      jobID,
-		"worker_id":   mc.workerID,
+		paramJobID:    jobID,
+		paramWorkerID: mc.workerID,
 		"output_size": outputSize,
 	}
 
@@ -292,8 +298,8 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 		return err
 	}
 	payload := map[string]any{
-		"job_id":        jobID,
-		"worker_id":     mc.workerID,
+		paramJobID:      jobID,
+		paramWorkerID:   mc.workerID,
 		"error_message": errorMsg,
 	}
 
@@ -466,7 +472,7 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 			// attempt-1 is always in range [0, 1]
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
-			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			slog.Info("Retrying download", paramJobID, jobID, "attempt", attempt+1, "delay", delay)
 			if err := sleepWithContext(mc.ctx, delay); err != nil {
 				return fmt.Errorf("download cancelled during retry backoff: %w", err)
 			}
@@ -477,7 +483,7 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 			return nil
 		}
 
-		slog.Error("Download attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		slog.Error("Download attempt failed", paramJobID, jobID, "attempt", attempt+1, "error", err)
 		if isPermanentHTTPError(err) {
 			return fmt.Errorf("download failed with non-retryable error: %w", err)
 		}
@@ -576,7 +582,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 			// attempt-1 is always in range [0, 1]
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
-			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			slog.Info("Retrying upload", paramJobID, jobID, "attempt", attempt+1, "delay", delay)
 			if err := sleepWithContext(mc.ctx, delay); err != nil {
 				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
 			}
@@ -587,7 +593,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 			return nil
 		}
 
-		slog.Error("Upload attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		slog.Error("Upload attempt failed", paramJobID, jobID, "attempt", attempt+1, "error", err)
 		// Do not re-send a non-idempotent multipart upload after a permanent
 		// client error (e.g. 401/400); it will only fail again identically.
 		if isPermanentHTTPError(err) {
@@ -668,7 +674,7 @@ func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string
 			// Safe bit shift with bounded attempt value (0-2 range)
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
-			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			slog.Info("Retrying download", paramJobID, jobID, "attempt", attempt+1, "delay", delay)
 			if err := sleepWithContext(mc.ctx, delay); err != nil {
 				return fmt.Errorf("download cancelled during retry backoff: %w", err)
 			}
@@ -679,7 +685,7 @@ func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string
 			return nil
 		}
 
-		slog.Error("Download attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		slog.Error("Download attempt failed", paramJobID, jobID, "attempt", attempt+1, "error", err)
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to download video after %d attempts: %w", maxRetries, err)
 		}
@@ -699,7 +705,7 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 			// Safe bit shift with bounded attempt value (0-2 range)
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
-			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
+			slog.Info("Retrying upload", paramJobID, jobID, "attempt", attempt+1, "delay", delay)
 			if err := sleepWithContext(mc.ctx, delay); err != nil {
 				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
 			}
@@ -710,7 +716,7 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 			return nil
 		}
 
-		slog.Error("Upload attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		slog.Error("Upload attempt failed", paramJobID, jobID, "attempt", attempt+1, "error", err)
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to upload video after %d attempts: %w", maxRetries, err)
 		}
@@ -733,7 +739,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		return err
 	}
-	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/download-video", url.Values{"job_id": []string{jobID}})
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/download-video", url.Values{paramJobID: []string{jobID}})
 	if err != nil {
 		return fmt.Errorf("failed to build download URL: %w", err)
 	}
@@ -750,7 +756,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		info, statErr := os.Stat(outputPath)
 		if statErr == nil {
 			startOffset = info.Size()
-			slog.Info("Found partial download, attempting resume", "job_id", jobID, "offset", startOffset)
+			slog.Info("Found partial download, attempting resume", paramJobID, jobID, "offset", startOffset)
 		}
 	}
 
@@ -790,7 +796,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 			totalContentLength = startOffset + resp.ContentLength
 			knownLength = true
 		}
-		slog.Info("Resuming download", "job_id", jobID, "offset", startOffset, "remaining", resp.ContentLength)
+		slog.Info("Resuming download", paramJobID, jobID, "offset", startOffset, "remaining", resp.ContentLength)
 	} else if resp.StatusCode == http.StatusOK {
 		// Full download (or resume not supported)
 		totalContentLength = resp.ContentLength
@@ -816,7 +822,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	if !knownLength {
 		totalContentLength = 0
 		slog.Warn("Download response has no Content-Length; size validation will rely on checksum",
-			"job_id", jobID, "status", resp.StatusCode)
+			paramJobID, jobID, "status", resp.StatusCode)
 	}
 
 	// Open/create output file
@@ -881,7 +887,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		return fmt.Errorf("file size mismatch: expected %d, got %d", totalContentLength, finalSize)
 	}
 
-	slog.Info("Video downloaded successfully", "job_id", jobID, "size", finalSize, "resumed", startOffset > 0)
+	slog.Info("Video downloaded successfully", paramJobID, jobID, "size", finalSize, "resumed", startOffset > 0)
 	return nil
 }
 
@@ -957,7 +963,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	}()
 
 	// Create HTTP request
-	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/upload-video", url.Values{"job_id": []string{jobID}})
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/upload-video", url.Values{paramJobID: []string{jobID}})
 	if err != nil {
 		return fmt.Errorf("failed to build upload URL: %w", err)
 	}
@@ -1008,7 +1014,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	}
 
 	slog.Info("Video uploaded successfully",
-		"job_id", jobID,
+		paramJobID, jobID,
 		"size", uploadResp.FileSize,
 		"expected_size", fileSize)
 

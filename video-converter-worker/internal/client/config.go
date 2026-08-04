@@ -295,7 +295,7 @@ func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteW
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < DefaultMaxRetries; attempt++ {
+	for attempt := range DefaultMaxRetries {
 		if attempt > 0 {
 			delay := DefaultRetryBaseDelay * time.Duration(1<<(attempt-1))
 			slog.Info("Retrying worker config fetch", "attempt", attempt+1, "delay", delay)

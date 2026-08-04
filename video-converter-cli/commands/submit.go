@@ -89,7 +89,7 @@ func runSubmit(args []string) error {
 		return err
 	}
 
-	if *format == "json" {
+	if *format == string(formatter.FormatJSON) {
 		out, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			slog.Error("Failed to encode job as JSON", "error", err)
@@ -99,7 +99,7 @@ func runSubmit(args []string) error {
 	} else {
 		slog.Info("Job successfully submitted")
 		out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
-		out.PrintTable([]string{"ID", "Status", "Source", "Output"}, [][]string{{job.ID, job.Status, job.SourcePath, job.OutputPath}})
+		out.PrintTable([]string{"ID", colStatus, colSource, "Output"}, [][]string{{job.ID, job.Status, job.SourcePath, job.OutputPath}})
 	}
 	return nil
 }

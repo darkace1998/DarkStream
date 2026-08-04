@@ -478,10 +478,8 @@ func (c *Coordinator) monitorFailedJobs() {
 				// Formula: 2^retry_count minutes, capped at 60 minutes. The shift
 				// amount is clamped so a large (misconfigured) retry_count cannot
 				// overflow int and produce a negative, always-elapsed delay.
-				shift := job.RetryCount
-				if shift > 6 { // 2^6 = 64 already exceeds the 60-minute cap
-					shift = 6
-				}
+				// 2^6 = 64 already exceeds the 60-minute cap
+				shift := min(job.RetryCount, 6)
 				delayMinutes := min(1<<uint(shift), 60)
 				backoffDuration := time.Duration(delayMinutes) * time.Minute
 

@@ -40,7 +40,7 @@ func displayJobs(masterURL, status string, limit int, format string) {
 }
 
 func runDisplayJobs(masterURL, status string, limit int, format string) error {
-	query := map[string]string{"limit": fmt.Sprintf("%d", limit)}
+	query := map[string]string{paramLimit: fmt.Sprintf("%d", limit)}
 	if status != "" {
 		query["status"] = status
 	}
@@ -131,7 +131,7 @@ func watchJobs(masterURL, status string, limit int, format string) {
 }
 
 func jobsToTable(result map[string]any) ([]string, [][]string) {
-	headers := []string{"ID", "Status", "Source", "Worker", "Retries", "Created", "Error"}
+	headers := []string{"ID", colStatus, colSource, "Worker", "Retries", "Created", "Error"}
 
 	jobs, ok := result["jobs"].([]any)
 	if !ok || len(jobs) == 0 {

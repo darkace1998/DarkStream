@@ -28,7 +28,7 @@ func runRetry(args []string) error {
 	format := fs.String("format", "table", "Output format: table, json, csv")
 	_ = fs.Parse(args)
 
-	requestURL, err := utils.BuildURL(*masterURL, "/api/retry", url.Values{"limit": []string{fmt.Sprintf("%d", *limit)}})
+	requestURL, err := utils.BuildURL(*masterURL, "/api/retry", url.Values{paramLimit: []string{fmt.Sprintf("%d", *limit)}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
 		return err

@@ -28,6 +28,17 @@ var ErrJobAlreadyExists = errors.New("job already exists")
 // sqlAndStartedAt is the SQL fragment appended to guard job transitions against a stale started_at value.
 const sqlAndStartedAt = " AND started_at = ?"
 
+// Job statuses accepted by the prune/query helpers.
+const (
+	statusCompleted = "completed"
+	statusFailed    = "failed"
+	statusCancelled = "cancelled"
+	statusAll       = "all"
+)
+
+// sqlTypeInteger is the SQLite column type used by the schema migrations.
+const sqlTypeInteger = "INTEGER"
+
 // ConnectionPoolConfig holds configuration for database connection pooling
 type ConnectionPoolConfig struct {
 	MaxOpenConnections int           // Maximum number of open connections to the database
@@ -873,7 +884,7 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 // PruneJobs removes jobs with the specified status (completed, failed, cancelled, or all).
 // Returns the number of jobs deleted and any error.
 func (t *Tracker) PruneJobs(status string) (int, error) {
-	if status != "completed" && status != "failed" && status != "cancelled" && status != "all" {
+	if status != statusCompleted && status != statusFailed && status != statusCancelled && status != statusAll {
 		return 0, fmt.Errorf("invalid status for pruning: %s", status)
 	}
 
@@ -1511,12 +1522,12 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 		name     string
 		dataType string
 	}{
-		{"source_width", "INTEGER"},
-		{"source_height", "INTEGER"},
+		{"source_width", sqlTypeInteger},
+		{"source_height", sqlTypeInteger},
 		{"source_video_codec", "TEXT"},
 		{"source_audio_codec", "TEXT"},
-		{"source_bitrate", "INTEGER"},
-		{"source_file_size", "INTEGER"},
+		{"source_bitrate", sqlTypeInteger},
+		{"source_file_size", sqlTypeInteger},
 	}
 
 	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)

@@ -166,28 +166,28 @@ jobs:
     - name: golangci-lint (common)
       uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
+        version: v2.12.2
         working-directory: video-converter-common
         args: --timeout=5m
 
     - name: golangci-lint (master)
       uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
+        version: v2.12.2
         working-directory: video-converter-master
         args: --timeout=5m
 
     - name: golangci-lint (worker)
       uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
+        version: v2.12.2
         working-directory: video-converter-worker
         args: --timeout=5m
 
     - name: golangci-lint (cli)
       uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
+        version: v2.12.2
         working-directory: video-converter-cli
         args: --timeout=5m
 

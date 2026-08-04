@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 )
 
@@ -40,10 +41,10 @@ func TestWebhookNotifier_Notify(t *testing.T) {
 	defer ts.Close()
 
 	// Test 1: Event enabled, should send
-	notifier := NewWebhookNotifier(ts.URL, []string{"completed", "failed"})
-	job := &models.Job{ID: "job123", Status: "completed"}
+	notifier := NewWebhookNotifier(ts.URL, []string{constants.JobStatusCompleted, "failed"})
+	job := &models.Job{ID: "job123", Status: constants.JobStatusCompleted}
 
-	notifier.Notify("completed", job)
+	notifier.Notify(constants.JobStatusCompleted, job)
 
 	// Wait for async request to finish
 	time.Sleep(100 * time.Millisecond)
@@ -52,7 +53,7 @@ func TestWebhookNotifier_Notify(t *testing.T) {
 	if requestCount != 1 {
 		t.Errorf("Expected 1 request, got %d", requestCount)
 	}
-	if receivedPayload.Event != "completed" {
+	if receivedPayload.Event != constants.JobStatusCompleted {
 		t.Errorf("Expected event 'completed', got %s", receivedPayload.Event)
 	}
 	if receivedPayload.Job == nil || receivedPayload.Job.ID != "job123" {
@@ -74,5 +75,5 @@ func TestWebhookNotifier_Notify(t *testing.T) {
 
 	// Test 3: Nil notifier, should not panic
 	var nilNotifier *WebhookNotifier
-	nilNotifier.Notify("completed", job) // Should simply return
+	nilNotifier.Notify(constants.JobStatusCompleted, job) // Should simply return
 }

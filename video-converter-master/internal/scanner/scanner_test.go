@@ -6,6 +6,13 @@ import (
 	"testing"
 )
 
+// Test fixture constants shared across the scanner test suite.
+const (
+	extMKV        = ".mkv"
+	extMP4        = ".mp4"
+	testVideoName = "video1.mp4"
+)
+
 func TestScanDirectory(t *testing.T) {
 	// Create temporary test directory
 	tmpDir := t.TempDir()
@@ -19,7 +26,7 @@ func TestScanDirectory(t *testing.T) {
 
 	// Create test video files
 	testFiles := []string{
-		"video1.mp4",
+		testVideoName,
 		"video2.mkv",
 		"video3.avi",
 		"document.txt", // Should be ignored
@@ -34,7 +41,7 @@ func TestScanDirectory(t *testing.T) {
 	}
 
 	// Create scanner
-	scanner := New(videosDir, []string{".mp4", ".mkv", ".avi"}, outputDir)
+	scanner := New(videosDir, []string{extMP4, extMKV, ".avi"}, outputDir)
 
 	// Scan directory
 	jobs, err := scanner.ScanDirectory()
@@ -86,7 +93,7 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	}
 
 	testFiles := map[string]string{
-		"video1.mp4":                 "root level",
+		testVideoName:                "root level",
 		"subdir1/video2.mp4":         "depth 1",
 		"subdir1/subdir2/video3.mp4": "depth 2",
 	}
@@ -100,7 +107,7 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	}
 
 	// Test with depth limit 0 (root only)
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth: 0,
 	})
@@ -170,7 +177,7 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 	}
 
 	// Test with minimum size filter (skip files smaller than 1KB)
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 	scanner.SetOptions(ScanOptions{
 		MinFileSize: 1000, // 1KB minimum
 	})
@@ -251,7 +258,7 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 	}
 
 	// Test with hidden files/dirs skipped (default)
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth:        -1, // Unlimited depth
 		SkipHiddenFiles: true,
@@ -316,7 +323,7 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 	// Create files with identical content
 	content := []byte("identical video content")
 	files := []string{
-		"video1.mp4",
+		testVideoName,
 		"video2.mp4", // Duplicate content
 		"video3.mp4", // Different content
 	}
@@ -337,7 +344,7 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 	}
 
 	// Test without duplicate detection
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 	scanner.SetOptions(ScanOptions{
 		DetectDuplicates: false,
 	})
@@ -384,7 +391,7 @@ func TestScannerWithReplaceSource(t *testing.T) {
 	}
 
 	// Test with ReplaceSource = false (default)
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 	scanner.SetOptions(ScanOptions{
 		ReplaceSource: false,
 	})
@@ -426,7 +433,7 @@ func TestScannerWithReplaceSource(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	rootPath := "/data/videos"
-	extensions := []string{".mp4", ".MKV", ".Avi"}
+	extensions := []string{extMP4, ".MKV", ".Avi"}
 	outputBase := "/data/output"
 
 	scanner := New(rootPath, extensions, outputBase)
@@ -440,8 +447,8 @@ func TestNew(t *testing.T) {
 	}
 
 	expectedExts := map[string]bool{
-		".mp4": true,
-		".mkv": true,
+		extMP4: true,
+		extMKV: true,
 		".avi": true,
 	}
 
@@ -499,12 +506,12 @@ func TestScannerWithDuplicateChecker(t *testing.T) {
 	}
 
 	// Create test file
-	err = os.WriteFile(filepath.Join(videosDir, "video1.mp4"), []byte("test content"), 0o600)
+	err = os.WriteFile(filepath.Join(videosDir, testVideoName), []byte("test content"), 0o600)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	scanner := New(videosDir, []string{".mp4"}, outputDir)
+	scanner := New(videosDir, []string{extMP4}, outputDir)
 
 	// Test with checker that returns true (duplicate exists)
 	scanner.SetOptions(ScanOptions{

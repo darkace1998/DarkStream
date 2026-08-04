@@ -26,6 +26,18 @@ const (
 	statusCancelled  = "cancelled"
 )
 
+// Query parameter names used when building master API request URLs.
+const (
+	paramJobID = "job_id"
+	paramLimit = "limit"
+)
+
+// Table column headers shared across command output.
+const (
+	colStatus = "Status"
+	colSource = "Source"
+)
+
 var masterHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 func newMasterRequest(method, requestURL string, body io.Reader, contentType string) (*http.Request, error) {

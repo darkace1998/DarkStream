@@ -55,7 +55,7 @@ func TestQueuePauseResume(t *testing.T) {
 		t.Errorf("Expected status OK, got %v", wStatus.Code)
 	}
 
-	var stats map[string]interface{}
+	var stats map[string]any
 	if err := json.NewDecoder(wStatus.Body).Decode(&stats); err != nil {
 		t.Fatalf("Failed to decode status body: %v", err)
 	}

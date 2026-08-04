@@ -41,7 +41,7 @@ func runPriority(args []string) error {
 	}
 
 	requestURL, err := utils.BuildURL(*masterURL, "/api/job/priority", url.Values{
-		"job_id":   []string{*jobID},
+		paramJobID: []string{*jobID},
 		"priority": []string{fmt.Sprintf("%d", *priority)},
 	})
 	if err != nil {

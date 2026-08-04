@@ -6,6 +6,14 @@ import (
 	"testing"
 )
 
+const (
+	// errSuspiciousTraversal is the substring expected in errors raised for
+	// paths containing a suspicious traversal pattern.
+	errSuspiciousTraversal = "suspicious traversal pattern"
+	// testTmpBasePath is the base path used by the path-sanitization table tests.
+	testTmpBasePath = "/tmp/test"
+)
+
 func TestValidatePathWithinBase(t *testing.T) {
 	// Use a temporary base path for testing
 	basePath := "/mnt/storage/videos"
@@ -34,7 +42,7 @@ func TestValidatePathWithinBase(t *testing.T) {
 			basePath:    basePath,
 			targetPath:  "../../../etc/passwd",
 			shouldError: true,
-			errContains: "suspicious traversal pattern",
+			errContains: errSuspiciousTraversal,
 		},
 		{
 			name:        "path traversal with absolute path",
@@ -48,7 +56,7 @@ func TestValidatePathWithinBase(t *testing.T) {
 			basePath:    basePath,
 			targetPath:  "subdir/../../../etc/passwd",
 			shouldError: true,
-			errContains: "suspicious traversal pattern",
+			errContains: errSuspiciousTraversal,
 		},
 		{
 			name:        "valid path with similar name",
@@ -135,7 +143,7 @@ func TestValidatePathInAllowedDirs(t *testing.T) {
 			allowedDirs: []string{sourceDir, outputDir},
 			targetPath:  "/mnt/storage/videos/../../../etc/passwd",
 			shouldError: true,
-			errContains: "suspicious traversal pattern",
+			errContains: errSuspiciousTraversal,
 		},
 		{
 			name:        "empty allowed dirs",
@@ -185,42 +193,42 @@ func TestValidatePathWithinBase_EdgeCases(t *testing.T) {
 	}{
 		{
 			name:        "double dot in filename",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  "file..txt",
 			shouldError: false,
 			description: "Double dots in filename should be allowed",
 		},
 		{
 			name:        "hidden file",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  ".hidden",
 			shouldError: false,
 			description: "Hidden files should be allowed",
 		},
 		{
 			name:        "hidden directory",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  ".hidden/file.txt",
 			shouldError: false,
 			description: "Hidden directories should be allowed",
 		},
 		{
 			name:        "multiple slashes",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  "dir//file.txt",
 			shouldError: false,
 			description: "Multiple slashes should be normalized",
 		},
 		{
 			name:        "trailing slash",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  "dir/",
 			shouldError: false,
 			description: "Trailing slash should be handled",
 		},
 		{
 			name:        "symbolic link name (not actual symlink)",
-			basePath:    "/tmp/test",
+			basePath:    testTmpBasePath,
 			targetPath:  "symlink.txt",
 			shouldError: false,
 			description: "File named symlink should be allowed",

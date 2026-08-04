@@ -24,6 +24,11 @@ import (
 const (
 	testAPIKey      = "test-secret-key"
 	testAdminWorker = "admin-worker"
+	testSourcePath  = "/tmp/source.mp4"
+	testOutputPath  = "/tmp/output.mp4"
+	testWorkerID    = "worker-1"
+	testJobHigh     = "job-high"
+	testJobMedium   = "job-medium"
 )
 
 // newTestServer creates a Server instance backed by a temporary SQLite database
@@ -225,7 +230,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 			MaxRetries: 3,
 		},
 		{
-			ID:         "job-high",
+			ID:         testJobHigh,
 			SourcePath: "/source/high.mp4",
 			OutputPath: "/output/high.mp4",
 			Status:     statusPending,
@@ -235,7 +240,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 			MaxRetries: 3,
 		},
 		{
-			ID:         "job-medium",
+			ID:         testJobMedium,
 			SourcePath: "/source/medium.mp4",
 			OutputPath: "/output/medium.mp4",
 			Status:     statusPending,
@@ -275,19 +280,19 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 	if len(body.Jobs) != 2 {
 		t.Fatalf("jobs length = %d, want 2", len(body.Jobs))
 	}
-	if body.Jobs[0].ID != "job-high" || body.Jobs[1].ID != "job-medium" {
+	if body.Jobs[0].ID != testJobHigh || body.Jobs[1].ID != testJobMedium {
 		t.Fatalf("jobs ordered as [%s, %s], want [job-high, job-medium]", body.Jobs[0].ID, body.Jobs[1].ID)
 	}
 
-	for _, id := range []string{"job-high", "job-medium"} {
+	for _, id := range []string{testJobHigh, testJobMedium} {
 		job, err := srv.db.GetJobByID(id)
 		if err != nil {
 			t.Fatalf("Failed to fetch job %s: %v", id, err)
 		}
-		if job.Status != "processing" {
+		if job.Status != statusProcessing {
 			t.Fatalf("job %s status = %s, want processing", id, job.Status)
 		}
-		if job.WorkerID != "worker-1" {
+		if job.WorkerID != testWorkerID {
 			t.Fatalf("job %s worker_id = %s, want worker-1", id, job.WorkerID)
 		}
 	}
@@ -585,7 +590,7 @@ func TestGetNextJob_AtomicClaim(t *testing.T) {
 	if claimedJobs[0].ID != job.ID {
 		t.Fatalf("Expected claimed job %q, got %q", job.ID, claimedJobs[0].ID)
 	}
-	if claimedJobs[0].Status != "processing" {
+	if claimedJobs[0].Status != statusProcessing {
 		t.Fatalf("Expected processing status, got %q", claimedJobs[0].Status)
 	}
 
@@ -616,8 +621,8 @@ func TestUpdateJobPriority(t *testing.T) {
 	}
 
 	// Make request
-	payload := map[string]interface{}{
-		"job_id":   job.ID,
+	payload := map[string]any{
+		fieldJobID: job.ID,
 		"priority": 10,
 	}
 	body, err := json.Marshal(payload)
@@ -653,10 +658,10 @@ func TestRequeueJob(t *testing.T) {
 	jobID := "completed-job-123"
 	job := &models.Job{
 		ID:         jobID,
-		SourcePath: "/tmp/source.mp4",
-		OutputPath: "/tmp/output.mp4",
-		Status:     "completed",
-		WorkerID:   "worker-1",
+		SourcePath: testSourcePath,
+		OutputPath: testOutputPath,
+		Status:     statusCompleted,
+		WorkerID:   testWorkerID,
 		CreatedAt:  time.Now().Add(-1 * time.Hour),
 		RetryCount: 1,
 	}
@@ -701,10 +706,10 @@ func TestRetryJob(t *testing.T) {
 	jobID := "failed-job-123"
 	job := &models.Job{
 		ID:         jobID,
-		SourcePath: "/tmp/source.mp4",
-		OutputPath: "/tmp/output.mp4",
-		Status:     "failed",
-		WorkerID:   "worker-1",
+		SourcePath: testSourcePath,
+		OutputPath: testOutputPath,
+		Status:     statusFailed,
+		WorkerID:   testWorkerID,
 		CreatedAt:  time.Now(),
 	}
 	err := srv.db.CreateJob(job)
@@ -819,9 +824,9 @@ func TestPruneJobsAPI(t *testing.T) {
 	now := time.Now()
 	jobs := []*models.Job{
 		{ID: "job1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: statusPending, CreatedAt: now},
-		{ID: "job2", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: "completed", CreatedAt: now},
-		{ID: "job3", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: "failed", CreatedAt: now},
-		{ID: "job4", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: "completed", CreatedAt: now},
+		{ID: "job2", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: statusCompleted, CreatedAt: now},
+		{ID: "job3", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: statusFailed, CreatedAt: now},
+		{ID: "job4", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: statusCompleted, CreatedAt: now},
 	}
 
 	for _, j := range jobs {
@@ -858,7 +863,7 @@ func TestPruneJobsAPI(t *testing.T) {
 	}
 
 	// 2. Test prune failed
-	rr, resp := makeReq("failed")
+	rr, resp := makeReq(statusFailed)
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected 200 OK, got %d", rr.Code)
 	}
@@ -868,12 +873,12 @@ func TestPruneJobsAPI(t *testing.T) {
 
 	// Verify database state
 	stats, _ := srv.db.GetJobStats()
-	if stats["failed"] != nil {
-		t.Errorf("Expected 0 failed jobs, got %v", stats["failed"])
+	if stats[statusFailed] != nil {
+		t.Errorf("Expected 0 failed jobs, got %v", stats[statusFailed])
 	}
 
 	// 3. Test prune completed
-	rr, resp = makeReq("completed")
+	rr, resp = makeReq(statusCompleted)
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected 200 OK, got %d", rr.Code)
 	}

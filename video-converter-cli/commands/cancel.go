@@ -34,7 +34,7 @@ func runCancel(args []string) error {
 		return errCommandFailed
 	}
 
-	requestURL, err := utils.BuildURL(*masterURL, "/api/job/cancel", url.Values{"job_id": []string{*jobID}})
+	requestURL, err := utils.BuildURL(*masterURL, "/api/job/cancel", url.Values{paramJobID: []string{*jobID}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
 		return err

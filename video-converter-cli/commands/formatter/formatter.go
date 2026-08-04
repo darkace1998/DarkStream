@@ -23,12 +23,12 @@ const (
 
 // ParseFormat parses a format string into a Format type
 func ParseFormat(s string) Format {
-	switch strings.ToLower(s) {
-	case "json":
+	switch Format(strings.ToLower(s)) {
+	case FormatJSON:
 		return FormatJSON
-	case "csv":
+	case FormatCSV:
 		return FormatCSV
-	case "table", "":
+	case FormatTable, "":
 		return FormatTable
 	default:
 		return FormatTable

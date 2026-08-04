@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
 )
 
@@ -138,8 +139,8 @@ func getDefaultWorkerConfig() WorkerConfig {
 		EnableResumeDownload: true,
 		UseVulkan:            true,
 		FFmpegTimeout:        7200, // 2 hours
-		LogLevel:             "info",
-		LogFormat:            "json",
+		LogLevel:             constants.LogLevelInfo,
+		LogFormat:            constants.LogFormatJSON,
 	}
 }
 
@@ -274,28 +275,33 @@ var (
 	bitratePattern = regexp.MustCompile(`^\d+[kKmM]?$`)
 
 	validVideoCodecs = map[string]bool{
-		"h264": true, "h265": true, "hevc": true, "vp9": true, "av1": true,
+		constants.CodecH264: true, constants.CodecH265: true, "hevc": true,
+		constants.CodecVP9: true, constants.CodecAV1: true,
 	}
 
 	validPresets = map[string]bool{
 		"ultrafast": true, "superfast": true, "veryfast": true, "faster": true,
-		"fast": true, "medium": true, "slow": true, "slower": true, "veryslow": true, "placebo": true,
+		constants.PresetFast: true, constants.PresetMedium: true, constants.PresetSlow: true,
+		"slower": true, "veryslow": true, "placebo": true,
 	}
 
 	validAudioCodecs = map[string]bool{
-		"aac": true, "mp3": true, "opus": true, "vorbis": true,
+		constants.AudioCodecAAC: true, constants.AudioCodecMP3: true,
+		constants.AudioCodecOPUS: true, constants.AudioCodecVorbis: true,
 	}
 
 	validFormats = map[string]bool{
-		"mp4": true, "mkv": true, "webm": true, "avi": true,
+		constants.FormatMP4: true, constants.FormatMKV: true,
+		constants.FormatWebM: true, constants.FormatAVI: true,
 	}
 
 	validLogLevels = map[string]bool{
-		"debug": true, "info": true, "warn": true, "error": true,
+		constants.LogLevelDebug: true, constants.LogLevelInfo: true,
+		constants.LogLevelWarn: true, constants.LogLevelError: true,
 	}
 
 	validLogFormats = map[string]bool{
-		"json": true, "text": true,
+		constants.LogFormatJSON: true, constants.LogFormatText: true,
 	}
 )
 
@@ -320,7 +326,7 @@ func (e *ValidationErrors) Error() string {
 
 // validateConfig validates all configuration values
 func validateConfig(cfg *ActiveConfig) error {
-	var errors []ValidationError
+	errors := make([]ValidationError, 0, 4)
 
 	errors = append(errors, validateVideoConfig(cfg)...)
 	errors = append(errors, validateAudioConfig(cfg)...)
@@ -336,7 +342,7 @@ func validateConfig(cfg *ActiveConfig) error {
 
 // validateVideoConfig validates the video section of the configuration.
 func validateVideoConfig(cfg *ActiveConfig) []ValidationError {
-	var errors []ValidationError
+	errors := make([]ValidationError, 0, 4)
 
 	if cfg.Video.Resolution != "" && !resolutionPattern.MatchString(cfg.Video.Resolution) {
 		errors = append(errors, ValidationError{
@@ -371,7 +377,7 @@ func validateVideoConfig(cfg *ActiveConfig) []ValidationError {
 
 // validateAudioConfig validates the audio section of the configuration.
 func validateAudioConfig(cfg *ActiveConfig) []ValidationError {
-	var errors []ValidationError
+	errors := make([]ValidationError, 0, 4)
 
 	if cfg.Audio.Codec != "" && !validAudioCodecs[cfg.Audio.Codec] {
 		errors = append(errors, ValidationError{
@@ -393,7 +399,7 @@ func validateAudioConfig(cfg *ActiveConfig) []ValidationError {
 
 // validateOutputConfig validates the output section of the configuration.
 func validateOutputConfig(cfg *ActiveConfig) []ValidationError {
-	var errors []ValidationError
+	errors := make([]ValidationError, 0, 4)
 
 	if cfg.Output.Format != "" && !validFormats[cfg.Output.Format] {
 		errors = append(errors, ValidationError{
@@ -407,7 +413,7 @@ func validateOutputConfig(cfg *ActiveConfig) []ValidationError {
 
 // validateWorkerConfig validates the worker section of the configuration.
 func validateWorkerConfig(cfg *ActiveConfig) []ValidationError {
-	var errors []ValidationError
+	errors := make([]ValidationError, 0, 4)
 
 	if cfg.Worker.Concurrency < 1 {
 		errors = append(errors, ValidationError{

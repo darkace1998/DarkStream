@@ -17,7 +17,10 @@ import (
 )
 
 // statusCompleted is the job status fixture used across the integration test suite.
-const statusCompleted = "completed"
+const (
+	statusCompleted  = "completed"
+	statusProcessing = "processing"
+)
 
 // testEnv holds test environment configuration and paths
 type testEnv struct {
@@ -321,7 +324,7 @@ func queryJobStats(t *testing.T, db *sql.DB) jobStats {
 		switch status {
 		case "pending":
 			stats.pending = count
-		case "processing":
+		case statusProcessing:
 			stats.processing = count
 		case statusCompleted:
 			stats.completed = count

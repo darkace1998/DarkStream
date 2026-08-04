@@ -20,12 +20,12 @@ func TestProgressReader(t *testing.T) {
 	totalSize := int64(len(testData))
 
 	// Track progress
-	var lastReported int64
-	var callCount int32
+	var lastReported atomic.Int64
+	var callCount atomic.Int32
 
 	progressCallback := func(transferred, _ int64) {
-		atomic.AddInt32(&callCount, 1)
-		atomic.StoreInt64(&lastReported, transferred)
+		callCount.Add(1)
+		lastReported.Store(transferred)
 
 		if transferred > totalSize {
 			t.Errorf("Transferred bytes (%d) exceeds total (%d)", transferred, totalSize)
@@ -56,13 +56,13 @@ func TestProgressReader(t *testing.T) {
 	}
 
 	// Verify progress was reported
-	finalReported := atomic.LoadInt64(&lastReported)
+	finalReported := lastReported.Load()
 	if finalReported != totalSize {
 		t.Errorf("Expected final progress to be %d, got %d", totalSize, finalReported)
 	}
 
 	// Verify callback was called multiple times (at least once)
-	calls := atomic.LoadInt32(&callCount)
+	calls := callCount.Load()
 	if calls < 1 {
 		t.Error("Progress callback should have been called at least once")
 	}
@@ -72,9 +72,9 @@ func TestProgressReaderWithZeroTotal(t *testing.T) {
 	testData := []byte("test")
 
 	// Progress callback that tracks calls
-	var callCount int32
+	var callCount atomic.Int32
 	progressCallback := func(_, _ int64) {
-		atomic.AddInt32(&callCount, 1)
+		callCount.Add(1)
 	}
 
 	reader := NewProgressReader(bytes.NewReader(testData), 0, progressCallback)
@@ -87,7 +87,7 @@ func TestProgressReaderWithZeroTotal(t *testing.T) {
 	}
 
 	// Progress should still be reported even with zero total
-	if atomic.LoadInt32(&callCount) < 1 {
+	if callCount.Load() < 1 {
 		t.Error("Expected progress callback to be called at least once")
 	}
 }

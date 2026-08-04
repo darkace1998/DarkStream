@@ -18,7 +18,7 @@ func TestCancelJobsSuccess(t *testing.T) {
 		if req.Method != http.MethodPost {
 			t.Errorf("Expected method POST, got %s", req.Method)
 		}
-		if req.URL.Query().Get("status") != "pending" {
+		if req.URL.Query().Get("status") != statusPending {
 			t.Errorf("Expected status=pending, got %s", req.URL.Query().Get("status"))
 		}
 		if req.URL.Query().Get("limit") != "50" {
@@ -44,7 +44,7 @@ func TestCancelJobsSuccess(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the cancel-jobs command
-	args := []string{"--master-url", server.URL, "--status", "pending", "--limit", "50"}
+	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, "--limit", "50"}
 	CancelJobs(args)
 
 	// Verify log output contains success message
@@ -75,7 +75,7 @@ func TestCancelJobsNoJobs(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the cancel-jobs command
-	args := []string{"--master-url", server.URL, "--status", "pending", "--limit", "50"}
+	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, "--limit", "50"}
 	CancelJobs(args)
 
 	// Verify log output contains success message

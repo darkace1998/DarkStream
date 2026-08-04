@@ -13,16 +13,16 @@ import (
 
 func TestJob(t *testing.T) {
 	mockJob := models.Job{
-		ID:         "test-job-123",
+		ID:         testJobID,
 		SourcePath: "/tmp/in.mp4",
 		OutputPath: "/tmp/out.mp4",
-		Status:     "pending",
+		Status:     statusPending,
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/job" {
 			jobID := r.URL.Query().Get("job_id")
-			if jobID == "test-job-123" {
+			if jobID == testJobID {
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(mockJob)
 				return
@@ -42,10 +42,10 @@ func TestJob(t *testing.T) {
 	os.Stdout = w
 
 	// Test success json
-	Job([]string{"--master-url", ts.URL, "--job-id", "test-job-123", "--format", "json"})
+	Job([]string{flagMasterURL, ts.URL, "--job-id", testJobID, "--format", "json"})
 
 	// Test not found
-	Job([]string{"--master-url", ts.URL, "--job-id", "not-found"})
+	Job([]string{flagMasterURL, ts.URL, "--job-id", "not-found"})
 
 	// Restore stdout
 	_ = w.Close()
@@ -57,7 +57,7 @@ func TestJob(t *testing.T) {
 	buf.Write(b[:n])
 	output := buf.String()
 
-	if !strings.Contains(output, "test-job-123") {
+	if !strings.Contains(output, testJobID) {
 		t.Errorf("Expected output to contain job ID, got: %s", output)
 	}
 	if !strings.Contains(output, "Job not-found not found") {
