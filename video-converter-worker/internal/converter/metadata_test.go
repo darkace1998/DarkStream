@@ -10,13 +10,14 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+const testAudioCodecAAC = "aac"
+
 // TestHelperProcess isn't a real test. It's used as a helper process
 // for TestGetVideoMetadata.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	defer os.Exit(0)
 
 	args := os.Args
 	for len(args) > 0 {
@@ -81,6 +82,8 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "Unknown scenario: %s\n", scenario)
 		os.Exit(1)
 	}
+
+	os.Exit(0)
 }
 
 func TestNewMetadataExtractor(t *testing.T) {
@@ -124,20 +127,15 @@ func TestNewMetadataExtractor(t *testing.T) {
 
 func TestGetVideoMetadata(t *testing.T) {
 	// Setup a dummy file
-	tmpFile, err := os.CreateTemp("", "dummy_video_*.mp4")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "dummy_video_*.mp4")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tmpFileName := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpFileName)
+	_ = tmpFile.Close()
 
 	// Create a dummy directory to test directory error
-	tmpDir, err := os.MkdirTemp("", "dummy_dir_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	extractor := &MetadataExtractor{
 		// Use the test binary itself as the ffprobe executable
@@ -145,19 +143,17 @@ func TestGetVideoMetadata(t *testing.T) {
 	}
 
 	// This trick ensures exec.Command runs this test binary and calls TestHelperProcess
-	os.Setenv("GO_WANT_HELPER_PROCESS", "1")
-	defer os.Unsetenv("GO_WANT_HELPER_PROCESS")
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 
 	// Create a script that properly quotes the execution argument and calls the go test binary
 	scriptContent := fmt.Sprintf("#!/bin/sh\n\"%s\" -test.run=TestHelperProcess -- ffprobe \"$@\"\n", os.Args[0])
-	scriptFile, err := os.CreateTemp("", "mock_ffprobe_*.sh")
+	scriptFile, err := os.CreateTemp(t.TempDir(), "mock_ffprobe_*.sh")
 	if err != nil {
 		t.Fatalf("Failed to create mock script: %v", err)
 	}
 	_, _ = scriptFile.WriteString(scriptContent)
-	scriptFile.Close()
+	_ = scriptFile.Close()
 	_ = os.Chmod(scriptFile.Name(), 0755)
-	defer os.Remove(scriptFile.Name())
 
 	extractor.ffprobePath = scriptFile.Name()
 
@@ -174,6 +170,7 @@ func TestGetVideoMetadata(t *testing.T) {
 			scenario:    "success",
 			expectError: false,
 			checkMetadata: func(t *testing.T, m *models.VideoMetadata) {
+				t.Helper()
 				if m.Duration != 120.5 {
 					t.Errorf("Expected duration 120.5, got %v", m.Duration)
 				}
@@ -189,7 +186,7 @@ func TestGetVideoMetadata(t *testing.T) {
 				if m.Height != 1080 {
 					t.Errorf("Expected height 1080, got %d", m.Height)
 				}
-				if m.AudioCodec != "aac" {
+				if m.AudioCodec != testAudioCodecAAC {
 					t.Errorf("Expected audio codec aac, got %s", m.AudioCodec)
 				}
 			},
@@ -222,8 +219,7 @@ func TestGetVideoMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Setenv("TEST_FFPROBE_SCENARIO", tt.scenario)
-			defer os.Unsetenv("TEST_FFPROBE_SCENARIO")
+			t.Setenv("TEST_FFPROBE_SCENARIO", tt.scenario)
 
 			metadata, err := extractor.GetVideoMetadata(tt.sourcePath)
 
@@ -250,7 +246,7 @@ func TestApplyMetadataToJob(t *testing.T) {
 		Width:      1920,
 		Height:     1080,
 		VideoCodec: "h264",
-		AudioCodec: "aac",
+		AudioCodec: testAudioCodecAAC,
 		Bitrate:    5000000,
 		FileSize:   1024000,
 	}
@@ -269,7 +265,7 @@ func TestApplyMetadataToJob(t *testing.T) {
 	if job.SourceVideoCodec != "h264" {
 		t.Errorf("Expected SourceVideoCodec h264, got %s", job.SourceVideoCodec)
 	}
-	if job.SourceAudioCodec != "aac" {
+	if job.SourceAudioCodec != testAudioCodecAAC {
 		t.Errorf("Expected SourceAudioCodec aac, got %s", job.SourceAudioCodec)
 	}
 	if job.SourceBitrate != 5000000 {

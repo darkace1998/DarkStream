@@ -453,6 +453,8 @@ func isPermanentHTTPError(err error) bool {
 }
 
 // DownloadSourceVideo downloads the source video file from the master
+//
+//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
@@ -561,6 +563,8 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 }
 
 // UploadConvertedVideo uploads the converted video file to the master
+//
+//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
