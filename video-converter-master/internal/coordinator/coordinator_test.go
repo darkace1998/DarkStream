@@ -15,9 +15,13 @@ func TestStartReturnsOnServerError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reserve port: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
-	port := listener.Addr().(*net.TCPAddr).Port
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("unexpected listener address type: %T", listener.Addr())
+	}
+	port := addr.Port
 
 	cfg := &models.MasterConfig{}
 	cfg.Server.Host = "127.0.0.1"

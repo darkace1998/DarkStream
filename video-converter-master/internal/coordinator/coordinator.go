@@ -245,7 +245,7 @@ func (c *Coordinator) Start() error {
 // listenWatcherEvents processes jobs emitted by the file system watcher
 func (c *Coordinator) listenWatcherEvents(w *scanner.Watcher) {
 	defer c.wg.Done()
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	for {
 		select {
@@ -358,13 +358,14 @@ func (c *Coordinator) monitorWorkerHealth() {
 					// Reset job to pending without incrementing retry count
 					// since worker failure is not job's fault
 					updated, err := c.db.ResetJobToPending(job.ID, false, "processing", workerID, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to reset job from offline worker",
 							"job_id", job.ID, "worker_id", workerID, "error", err)
-					} else if updated {
+					case updated:
 						slog.Info("Reassigned job from offline worker",
 							"job_id", job.ID, "worker_id", workerID)
-					} else {
+					default:
 						slog.Warn("Skipped stale offline-worker reset",
 							"job_id", job.ID, "worker_id", workerID)
 					}
@@ -400,10 +401,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 						fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)",
 							jobTimeout, job.RetryCount, job.MaxRetries),
 						completedAt, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to mark stale job as failed",
 							"job_id", job.ID, "error", err)
-					} else if updated {
+					case updated:
 						// Notify webhook if configured
 						if updatedJob, fetchErr := c.db.GetJobByID(job.ID); fetchErr == nil {
 							c.notifier.Notify("failed", updatedJob)
@@ -413,23 +415,24 @@ func (c *Coordinator) monitorWorkerHealth() {
 							"job_id", job.ID,
 							"retry_count", job.RetryCount,
 							"max_retries", job.MaxRetries)
-					} else {
+					default:
 						slog.Warn("Skipped stale failure update for job that changed state",
 							"job_id", job.ID)
 					}
 				} else {
 					// Reset job to pending with retry count increment
 					updated, err := c.db.ResetJobToPending(job.ID, true, "processing", job.WorkerID, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to reset stale job",
 							"job_id", job.ID, "error", err)
-					} else if updated {
+					case updated:
 						c.server.RecordJobRetry("monitor")
 						slog.Info("Reset stale job to pending for retry",
 							"job_id", job.ID,
 							"retry_count", job.RetryCount+1,
 							"max_retries", job.MaxRetries)
-					} else {
+					default:
 						slog.Warn("Skipped stale reset for job that changed state",
 							"job_id", job.ID)
 					}
@@ -443,8 +446,6 @@ func (c *Coordinator) monitorWorkerHealth() {
 }
 
 // monitorFailedJobs periodically checks for failed jobs that can be retried
-//
-//nolint:gocognit // Failed job retry logic with exponential backoff is inherently complex
 func (c *Coordinator) monitorFailedJobs() {
 	defer c.wg.Done()
 

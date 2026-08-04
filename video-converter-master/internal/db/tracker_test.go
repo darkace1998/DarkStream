@@ -12,6 +12,13 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+// Job status fixture constants used across the tracker test suite.
+const (
+	statusProcessing = "processing"
+	statusCompleted  = "completed"
+	statusCancelled  = "cancelled"
+)
+
 func TestTrackerCreateAndGetJob(t *testing.T) {
 	// Create temporary database
 	tmpDir := t.TempDir()
@@ -153,7 +160,7 @@ func TestTrackerUpdateJob(t *testing.T) {
 
 	// Update job
 	now := time.Now()
-	job.Status = "completed"
+	job.Status = statusCompleted
 	job.WorkerID = "worker-1"
 	job.CompletedAt = &now
 	job.OutputSize = 12345
@@ -169,8 +176,8 @@ func TestTrackerUpdateJob(t *testing.T) {
 		t.Fatalf("Failed to get job stats: %v", err)
 	}
 
-	if completed, ok := stats["completed"].(int); !ok || completed != 1 {
-		t.Errorf("Expected 1 completed job, got %v", stats["completed"])
+	if completed, ok := stats[statusCompleted].(int); !ok || completed != 1 {
+		t.Errorf("Expected 1 completed job, got %v", stats[statusCompleted])
 	}
 }
 
@@ -338,7 +345,7 @@ func TestGetJobsByStatus(t *testing.T) {
 			ID:         "job-completed-1",
 			SourcePath: "/source/video3.mp4",
 			OutputPath: "/output/video3.mp4",
-			Status:     "completed",
+			Status:     statusCompleted,
 			Priority:   5,
 			CreatedAt:  time.Now(),
 			RetryCount: 0,
@@ -364,7 +371,7 @@ func TestGetJobsByStatus(t *testing.T) {
 	}
 
 	// Retrieve completed jobs
-	completedJobs, err := tracker.GetJobsByStatus("completed", 10)
+	completedJobs, err := tracker.GetJobsByStatus(statusCompleted, 10)
 	if err != nil {
 		t.Fatalf("Failed to get completed jobs: %v", err)
 	}
@@ -399,7 +406,7 @@ func TestGetJobMetrics(t *testing.T) {
 		ID:          "job-metrics-1",
 		SourcePath:  "/source/video.mp4",
 		OutputPath:  "/output/video.mp4",
-		Status:      "completed",
+		Status:      statusCompleted,
 		Priority:    5,
 		CreatedAt:   now.Add(-2 * time.Hour),
 		StartedAt:   &startTime,
@@ -627,7 +634,7 @@ func TestGetJobHistory(t *testing.T) {
 			ID:         "job-old",
 			SourcePath: "/source/old.mp4",
 			OutputPath: "/output/old.mp4",
-			Status:     "completed",
+			Status:     statusCompleted,
 			Priority:   5,
 			CreatedAt:  now.Add(-2 * time.Hour),
 			RetryCount: 0,
@@ -637,7 +644,7 @@ func TestGetJobHistory(t *testing.T) {
 			ID:         "job-recent",
 			SourcePath: "/source/recent.mp4",
 			OutputPath: "/output/recent.mp4",
-			Status:     "completed",
+			Status:     statusCompleted,
 			Priority:   5,
 			CreatedAt:  now.Add(-30 * time.Minute),
 			RetryCount: 0,
@@ -692,7 +699,7 @@ func TestGetStaleProcessingJobs(t *testing.T) {
 		ID:         "stale-job",
 		SourcePath: "/source/stale.mp4",
 		OutputPath: "/output/stale.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-1",
 		StartedAt:  &staleStartTime,
 		CreatedAt:  time.Now().Add(-4 * time.Hour),
@@ -714,7 +721,7 @@ func TestGetStaleProcessingJobs(t *testing.T) {
 		ID:         "recent-job",
 		SourcePath: "/source/recent.mp4",
 		OutputPath: "/output/recent.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-2",
 		StartedAt:  &recentStartTime,
 		CreatedAt:  time.Now().Add(-1 * time.Hour),
@@ -841,7 +848,7 @@ func TestGetJobsForWorker(t *testing.T) {
 			ID:         "worker1-job-" + string(rune('0'+i)),
 			SourcePath: "/source/video" + string(rune('0'+i)) + ".mp4",
 			OutputPath: "/output/video" + string(rune('0'+i)) + ".mp4",
-			Status:     "processing",
+			Status:     statusProcessing,
 			WorkerID:   "worker-1",
 			StartedAt:  &startTime,
 			CreatedAt:  time.Now().Add(-time.Duration(i+5) * time.Minute),
@@ -864,7 +871,7 @@ func TestGetJobsForWorker(t *testing.T) {
 		ID:         "worker2-job",
 		SourcePath: "/source/worker2.mp4",
 		OutputPath: "/output/worker2.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-2",
 		StartedAt:  &startTime,
 		CreatedAt:  time.Now().Add(-10 * time.Minute),
@@ -901,6 +908,7 @@ func TestGetJobsForWorker(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // Table-free test exercising many sequential reset-transition scenarios as one cohesive case
 func TestResetJobToPending(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -991,7 +999,7 @@ func TestResetJobToPending(t *testing.T) {
 		ID:           "failed-job-2",
 		SourcePath:   "/source/failed2.mp4",
 		OutputPath:   "/output/failed2.mp4",
-		Status:       "processing",
+		Status:       statusProcessing,
 		WorkerID:     "worker-1",
 		ErrorMessage: "timeout",
 		CreatedAt:    time.Now().Add(-1 * time.Hour),
@@ -1008,7 +1016,7 @@ func TestResetJobToPending(t *testing.T) {
 	}
 
 	// Reset without increment (worker failure, not job's fault)
-	updated, err = tracker.ResetJobToPending("failed-job-2", false, "processing", "worker-1", nil)
+	updated, err = tracker.ResetJobToPending("failed-job-2", false, statusProcessing, "worker-1", nil)
 	if err != nil {
 		t.Fatalf("Failed to reset job2: %v", err)
 	}
@@ -1030,7 +1038,7 @@ func TestResetJobToPending(t *testing.T) {
 		ID:         "changed-job",
 		SourcePath: "/source/changed.mp4",
 		OutputPath: "/output/changed.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-9",
 		CreatedAt:  time.Now().Add(-1 * time.Hour),
 		RetryCount: 0,
@@ -1045,7 +1053,7 @@ func TestResetJobToPending(t *testing.T) {
 		t.Fatalf("Failed to update changed job: %v", err)
 	}
 
-	updated, err = tracker.ResetJobToPending("changed-job", true, "processing", "worker-1", nil)
+	updated, err = tracker.ResetJobToPending("changed-job", true, statusProcessing, "worker-1", nil)
 	if err != nil {
 		t.Fatalf("Failed to reset changed job: %v", err)
 	}
@@ -1073,7 +1081,7 @@ func TestJobTransitionHelpers(t *testing.T) {
 		ID:         "transition-job",
 		SourcePath: "/source/transition.mp4",
 		OutputPath: "/output/transition.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-1",
 		CreatedAt:  time.Now().Add(-1 * time.Hour),
 		RetryCount: 0,
@@ -1100,11 +1108,11 @@ func TestJobTransitionHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to fetch completed job: %v", err)
 	}
-	if completedJob.Status != "completed" || completedJob.OutputSize != 1234 || completedJob.OutputChecksum != "sum-1" {
+	if completedJob.Status != statusCompleted || completedJob.OutputSize != 1234 || completedJob.OutputChecksum != "sum-1" {
 		t.Fatalf("Unexpected completed job state: %+v", completedJob)
 	}
 
-	updated, err = tracker.MarkJobCancelled(job.ID, "cancelled", nil)
+	updated, err = tracker.MarkJobCancelled(job.ID, statusCancelled, nil)
 	if err != nil {
 		t.Fatalf("Failed to cancel completed job: %v", err)
 	}
@@ -1116,7 +1124,7 @@ func TestJobTransitionHelpers(t *testing.T) {
 		ID:         "transition-job-2",
 		SourcePath: "/source/transition2.mp4",
 		OutputPath: "/output/transition2.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		WorkerID:   "worker-2",
 		CreatedAt:  time.Now().Add(-1 * time.Hour),
 		RetryCount: 0,
@@ -1160,7 +1168,7 @@ func TestJobProgress(t *testing.T) {
 		ID:         "progress-test-job",
 		SourcePath: "/source/progress.mp4",
 		OutputPath: "/output/progress.mp4",
-		Status:     "processing",
+		Status:     statusProcessing,
 		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
@@ -1371,7 +1379,7 @@ func TestClaimNextPendingJobAtomic(t *testing.T) {
 	if claimedJobs[0].ID != job.ID {
 		t.Fatalf("Expected claimed job %q, got %q", job.ID, claimedJobs[0].ID)
 	}
-	if claimedJobs[0].Status != "processing" {
+	if claimedJobs[0].Status != statusProcessing {
 		t.Fatalf("Expected claimed job to be processing, got %q", claimedJobs[0].Status)
 	}
 	if claimedJobs[0].WorkerID == "" {
@@ -1452,7 +1460,7 @@ func TestClaimNextPendingJobsBatch(t *testing.T) {
 		t.Fatalf("Unexpected claim order: got %q, %q", claimedJobs[0].ID, claimedJobs[1].ID)
 	}
 	for _, claimed := range claimedJobs {
-		if claimed.Status != "processing" {
+		if claimed.Status != statusProcessing {
 			t.Fatalf("Expected claimed job to be processing, got %q", claimed.Status)
 		}
 		if claimed.WorkerID != "worker-batch" {
@@ -1711,7 +1719,7 @@ func TestJobPriority(t *testing.T) {
 	}
 
 	// Mark it as processing
-	job1.Status = "processing"
+	job1.Status = statusProcessing
 	err = tracker.UpdateJob(job1)
 	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
@@ -1727,7 +1735,7 @@ func TestJobPriority(t *testing.T) {
 	}
 
 	// Mark it as processing
-	job2.Status = "processing"
+	job2.Status = statusProcessing
 	err = tracker.UpdateJob(job2)
 	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
@@ -1751,7 +1759,7 @@ func TestSetWorkerStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() { _ = tracker.Close() }()
 
 	// Add a worker
 	hb := &models.WorkerHeartbeat{
@@ -1803,7 +1811,7 @@ func TestDeleteWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() { _ = tracker.Close() }()
 
 	// Add a worker
 	hb := &models.WorkerHeartbeat{
@@ -1845,7 +1853,7 @@ func TestHasJobWithSourceChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer tracker.Close()
+	defer func() { _ = tracker.Close() }()
 
 	// Empty checksum should return false immediately
 	exists, err := tracker.HasJobWithSourceChecksum("")
@@ -1905,7 +1913,7 @@ func TestHasJobWithSourceChecksum(t *testing.T) {
 	}
 
 	// Update job to 'cancelled'
-	job.Status = "cancelled"
+	job.Status = statusCancelled
 	if err := tracker.UpdateJob(job); err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
@@ -1920,7 +1928,7 @@ func TestHasJobWithSourceChecksum(t *testing.T) {
 	}
 
 	// Update job to 'completed'
-	job.Status = "completed"
+	job.Status = statusCompleted
 	if err := tracker.UpdateJob(job); err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
@@ -1935,6 +1943,7 @@ func TestHasJobWithSourceChecksum(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // Sequential prune scenarios verified end-to-end as one cohesive case
 func TestPruneJobs(t *testing.T) {
 	// Create temporary database
 	tmpDir := t.TempDir()
@@ -1956,9 +1965,9 @@ func TestPruneJobs(t *testing.T) {
 	// Create test jobs in various states
 	jobs := []*models.Job{
 		{ID: "job-pending-1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: "pending", CreatedAt: now},
-		{ID: "job-processing-1", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: "processing", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now},
-		{ID: "job-completed-1", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
-		{ID: "job-completed-2", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-processing-1", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: statusProcessing, WorkerID: "worker-1", CreatedAt: now, StartedAt: &now},
+		{ID: "job-completed-1", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: statusCompleted, WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-completed-2", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: statusCompleted, WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
 		{ID: "job-failed-1", SourcePath: "/e.mp4", OutputPath: "/out/e.mp4", Status: "failed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
 	}
 
@@ -1995,12 +2004,12 @@ func TestPruneJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get stats: %v", err)
 	}
-	if stats["completed"] != 2 || stats["pending"] != 1 || stats["processing"] != 1 {
+	if stats[statusCompleted] != 2 || stats["pending"] != 1 || stats[statusProcessing] != 1 {
 		t.Errorf("Unexpected stats after pruning failed jobs: %v", stats)
 	}
 
 	// Test prune completed
-	count, err = tracker.PruneJobs("completed")
+	count, err = tracker.PruneJobs(statusCompleted)
 	if err != nil {
 		t.Fatalf("Failed to prune completed jobs: %v", err)
 	}
@@ -2013,13 +2022,13 @@ func TestPruneJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get stats: %v", err)
 	}
-	if stats["completed"] != nil || stats["pending"] != 1 || stats["processing"] != 1 {
+	if stats[statusCompleted] != nil || stats["pending"] != 1 || stats[statusProcessing] != 1 {
 		t.Errorf("Unexpected stats after pruning completed jobs: %v", stats)
 	}
 
 	// Add more jobs to test "all"
 	jobs = []*models.Job{
-		{ID: "job-completed-3", SourcePath: "/f.mp4", OutputPath: "/out/f.mp4", Status: "completed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
+		{ID: "job-completed-3", SourcePath: "/f.mp4", OutputPath: "/out/f.mp4", Status: statusCompleted, WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
 		{ID: "job-failed-2", SourcePath: "/g.mp4", OutputPath: "/out/g.mp4", Status: "failed", WorkerID: "worker-1", CreatedAt: now, StartedAt: &now, CompletedAt: &now},
 	}
 	for _, j := range jobs {
@@ -2043,7 +2052,7 @@ func TestPruneJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get stats: %v", err)
 	}
-	if stats["completed"] != nil || stats["failed"] != nil || stats["pending"] != 1 || stats["processing"] != 1 {
+	if stats[statusCompleted] != nil || stats["failed"] != nil || stats["pending"] != 1 || stats[statusProcessing] != 1 {
 		t.Errorf("Unexpected stats after pruning all jobs: %v", stats)
 	}
 }
@@ -2090,7 +2099,7 @@ func TestMarkJobCancelledNotRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to fetch cancelled job: %v", err)
 	}
-	if got.Status != "cancelled" {
+	if got.Status != statusCancelled {
 		t.Errorf("Expected status 'cancelled', got %q", got.Status)
 	}
 

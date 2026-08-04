@@ -20,6 +20,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test fixture constants used across the server test suite.
+const (
+	testAPIKey      = "test-secret-key"
+	testAdminWorker = "admin-worker"
+)
+
 // newTestServer creates a Server instance backed by a temporary SQLite database
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -165,7 +171,7 @@ func TestGetStats(t *testing.T) {
 
 func TestGetStats_RequiresAuthWhenAPIKeyConfigured(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rec := httptest.NewRecorder()
@@ -192,7 +198,7 @@ func TestGetStats_MethodNotAllowed(t *testing.T) {
 
 func TestHandleWorkerSettings_RequiresAuthWhenAPIKeyConfigured(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	req := httptest.NewRequest(http.MethodGet, "/api/worker/settings?worker_id=worker-1", nil)
 	rec := httptest.NewRecorder()
@@ -212,7 +218,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 			ID:         "job-low",
 			SourcePath: "/source/low.mp4",
 			OutputPath: "/output/low.mp4",
-			Status:     "pending",
+			Status:     statusPending,
 			Priority:   1,
 			CreatedAt:  time.Now().Add(-3 * time.Minute),
 			RetryCount: 0,
@@ -222,7 +228,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 			ID:         "job-high",
 			SourcePath: "/source/high.mp4",
 			OutputPath: "/output/high.mp4",
-			Status:     "pending",
+			Status:     statusPending,
 			Priority:   10,
 			CreatedAt:  time.Now().Add(-2 * time.Minute),
 			RetryCount: 0,
@@ -232,7 +238,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 			ID:         "job-medium",
 			SourcePath: "/source/medium.mp4",
 			OutputPath: "/output/medium.mp4",
-			Status:     "pending",
+			Status:     statusPending,
 			Priority:   5,
 			CreatedAt:  time.Now().Add(-1 * time.Minute),
 			RetryCount: 0,
@@ -290,7 +296,7 @@ func TestGetNextJobs_AssignsHighestPriorityJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to fetch low priority job: %v", err)
 	}
-	if lowJob.Status != "pending" {
+	if lowJob.Status != statusPending {
 		t.Fatalf("job-low status = %s, want pending", lowJob.Status)
 	}
 }
@@ -320,7 +326,7 @@ func TestAuthMiddleware_NoAPIKey(t *testing.T) {
 
 func TestAuthMiddleware_WithAPIKey(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	tests := []struct {
 		name       string
@@ -344,7 +350,7 @@ func TestAuthMiddleware_WithAPIKey(t *testing.T) {
 		},
 		{
 			name:       "malformed header",
-			authHeader: "test-secret-key",
+			authHeader: testAPIKey,
 			wantCode:   http.StatusUnauthorized,
 		},
 	}
@@ -372,7 +378,7 @@ func TestAuthMiddleware_WithAPIKey(t *testing.T) {
 
 func TestAuthMiddleware_SetsAuthenticatedContext(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	handler := srv.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if !srv.authenticatedRequest(r) {
@@ -394,7 +400,7 @@ func TestAuthMiddleware_SetsAuthenticatedContext(t *testing.T) {
 
 func TestGetWorkerConfigRedactsAPIKeyUnlessAuthenticated(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	req := httptest.NewRequest(http.MethodGet, "/api/worker/config", nil)
 	rec := httptest.NewRecorder()
@@ -434,7 +440,7 @@ func TestGetWorkerConfigRedactsAPIKeyUnlessAuthenticated(t *testing.T) {
 
 func TestStartRequiresTLSWhenAPIKeyConfigured(t *testing.T) {
 	srv := newTestServer(t)
-	srv.apiKey = "test-secret-key"
+	srv.apiKey = testAPIKey
 
 	err := srv.Start()
 	if err == nil {
@@ -508,7 +514,7 @@ func TestGetNextJob_AtomicClaim(t *testing.T) {
 		ID:         "atomic-http-job",
 		SourcePath: "/source/video.mp4",
 		OutputPath: "/output/video.mp4",
-		Status:     "pending",
+		Status:     statusPending,
 		Priority:   5,
 		CreatedAt:  time.Now(),
 		RetryCount: 0,
@@ -614,7 +620,10 @@ func TestUpdateJobPriority(t *testing.T) {
 		"job_id":   job.ID,
 		"priority": 10,
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/job/priority", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -669,7 +678,7 @@ func TestRequeueJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get updated job: %v", err)
 	}
-	if updatedJob.Status != "pending" {
+	if updatedJob.Status != statusPending {
 		t.Errorf("Expected job status 'pending', got '%s'", updatedJob.Status)
 	}
 	if updatedJob.RetryCount != 1 {
@@ -720,7 +729,7 @@ func TestRetryJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to fetch updated job: %v", err)
 	}
-	if updatedJob.Status != "pending" {
+	if updatedJob.Status != statusPending {
 		t.Errorf("Expected job status to be 'pending', got %v", updatedJob.Status)
 	}
 }
@@ -730,7 +739,7 @@ func TestWorkerAdminEndpoints(t *testing.T) {
 
 	// Add a worker
 	hb := &models.WorkerHeartbeat{
-		WorkerID:        "admin-worker",
+		WorkerID:        testAdminWorker,
 		Hostname:        "test-host",
 		Timestamp:       time.Now(),
 		VulkanAvailable: true,
@@ -755,7 +764,7 @@ func TestWorkerAdminEndpoints(t *testing.T) {
 	workers, _ := srv.db.GetWorkers()
 	found := false
 	for _, w := range workers {
-		if w.WorkerID == "admin-worker" {
+		if w.WorkerID == testAdminWorker {
 			found = true
 			if w.Status != constants.WorkerStatusPaused {
 				t.Errorf("Worker status = %s, want %s", w.Status, constants.WorkerStatusPaused)
@@ -778,7 +787,7 @@ func TestWorkerAdminEndpoints(t *testing.T) {
 
 	workers, _ = srv.db.GetWorkers()
 	for _, w := range workers {
-		if w.WorkerID == "admin-worker" {
+		if w.WorkerID == testAdminWorker {
 			if w.Status != constants.WorkerStatusOnline {
 				t.Errorf("Worker status = %s, want %s", w.Status, constants.WorkerStatusOnline)
 			}
@@ -797,7 +806,7 @@ func TestWorkerAdminEndpoints(t *testing.T) {
 
 	workers, _ = srv.db.GetWorkers()
 	for _, w := range workers {
-		if w.WorkerID == "admin-worker" {
+		if w.WorkerID == testAdminWorker {
 			t.Errorf("Worker was not removed")
 		}
 	}
@@ -809,7 +818,7 @@ func TestPruneJobsAPI(t *testing.T) {
 	// Seed some jobs
 	now := time.Now()
 	jobs := []*models.Job{
-		{ID: "job1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: "pending", CreatedAt: now},
+		{ID: "job1", SourcePath: "/a.mp4", OutputPath: "/out/a.mp4", Status: statusPending, CreatedAt: now},
 		{ID: "job2", SourcePath: "/b.mp4", OutputPath: "/out/b.mp4", Status: "completed", CreatedAt: now},
 		{ID: "job3", SourcePath: "/c.mp4", OutputPath: "/out/c.mp4", Status: "failed", CreatedAt: now},
 		{ID: "job4", SourcePath: "/d.mp4", OutputPath: "/out/d.mp4", Status: "completed", CreatedAt: now},
@@ -874,21 +883,21 @@ func TestPruneJobsAPI(t *testing.T) {
 
 	// Verify remaining job
 	stats, _ = srv.db.GetJobStats()
-	if pendingCount, ok := stats["pending"].(int); !ok || pendingCount != 1 {
-		t.Errorf("Expected 1 pending job, got %v", stats["pending"])
+	if pendingCount, ok := stats[statusPending].(int); !ok || pendingCount != 1 {
+		t.Errorf("Expected 1 pending job, got %v", stats[statusPending])
 	}
 }
 
 func TestGetJob(t *testing.T) {
 	srv := newTestServer(t)
-	defer srv.db.Close()
+	defer func() { _ = srv.db.Close() }()
 
 	// Add a job
 	err := srv.db.CreateJob(&models.Job{
 		ID:         "test-job-123",
 		SourcePath: "/tmp/test1.mp4",
 		OutputPath: "/tmp/out1.mp4",
-		Status:     "pending",
+		Status:     statusPending,
 		CreatedAt:  time.Now(),
 	})
 	require.NoError(t, err)
@@ -944,7 +953,7 @@ func TestHandleJobDetailsUI(t *testing.T) {
 		ID:         jobID,
 		SourcePath: "/test/source.mp4",
 		OutputPath: "/test/output.mp4",
-		Status:     "pending",
+		Status:     statusPending,
 		Priority:   5,
 	}
 	err := srv.db.CreateJob(job)
@@ -992,7 +1001,7 @@ func TestSubmitJob(t *testing.T) {
 	testFilePath := filepath.Join(srv.masterCfg.Scanner.RootPath, "test_submit.mp4")
 	err = os.WriteFile(testFilePath, []byte("dummy content"), 0644)
 	require.NoError(t, err)
-	defer os.Remove(testFilePath)
+	defer func() { _ = os.Remove(testFilePath) }()
 
 	// Test case 1: Successful job submission
 	reqBody := `{"source_path": "test_submit.mp4"}`
@@ -1003,7 +1012,7 @@ func TestSubmitJob(t *testing.T) {
 	srv.HandleJob(rw, req)
 
 	res := rw.Result()
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	require.Equal(t, http.StatusCreated, res.StatusCode)
 
 	var job models.Job
@@ -1011,7 +1020,7 @@ func TestSubmitJob(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(srv.masterCfg.Scanner.RootPath, "test_submit.mp4"), job.SourcePath)
 	require.Equal(t, 5, job.Priority)
-	require.Equal(t, "pending", job.Status)
+	require.Equal(t, statusPending, job.Status)
 
 	// Test case 2: Job already exists
 	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
@@ -1021,7 +1030,7 @@ func TestSubmitJob(t *testing.T) {
 	srv.HandleJob(rw, req)
 
 	res = rw.Result()
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	require.Equal(t, http.StatusConflict, res.StatusCode)
 
 	// Test case 3: Invalid path traversal
@@ -1033,7 +1042,7 @@ func TestSubmitJob(t *testing.T) {
 	srv.HandleJob(rw, req)
 
 	res = rw.Result()
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	require.Equal(t, http.StatusForbidden, res.StatusCode)
 
 	// Test case 4: File does not exist
@@ -1045,6 +1054,6 @@ func TestSubmitJob(t *testing.T) {
 	srv.HandleJob(rw, req)
 
 	res = rw.Result()
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	require.Equal(t, http.StatusNotFound, res.StatusCode)
 }

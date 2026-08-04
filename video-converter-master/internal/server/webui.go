@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -1366,7 +1368,7 @@ func (s *Server) getMasterURL() string {
 	if s.masterCfg.Server.Host == "0.0.0.0" {
 		return fmt.Sprintf("http://<server-ip>:%d", s.masterCfg.Server.Port)
 	}
-	return fmt.Sprintf("http://%s:%d", s.masterCfg.Server.Host, s.masterCfg.Server.Port)
+	return "http://" + net.JoinHostPort(s.masterCfg.Server.Host, strconv.Itoa(s.masterCfg.Server.Port))
 }
 
 // GetConfig returns the current configuration as JSON

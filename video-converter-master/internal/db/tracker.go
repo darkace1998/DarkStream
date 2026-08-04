@@ -25,6 +25,9 @@ type Tracker struct {
 // ErrJobAlreadyExists is returned when attempting to create a job that already exists
 var ErrJobAlreadyExists = errors.New("job already exists")
 
+// sqlAndStartedAt is the SQL fragment appended to guard job transitions against a stale started_at value.
+const sqlAndStartedAt = " AND started_at = ?"
+
 // ConnectionPoolConfig holds configuration for database connection pooling
 type ConnectionPoolConfig struct {
 	MaxOpenConnections int           // Maximum number of open connections to the database
@@ -1071,7 +1074,7 @@ func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool, expectedS
 		args = append(args, expectedWorkerID)
 	}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 
@@ -1097,7 +1100,7 @@ func (t *Tracker) MarkJobCompleted(jobID, workerID string, outputSize int64, out
 	`
 	args := []any{workerID, now, outputSize, outputChecksum, jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1121,7 +1124,7 @@ func (t *Tracker) MarkJobFailed(jobID, workerID, errorMessage string, expectedSt
 	`
 	args := []any{workerID, errorMessage, time.Now(), jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1143,7 +1146,7 @@ func (t *Tracker) MarkJobFailedPermanently(jobID, workerID, errorMessage string,
 	`
 	args := []any{workerID, errorMessage, completedAt, jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1166,7 +1169,7 @@ func (t *Tracker) MarkJobCancelled(jobID, errorMessage string, expectedStartedAt
 	`
 	args := []any{time.Now(), errorMessage, jobID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1519,8 +1522,8 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	validType := regexp.MustCompile(`^[a-zA-Z]+$`)
 
-	var placeholders []string
-	var args []any
+	placeholders := make([]string, 0, len(columns))
+	args := make([]any, 0, len(columns))
 	for _, col := range columns {
 		// Strict validation of column name and data type to prevent SQL injection
 		if !validName.MatchString(col.name) {
@@ -1538,7 +1541,7 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 	if err != nil {
 		return fmt.Errorf("failed to query existing columns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	existingCols := make(map[string]bool)
 	for rows.Next() {

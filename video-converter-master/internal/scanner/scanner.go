@@ -103,7 +103,7 @@ func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 
 // scanWithDepth recursively scans directories with depth control
 //
-//nolint:cyclop,gocognit,unparam // Directory scanning with filtering and deduplication is inherently complex; error return for future-proofing
+//nolint:unparam // Error return retained for future-proofing the directory-scanning API
 func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*models.Job) error {
 	// Check depth limit
 	if s.Options.MaxDepth >= 0 && currentDepth > s.Options.MaxDepth {
@@ -198,37 +198,8 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 	}
 
 	// Detect duplicates if enabled
-	if opts.DetectDuplicates {
-		fileHash, err := computeFileHash(fullPath)
-		if err != nil {
-			slog.Warn("Failed to compute file hash", "path", fullPath, "error", err)
-			// Continue processing even if hash fails
-		} else {
-			s.mu.Lock()
-			if originalPath, exists := s.seenHashes[fileHash]; exists {
-				s.mu.Unlock()
-				slog.Info("Duplicate file detected in current scan",
-					"path", fullPath,
-					"original", originalPath,
-					"hash", fileHash)
-				return nil, nil // Skip duplicate
-			}
-			s.seenHashes[fileHash] = fullPath
-			s.mu.Unlock()
-
-			// Check external duplicate checker if provided
-			if opts.DuplicateChecker != nil {
-				exists, err := opts.DuplicateChecker(fileHash)
-				if err != nil {
-					slog.Warn("Failed to check external duplicate checker", "path", fullPath, "error", err)
-				} else if exists {
-					slog.Info("Duplicate file detected in external checker (e.g. database)",
-						"path", fullPath,
-						"hash", fileHash)
-					return nil, nil // Skip duplicate
-				}
-			}
-		}
+	if opts.DetectDuplicates && s.isDuplicate(fullPath, opts) {
+		return nil, nil // Skip duplicate
 	}
 
 	// Generate output path
@@ -284,6 +255,44 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 
 	slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
 	return job, nil
+}
+
+// isDuplicate reports whether fullPath should be skipped as a duplicate, recording
+// its hash for in-scan deduplication and consulting the optional external checker.
+func (s *Scanner) isDuplicate(fullPath string, opts ScanOptions) bool {
+	fileHash, err := computeFileHash(fullPath)
+	if err != nil {
+		slog.Warn("Failed to compute file hash", "path", fullPath, "error", err)
+		// Continue processing even if hash fails
+		return false
+	}
+
+	s.mu.Lock()
+	if originalPath, exists := s.seenHashes[fileHash]; exists {
+		s.mu.Unlock()
+		slog.Info("Duplicate file detected in current scan",
+			"path", fullPath,
+			"original", originalPath,
+			"hash", fileHash)
+		return true
+	}
+	s.seenHashes[fileHash] = fullPath
+	s.mu.Unlock()
+
+	// Check external duplicate checker if provided
+	if opts.DuplicateChecker != nil {
+		exists, err := opts.DuplicateChecker(fileHash)
+		if err != nil {
+			slog.Warn("Failed to check external duplicate checker", "path", fullPath, "error", err)
+		} else if exists {
+			slog.Info("Duplicate file detected in external checker (e.g. database)",
+				"path", fullPath,
+				"hash", fileHash)
+			return true
+		}
+	}
+
+	return false
 }
 
 // computeFileHash computes SHA256 hash of file for duplicate detection

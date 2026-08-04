@@ -68,7 +68,7 @@ func TestHealthCheck_UnhealthyDatabase(t *testing.T) {
 	srv := newTestServer(t)
 
 	// Simulate a database failure by closing the underlying connection
-	srv.db.Close()
+	_ = srv.db.Close()
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 

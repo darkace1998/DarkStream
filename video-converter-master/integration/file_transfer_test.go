@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,131 +130,150 @@ logging:
 	}
 
 	t.Run("DownloadVideo", func(t *testing.T) {
-		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Download request failed: %v", err)
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Download status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Failed to read download body: %v", err)
-		}
-		if !bytes.Equal(body, testVideoContent) {
-			t.Fatalf("downloaded content mismatch")
-		}
-		if resp.Header.Get("Accept-Ranges") != "bytes" {
-			t.Fatalf("Accept-Ranges = %q, want %q", resp.Header.Get("Accept-Ranges"), "bytes")
-		}
-		if !bytes.Contains([]byte(resp.Header.Get("Content-Disposition")), []byte("source.mp4")) {
-			t.Fatalf("unexpected Content-Disposition: %q", resp.Header.Get("Content-Disposition"))
-		}
+		assertDownloadVideo(t, jobID, testVideoContent)
 	})
 
 	t.Run("DownloadRange", func(t *testing.T) {
-		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Range", "bytes=0-4")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Range download failed: %v", err)
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-
-		if resp.StatusCode != http.StatusPartialContent {
-			t.Fatalf("Range status = %d, want %d", resp.StatusCode, http.StatusPartialContent)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Failed to read range body: %v", err)
-		}
-		if !bytes.Equal(body, testVideoContent[:5]) {
-			t.Fatalf("range response mismatch")
-		}
+		assertDownloadRange(t, jobID, testVideoContent)
 	})
 
 	t.Run("UploadVideo", func(t *testing.T) {
-		convertedContent := []byte("fake converted video content")
-		body := &bytes.Buffer{}
-		writer := multipart.NewWriter(body)
-		part, err := writer.CreateFormFile("video", filepath.Base(outputPath))
-		if err != nil {
-			t.Fatalf("Failed to create form part: %v", err)
-		}
-		if _, err := io.Copy(part, bytes.NewReader(convertedContent)); err != nil {
-			t.Fatalf("Failed to copy upload content: %v", err)
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatalf("Failed to close multipart writer: %v", err)
-		}
-
-		url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/upload-video?job_id=%s", jobID)
-		req, err := http.NewRequest(http.MethodPost, url, body)
-		if err != nil {
-			t.Fatalf("Failed to create upload request: %v", err)
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Upload request failed: %v", err)
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Upload status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-
-		var uploadResponse struct {
-			FileSize int64  `json:"file_size"`
-			Status   string `json:"status"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&uploadResponse); err != nil {
-			t.Fatalf("Failed to decode upload response: %v", err)
-		}
-		if uploadResponse.FileSize != int64(len(convertedContent)) {
-			t.Fatalf("file_size = %d, want %d", uploadResponse.FileSize, len(convertedContent))
-		}
-		if uploadResponse.Status != "completed" {
-			t.Fatalf("status = %q, want completed", uploadResponse.Status)
-		}
-
-		savedContent, err := os.ReadFile(outputPath)
-		if err != nil {
-			t.Fatalf("Failed to read uploaded file: %v", err)
-		}
-		if !bytes.Equal(savedContent, convertedContent) {
-			t.Fatalf("uploaded file content mismatch")
-		}
-
-		var status string
-		if err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status); err != nil {
-			t.Fatalf("Failed to query job status: %v", err)
-		}
-		if status != "completed" {
-			t.Fatalf("job status = %q, want completed", status)
-		}
+		assertUploadVideo(t, db, jobID, outputPath)
 	})
 
 	t.Log("File transfer workflow test completed")
+}
+
+// assertDownloadVideo verifies a full-file download for jobID returns testVideoContent.
+func assertDownloadVideo(t *testing.T, jobID string, testVideoContent []byte) {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Download request failed: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Download status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read download body: %v", err)
+	}
+	if !bytes.Equal(body, testVideoContent) {
+		t.Fatalf("downloaded content mismatch")
+	}
+	if resp.Header.Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("Accept-Ranges = %q, want %q", resp.Header.Get("Accept-Ranges"), "bytes")
+	}
+	if !strings.Contains(resp.Header.Get("Content-Disposition"), "source.mp4") {
+		t.Fatalf("unexpected Content-Disposition: %q", resp.Header.Get("Content-Disposition"))
+	}
+}
+
+// assertDownloadRange verifies a Range request for jobID returns the requested byte window.
+func assertDownloadRange(t *testing.T, jobID string, testVideoContent []byte) {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/download-video?job_id=%s", jobID)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Range", "bytes=0-4")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Range download failed: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("Range status = %d, want %d", resp.StatusCode, http.StatusPartialContent)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read range body: %v", err)
+	}
+	if !bytes.Equal(body, testVideoContent[:5]) {
+		t.Fatalf("range response mismatch")
+	}
+}
+
+// assertUploadVideo uploads a converted file for jobID and verifies the response,
+// the saved file, and the job status transition.
+func assertUploadVideo(t *testing.T, db *sql.DB, jobID, outputPath string) {
+	t.Helper()
+	convertedContent := []byte("fake converted video content")
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("video", filepath.Base(outputPath))
+	if err != nil {
+		t.Fatalf("Failed to create form part: %v", err)
+	}
+	if _, err := io.Copy(part, bytes.NewReader(convertedContent)); err != nil {
+		t.Fatalf("Failed to copy upload content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Failed to close multipart writer: %v", err)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:28080/api/worker/upload-video?job_id=%s", jobID)
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		t.Fatalf("Failed to create upload request: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Upload request failed: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Upload status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var uploadResponse struct {
+		FileSize int64  `json:"file_size"`
+		Status   string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&uploadResponse); err != nil {
+		t.Fatalf("Failed to decode upload response: %v", err)
+	}
+	if uploadResponse.FileSize != int64(len(convertedContent)) {
+		t.Fatalf("file_size = %d, want %d", uploadResponse.FileSize, len(convertedContent))
+	}
+	if uploadResponse.Status != statusCompleted {
+		t.Fatalf("status = %q, want completed", uploadResponse.Status)
+	}
+
+	savedContent, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to read uploaded file: %v", err)
+	}
+	if !bytes.Equal(savedContent, convertedContent) {
+		t.Fatalf("uploaded file content mismatch")
+	}
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM jobs WHERE id = ?", jobID).Scan(&status); err != nil {
+		t.Fatalf("Failed to query job status: %v", err)
+	}
+	if status != statusCompleted {
+		t.Fatalf("job status = %q, want completed", status)
+	}
 }
 
 // TestDownloadRetryLogic tests the retry mechanism for downloads
@@ -392,7 +412,7 @@ func TestJobStatusTransitions(t *testing.T) {
 		expectedStatus string
 	}{
 		{"PendingToProcessing", "pending", "processing"},
-		{"ProcessingToCompleted", "processing", "completed"},
+		{"ProcessingToCompleted", "processing", statusCompleted},
 	}
 
 	for _, tc := range testCases {

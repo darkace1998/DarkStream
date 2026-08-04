@@ -16,6 +16,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// statusCompleted is the job status fixture used across the integration test suite.
+const statusCompleted = "completed"
+
 // testEnv holds test environment configuration and paths
 type testEnv struct {
 	testDir      string
@@ -320,7 +323,7 @@ func queryJobStats(t *testing.T, db *sql.DB) jobStats {
 			stats.pending = count
 		case "processing":
 			stats.processing = count
-		case "completed":
+		case statusCompleted:
 			stats.completed = count
 		case "failed":
 			stats.failed = count

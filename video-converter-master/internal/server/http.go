@@ -451,7 +451,9 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 				if worker.Status == "paused" {
 					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode([]*models.Job{})
+					if encErr := json.NewEncoder(w).Encode([]*models.Job{}); encErr != nil {
+						slog.Error("Failed to encode response", "error", encErr)
+					}
 					return
 				}
 				const maxJobsPerWorker = 5
@@ -1156,9 +1158,93 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseByteRange parses an HTTP Range header value against fileSize, returning the
+// resolved start/end offsets and whether the header matched a supported format.
+func parseByteRange(rangeHeader string, fileSize int64) (start, end int64, ok bool) {
+	// Parse Range header - supports formats:
+	// bytes=start-end (e.g., bytes=0-499)
+	// bytes=start- (e.g., bytes=500-)
+	// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
+
+	// Try bytes=start-end format
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
+		return start, end, true
+	}
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 && start >= 0 {
+		// bytes=start- format. The start >= 0 guard is required because %d
+		// consumes the leading '-' of a suffix range ("bytes=-500") as a
+		// negative start; without it that request would be misparsed here and
+		// rejected instead of falling through to the suffix branch below.
+		end = fileSize - 1
+		return start, end, true
+	}
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
+		// bytes=-suffix format (last N bytes)
+		start = fileSize - end
+		end = fileSize - 1
+		if start < 0 {
+			start = 0
+		}
+		return start, end, true
+	}
+
+	return 0, 0, false
+}
+
+// serveVideoRange handles a Range request for file. It returns true when the request
+// has been fully handled (a range response was written or an error was sent); false
+// means the caller should fall through to a full-file download.
+func (s *Server) serveVideoRange(w http.ResponseWriter, jobID, sourcePath, rangeHeader string, file *os.File, fileSize int64) bool {
+	start, end, validRange := parseByteRange(rangeHeader, fileSize)
+	if !validRange {
+		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
+		return false
+	}
+
+	// Validate range
+	if start < 0 || start >= fileSize || end < start || end >= fileSize {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
+		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
+		return true
+	}
+
+	contentLength := end - start + 1
+
+	// Seek to the start position
+	if _, err := file.Seek(start, 0); err != nil {
+		slog.Error("Failed to seek file", "path", sourcePath, "error", err)
+		http.Error(w, "Failed to seek file", http.StatusInternalServerError)
+		return true
+	}
+
+	// Set range response headers
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.WriteHeader(http.StatusPartialContent)
+
+	// Stream the remaining file content
+	startDownloadTime := time.Now()
+	written, err := io.CopyN(w, file, contentLength)
+	if written > 0 {
+		s.metrics.RecordBytesDownloaded(written)
+		durationSecs := time.Since(startDownloadTime).Seconds()
+		if durationSecs > 0 {
+			s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
+		}
+	}
+	if err != nil {
+		slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
+		return true
+	}
+
+	slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+	return true
+}
+
 // DownloadVideo handles downloading source video files for processing
-//
-//nolint:cyclop // HTTP file transfer with range support is inherently complex
 func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1229,81 +1315,11 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	fileSize := fileInfo.Size()
 
 	// Handle Range header for resume support
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
-		// Parse Range header - supports formats:
-		// bytes=start-end (e.g., bytes=0-499)
-		// bytes=start- (e.g., bytes=500-)
-		// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
-		var start, end int64
-		var validRange bool
-
-		// Try bytes=start-end format
-		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
-			validRange = true
-		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 && start >= 0 {
-			// bytes=start- format. The start >= 0 guard is required because %d
-			// consumes the leading '-' of a suffix range ("bytes=-500") as a
-			// negative start; without it that request would be misparsed here and
-			// rejected instead of falling through to the suffix branch below.
-			end = fileSize - 1
-			validRange = true
-		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
-			// bytes=-suffix format (last N bytes)
-			start = fileSize - end
-			end = fileSize - 1
-			if start < 0 {
-				start = 0
-			}
-			validRange = true
-		}
-
-		if validRange {
-			// Validate range
-			if start < 0 || start >= fileSize || end < start || end >= fileSize {
-				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
-				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
-				return
-			}
-
-			contentLength := end - start + 1
-
-			// Seek to the start position
-			_, err = file.Seek(start, 0)
-			if err != nil {
-				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
-				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
-				return
-			}
-
-			// Set range response headers
-			w.Header().Set("Content-Type", "video/mp4")
-			w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.WriteHeader(http.StatusPartialContent)
-
-			// Stream the remaining file content
-			startDownloadTime := time.Now()
-			written, err := io.CopyN(w, file, contentLength)
-			if written > 0 {
-				s.metrics.RecordBytesDownloaded(written)
-				durationSecs := time.Since(startDownloadTime).Seconds()
-				if durationSecs > 0 {
-					s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
-				}
-			}
-			if err != nil {
-				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
-				return
-			}
-
-			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		if s.serveVideoRange(w, jobID, job.SourcePath, rangeHeader, file, fileSize) {
 			return
 		}
 		// Invalid range format - fall through to full download
-		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
 	}
 
 	// Full file download (no range or invalid range format)
@@ -2157,6 +2173,41 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get jobs to cancel based on status filter
+	jobsToCancel, listErrors := s.collectJobsToCancel(status, limit)
+
+	// If all list operations failed, return error
+	if len(listErrors) > 0 && len(jobsToCancel) == 0 {
+		http.Error(w, "Failed to list jobs for cancellation", http.StatusInternalServerError)
+		return
+	}
+
+	// Cancel the jobs
+	cancelledCount, failedCount, cancelledIDs := s.cancelJobBatch(jobsToCancel, limit)
+
+	slog.Info("Batch job cancellation completed",
+		"status_filter", status,
+		"cancelled_count", cancelledCount,
+		"failed_count", failedCount,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"cancelled_count": cancelledCount,
+		"failed_count":    failedCount,
+		"cancelled_ids":   cancelledIDs,
+		"status_filter":   status,
+		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
+	}
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode batch cancel response", "error", err)
+		return
+	}
+}
+
+// collectJobsToCancel gathers the jobs matching the status filter (pending, processing, or all)
+// together with any errors encountered while listing them.
+func (s *Server) collectJobsToCancel(status string, limit int) ([]*models.Job, []error) {
 	var jobsToCancel []*models.Job
 	var listErrors []error
 
@@ -2180,18 +2231,15 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If all list operations failed, return error
-	if len(listErrors) > 0 && len(jobsToCancel) == 0 {
-		http.Error(w, "Failed to list jobs for cancellation", http.StatusInternalServerError)
-		return
-	}
+	return jobsToCancel, listErrors
+}
 
-	// Cancel the jobs
-	cancelledCount := 0
-	failedCount := 0
-	cancelledIDs := make([]string, 0)
+// cancelJobBatch cancels up to limit jobs, returning the number cancelled, the number
+// that failed or changed state, and the IDs that were successfully cancelled.
+func (s *Server) cancelJobBatch(jobs []*models.Job, limit int) (cancelledCount, failedCount int, cancelledIDs []string) {
+	cancelledIDs = make([]string, 0)
 
-	for _, job := range jobsToCancel {
+	for _, job := range jobs {
 		if cancelledCount >= limit {
 			break
 		}
@@ -2211,25 +2259,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		cancelledIDs = append(cancelledIDs, job.ID)
 	}
 
-	slog.Info("Batch job cancellation completed",
-		"status_filter", status,
-		"cancelled_count", cancelledCount,
-		"failed_count", failedCount,
-	)
-
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]any{
-		"cancelled_count": cancelledCount,
-		"failed_count":    failedCount,
-		"cancelled_ids":   cancelledIDs,
-		"status_filter":   status,
-		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
-	}
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		slog.Error("Failed to encode batch cancel response", "error", err)
-		return
-	}
+	return cancelledCount, failedCount, cancelledIDs
 }
 
 // ListWorkers handles listing all workers
