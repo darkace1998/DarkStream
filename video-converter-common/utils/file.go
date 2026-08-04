@@ -105,8 +105,11 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 		return "", fmt.Errorf("failed to compute relative path: %w", err)
 	}
 
-	// If the relative path starts with "..", it means the target is outside base
-	if strings.HasPrefix(relPath, "..") {
+	// If the relative path is ".." or steps up through a ".." path segment, the
+	// target is outside base. Checking for the ".." segment specifically (rather
+	// than any "" prefix) avoids rejecting legitimate in-base names that merely
+	// begin with two dots, e.g. "<base>/..config".
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal detected: %s attempts to escape %s", targetPath, basePath)
 	}
 

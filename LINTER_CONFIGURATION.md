@@ -50,6 +50,35 @@ Current status: the golangci-lint configuration is tuned to the repo's current c
 ### Naming Rules
 - **revive var-naming**: Disabled to allow package names like `utils`.
 
+### golangci-lint v2 migration
+
+The `.golangci.yml` is a v2-schema config and now declares `version: "2"` at the
+top. Without that declaration golangci-lint v2 (used by `golangci-lint-action@v8`)
+refuses to load the file, which had left the lint job unable to start. During the
+v1→v2 migration the disable list had also drifted from the intent documented here,
+so it was realigned:
+
+- **wsl** and **wsl_v5**: both whitespace linters are disabled (v2 ships them as
+  two separate linters).
+- **err113**, **mnd**, **intrange**: re-added to the disable list to match the
+  rationale already documented above; they had been dropped from the yaml.
+- New opinionated v2 linters disabled for the same "too strict / not practical"
+  reasons: **noinlineerr** (inline `if err := …` is idiomatic), **funcorder**
+  (method ordering), **wrapcheck** (mandatory error wrapping), **containedctx**
+  and **contextcheck** (storing/deriving contexts is intentional here, e.g. the
+  client's shutdown-propagation context), **nonamedreturns**, and
+  **embeddedstructfieldcheck**.
+
+Two further linters are disabled because they flag idiomatic patterns rather than
+defects in this codebase:
+
+- **forbidigo**: the CLI's primary job is writing results to stdout, so
+  `fmt.Print*` calls are intentional, not stray debug output.
+- **nilnil**: the scanner and tracker use the idiomatic `(nil, nil)` return to
+  mean "skipped / not found, no error"; callers branch on the nil value.
+
+All other findings from the enabled linters have been addressed in code.
+
 ## Adjusted Settings
 
 ### Complexity Thresholds

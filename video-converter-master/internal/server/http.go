@@ -43,6 +43,8 @@ const (
 	statusProcessing = "processing"
 	statusPending    = "pending"
 	statusFailed     = "failed"
+	statusCompleted  = "completed"
+	statusCancelled  = "cancelled"
 	statusHealthy    = "healthy"
 	statusUnhealthy  = "unhealthy"
 	statusDegraded   = "degraded"
@@ -310,6 +312,9 @@ func (s *Server) Start() (err error) {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.rateLimiter.stop()
 
+	// Drain in-flight webhook deliveries within the shutdown grace period.
+	s.notifier.Shutdown(ctx)
+
 	if s.server == nil {
 		return nil
 	}
@@ -446,7 +451,9 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 				if worker.Status == "paused" {
 					slog.Info("Worker is paused, not assigning new jobs", "worker_id", workerID)
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode([]*models.Job{})
+					if encErr := json.NewEncoder(w).Encode([]*models.Job{}); encErr != nil {
+						slog.Error("Failed to encode response", "error", encErr)
+					}
 					return
 				}
 				const maxJobsPerWorker = 5
@@ -762,11 +769,30 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	for {
+		// Emit one event per tick. Errors inside the helper skip that event but
+		// still fall through to the select below, so a transient DB error can
+		// never turn this into a tight, cancellation-ignoring busy loop.
+		s.writeStatsStreamEvent(w, flusher)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Loop again
+		}
+	}
+}
+
+// writeStatsStreamEvent collects the current stats snapshot and writes a single
+// SSE event. It returns early (skipping the event) on any collection or encoding
+// error rather than looping, so callers must invoke it once per tick.
+func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flusher) {
+	{
 		// Collect stats
 		jobStats, err := s.db.GetJobStats()
 		if err != nil {
 			slog.Error("Failed to get job stats for stream", "error", err)
-			continue
+			return
 		}
 
 		workers, workerErr := s.db.GetWorkers()
@@ -856,18 +882,11 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 		eventData, err := json.Marshal(response)
 		if err != nil {
 			slog.Error("Failed to marshal stats stream event", "error", err)
-			continue
+			return
 		}
 
 		_, _ = fmt.Fprintf(w, "event: stats\ndata: %s\n\n", eventData)
 		flusher.Flush()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Loop again
-		}
 	}
 }
 
@@ -1139,9 +1158,93 @@ func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseByteRange parses an HTTP Range header value against fileSize, returning the
+// resolved start/end offsets and whether the header matched a supported format.
+func parseByteRange(rangeHeader string, fileSize int64) (start, end int64, ok bool) {
+	// Parse Range header - supports formats:
+	// bytes=start-end (e.g., bytes=0-499)
+	// bytes=start- (e.g., bytes=500-)
+	// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
+
+	// Try bytes=start-end format
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
+		return start, end, true
+	}
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 && start >= 0 {
+		// bytes=start- format. The start >= 0 guard is required because %d
+		// consumes the leading '-' of a suffix range ("bytes=-500") as a
+		// negative start; without it that request would be misparsed here and
+		// rejected instead of falling through to the suffix branch below.
+		end = fileSize - 1
+		return start, end, true
+	}
+	if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
+		// bytes=-suffix format (last N bytes)
+		start = fileSize - end
+		end = fileSize - 1
+		if start < 0 {
+			start = 0
+		}
+		return start, end, true
+	}
+
+	return 0, 0, false
+}
+
+// serveVideoRange handles a Range request for file. It returns true when the request
+// has been fully handled (a range response was written or an error was sent); false
+// means the caller should fall through to a full-file download.
+func (s *Server) serveVideoRange(w http.ResponseWriter, jobID, sourcePath, rangeHeader string, file *os.File, fileSize int64) bool {
+	start, end, validRange := parseByteRange(rangeHeader, fileSize)
+	if !validRange {
+		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
+		return false
+	}
+
+	// Validate range
+	if start < 0 || start >= fileSize || end < start || end >= fileSize {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
+		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
+		return true
+	}
+
+	contentLength := end - start + 1
+
+	// Seek to the start position
+	if _, err := file.Seek(start, 0); err != nil {
+		slog.Error("Failed to seek file", "path", sourcePath, "error", err)
+		http.Error(w, "Failed to seek file", http.StatusInternalServerError)
+		return true
+	}
+
+	// Set range response headers
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.WriteHeader(http.StatusPartialContent)
+
+	// Stream the remaining file content
+	startDownloadTime := time.Now()
+	written, err := io.CopyN(w, file, contentLength)
+	if written > 0 {
+		s.metrics.RecordBytesDownloaded(written)
+		durationSecs := time.Since(startDownloadTime).Seconds()
+		if durationSecs > 0 {
+			s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
+		}
+	}
+	if err != nil {
+		slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
+		return true
+	}
+
+	slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+	return true
+}
+
 // DownloadVideo handles downloading source video files for processing
-//
-//nolint:cyclop // HTTP file transfer with range support is inherently complex
 func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1212,78 +1315,11 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	fileSize := fileInfo.Size()
 
 	// Handle Range header for resume support
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
-		// Parse Range header - supports formats:
-		// bytes=start-end (e.g., bytes=0-499)
-		// bytes=start- (e.g., bytes=500-)
-		// bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
-		var start, end int64
-		var validRange bool
-
-		// Try bytes=start-end format
-		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
-			validRange = true
-		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 {
-			// bytes=start- format
-			end = fileSize - 1
-			validRange = true
-		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
-			// bytes=-suffix format (last N bytes)
-			start = fileSize - end
-			end = fileSize - 1
-			if start < 0 {
-				start = 0
-			}
-			validRange = true
-		}
-
-		if validRange {
-			// Validate range
-			if start < 0 || start >= fileSize || end < start || end >= fileSize {
-				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
-				http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
-				return
-			}
-
-			contentLength := end - start + 1
-
-			// Seek to the start position
-			_, err = file.Seek(start, 0)
-			if err != nil {
-				slog.Error("Failed to seek file", "path", job.SourcePath, "error", err)
-				http.Error(w, "Failed to seek file", http.StatusInternalServerError)
-				return
-			}
-
-			// Set range response headers
-			w.Header().Set("Content-Type", "video/mp4")
-			w.Header().Set("Content-Disposition", "attachment; filename=\"source.mp4\"")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.WriteHeader(http.StatusPartialContent)
-
-			// Stream the remaining file content
-			startDownloadTime := time.Now()
-			written, err := io.CopyN(w, file, contentLength)
-			if written > 0 {
-				s.metrics.RecordBytesDownloaded(written)
-				durationSecs := time.Since(startDownloadTime).Seconds()
-				if durationSecs > 0 {
-					s.metrics.RecordTransferSpeed("download", float64(written)/durationSecs)
-				}
-			}
-			if err != nil {
-				slog.Error("Failed to stream file range", "job_id", jobID, "error", err)
-				return
-			}
-
-			slog.Info("Video file range downloaded", "job_id", jobID, "start", start, "end", end, "size", contentLength)
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		if s.serveVideoRange(w, jobID, job.SourcePath, rangeHeader, file, fileSize) {
 			return
 		}
 		// Invalid range format - fall through to full download
-		slog.Warn("Invalid Range header format, serving full file", "range", rangeHeader)
 	}
 
 	// Full file download (no range or invalid range format)
@@ -1792,9 +1828,9 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 	if status != "" {
 		// Validate status value
-		validStatuses := []string{statusPending, statusProcessing, "completed", statusFailed}
+		validStatuses := []string{statusPending, statusProcessing, statusCompleted, statusFailed, statusCancelled}
 		if !slices.Contains(validStatuses, status) {
-			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed", http.StatusBadRequest)
+			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed, cancelled", http.StatusBadRequest)
 			return
 		}
 		jobs, err = s.db.GetJobsByStatus(status, limit)
@@ -2046,7 +2082,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	// Store previous status for logging
 	previousStatus := job.Status
 
-	// Update job status to cancelled (using failed with specific error message)
+	// Update job status to the terminal 'cancelled' state.
 	updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user", job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
@@ -2073,7 +2109,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PruneJobs handles deleting jobs with specified status (completed, failed, or all)
+// PruneJobs handles deleting jobs with specified status (completed, failed, cancelled, or all)
 func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2081,8 +2117,8 @@ func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
-	if status != "completed" && status != "failed" && status != "all" {
-		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', or 'all'", http.StatusBadRequest)
+	if status != statusCompleted && status != statusFailed && status != statusCancelled && status != "all" {
+		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', 'cancelled', or 'all'", http.StatusBadRequest)
 		return
 	}
 
@@ -2137,6 +2173,41 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get jobs to cancel based on status filter
+	jobsToCancel, listErrors := s.collectJobsToCancel(status, limit)
+
+	// If all list operations failed, return error
+	if len(listErrors) > 0 && len(jobsToCancel) == 0 {
+		http.Error(w, "Failed to list jobs for cancellation", http.StatusInternalServerError)
+		return
+	}
+
+	// Cancel the jobs
+	cancelledCount, failedCount, cancelledIDs := s.cancelJobBatch(jobsToCancel, limit)
+
+	slog.Info("Batch job cancellation completed",
+		"status_filter", status,
+		"cancelled_count", cancelledCount,
+		"failed_count", failedCount,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]any{
+		"cancelled_count": cancelledCount,
+		"failed_count":    failedCount,
+		"cancelled_ids":   cancelledIDs,
+		"status_filter":   status,
+		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
+	}
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		slog.Error("Failed to encode batch cancel response", "error", err)
+		return
+	}
+}
+
+// collectJobsToCancel gathers the jobs matching the status filter (pending, processing, or all)
+// together with any errors encountered while listing them.
+func (s *Server) collectJobsToCancel(status string, limit int) ([]*models.Job, []error) {
 	var jobsToCancel []*models.Job
 	var listErrors []error
 
@@ -2160,18 +2231,15 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If all list operations failed, return error
-	if len(listErrors) > 0 && len(jobsToCancel) == 0 {
-		http.Error(w, "Failed to list jobs for cancellation", http.StatusInternalServerError)
-		return
-	}
+	return jobsToCancel, listErrors
+}
 
-	// Cancel the jobs
-	cancelledCount := 0
-	failedCount := 0
-	cancelledIDs := make([]string, 0)
+// cancelJobBatch cancels up to limit jobs, returning the number cancelled, the number
+// that failed or changed state, and the IDs that were successfully cancelled.
+func (s *Server) cancelJobBatch(jobs []*models.Job, limit int) (cancelledCount, failedCount int, cancelledIDs []string) {
+	cancelledIDs = make([]string, 0)
 
-	for _, job := range jobsToCancel {
+	for _, job := range jobs {
 		if cancelledCount >= limit {
 			break
 		}
@@ -2191,25 +2259,7 @@ func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
 		cancelledIDs = append(cancelledIDs, job.ID)
 	}
 
-	slog.Info("Batch job cancellation completed",
-		"status_filter", status,
-		"cancelled_count", cancelledCount,
-		"failed_count", failedCount,
-	)
-
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]any{
-		"cancelled_count": cancelledCount,
-		"failed_count":    failedCount,
-		"cancelled_ids":   cancelledIDs,
-		"status_filter":   status,
-		"message":         fmt.Sprintf("Cancelled %d jobs", cancelledCount),
-	}
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		slog.Error("Failed to encode batch cancel response", "error", err)
-		return
-	}
+	return cancelledCount, failedCount, cancelledIDs
 }
 
 // ListWorkers handles listing all workers
@@ -2271,7 +2321,10 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the config from request body
+	// Read the config from request body, capped so a client cannot force an
+	// arbitrarily large allocation. Config files are only a few KB in practice.
+	const maxConfigBodySize = 1 << 20 // 1 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxConfigBodySize)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -2498,6 +2551,15 @@ func (s *Server) UpdateWorkerCounts(total, active int) {
 // RecordJobRetry increments the retry counter metric.
 func (s *Server) RecordJobRetry(reason string) {
 	s.metrics.RecordJobRetry(reason)
+}
+
+// RemoveWorkerMetrics drops a worker's per-worker metric series. Called when a
+// worker goes offline so restarted/churned workers (which get fresh IDs) do not
+// leak Prometheus cardinality for the process lifetime.
+func (s *Server) RemoveWorkerMetrics(workerID string) {
+	if s.metrics != nil {
+		s.metrics.RemoveWorkerHeartbeat(workerID)
+	}
 }
 
 type metricsResponseWriter struct {
@@ -2896,6 +2958,12 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Also delete its config if any
 	_ = s.db.DeleteWorkerConfig(workerID)
+
+	// Drop the worker's heartbeat metric series so removed workers do not leak
+	// Prometheus cardinality for the lifetime of the process.
+	if s.metrics != nil {
+		s.metrics.RemoveWorkerHeartbeat(workerID)
+	}
 
 	slog.Info("Deleted worker", "worker_id", workerID)
 	w.WriteHeader(http.StatusOK)

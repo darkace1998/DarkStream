@@ -1,10 +1,54 @@
 package converter
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/darkace1998/video-converter-common/constants"
+	"github.com/darkace1998/video-converter-common/models"
 )
+
+// TestBuildFFmpegCommandHwaccelOrder ensures Vulkan hardware-acceleration flags
+// are emitted as input options (before "-i <source>"). ffmpeg rejects them when
+// they appear after the input, so this ordering is load-bearing.
+func TestBuildFFmpegCommandHwaccelOrder(t *testing.T) {
+	fc := &FFmpegConverter{ffmpegPath: "/usr/bin/ffmpeg"}
+	job := &models.Job{SourcePath: "/in.mkv", OutputPath: "/out.mp4"}
+	cfg := &models.ConversionConfig{
+		UseVulkan:        true,
+		TargetResolution: "1920:1080",
+		Codec:            constants.CodecH264,
+		Preset:           "fast",
+		Bitrate:          "5M",
+		AudioCodec:       constants.AudioCodecAAC,
+		AudioBitrate:     "128k",
+	}
+
+	args := fc.buildFFmpegCommand(job, cfg, slog.Default())
+
+	hwaccelIdx, inputIdx := -1, -1
+	for i, a := range args {
+		if a == "-hwaccel" && hwaccelIdx == -1 {
+			hwaccelIdx = i
+		}
+		if a == "-i" && inputIdx == -1 {
+			inputIdx = i
+		}
+	}
+
+	if hwaccelIdx == -1 {
+		t.Fatalf("expected -hwaccel in args, got %v", args)
+	}
+	if inputIdx == -1 {
+		t.Fatalf("expected -i in args, got %v", args)
+	}
+	if hwaccelIdx > inputIdx {
+		t.Errorf("-hwaccel (index %d) must appear before -i (index %d): %v", hwaccelIdx, inputIdx, args)
+	}
+	if inputIdx+1 >= len(args) || args[inputIdx+1] != job.SourcePath {
+		t.Errorf("expected input path %q immediately after -i, got %v", job.SourcePath, args)
+	}
+}
 
 // TestGetVideoCodec tests video codec selection
 func TestGetVideoCodec(t *testing.T) {

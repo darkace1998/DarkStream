@@ -16,6 +16,12 @@ import (
 
 // Retry retries failed jobs on the master server.
 func Retry(args []string) {
+	if err := runRetry(args); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runRetry(args []string) error {
 	fs := flag.NewFlagSet("retry", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
 	limit := fs.Int("limit", 100, "Maximum number of jobs to retry")
@@ -25,19 +31,19 @@ func Retry(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/retry", url.Values{"limit": []string{fmt.Sprintf("%d", *limit)}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		return err
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -49,20 +55,20 @@ func Retry(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Error: received status code", "status", resp.StatusCode)
 		slog.Info(fmt.Sprintf("Response: %s", string(body)))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
@@ -84,4 +90,5 @@ func Retry(args []string) {
 			slog.Info("No failed jobs to retry.")
 		}
 	}
+	return nil
 }

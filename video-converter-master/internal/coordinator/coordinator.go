@@ -223,6 +223,11 @@ func (c *Coordinator) Start() error {
 	slog.Info("Waiting for monitoring goroutines to stop")
 	c.wg.Wait()
 
+	// Drain in-flight webhook deliveries from the coordinator's notifier.
+	notifierCtx, notifierCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c.notifier.Shutdown(notifierCtx)
+	notifierCancel()
+
 	// Close database connection
 	dbErr := c.db.Close()
 	if dbErr != nil {
@@ -240,7 +245,7 @@ func (c *Coordinator) Start() error {
 // listenWatcherEvents processes jobs emitted by the file system watcher
 func (c *Coordinator) listenWatcherEvents(w *scanner.Watcher) {
 	defer c.wg.Done()
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	for {
 		select {
@@ -332,6 +337,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 						slog.Error("Failed to mark worker as offline",
 							"worker_id", worker.WorkerID, "error", err)
 					}
+
+					// Drop its heartbeat metric series so a worker that never
+					// returns (e.g. restarted with a new ID) does not leak metric
+					// cardinality. If it reconnects, its next heartbeat recreates it.
+					c.server.RemoveWorkerMetrics(worker.WorkerID)
 				}
 			}
 
@@ -348,13 +358,14 @@ func (c *Coordinator) monitorWorkerHealth() {
 					// Reset job to pending without incrementing retry count
 					// since worker failure is not job's fault
 					updated, err := c.db.ResetJobToPending(job.ID, false, "processing", workerID, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to reset job from offline worker",
 							"job_id", job.ID, "worker_id", workerID, "error", err)
-					} else if updated {
+					case updated:
 						slog.Info("Reassigned job from offline worker",
 							"job_id", job.ID, "worker_id", workerID)
-					} else {
+					default:
 						slog.Warn("Skipped stale offline-worker reset",
 							"job_id", job.ID, "worker_id", workerID)
 					}
@@ -390,10 +401,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 						fmt.Sprintf("Job exceeded timeout of %v and max retries (%d/%d)",
 							jobTimeout, job.RetryCount, job.MaxRetries),
 						completedAt, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to mark stale job as failed",
 							"job_id", job.ID, "error", err)
-					} else if updated {
+					case updated:
 						// Notify webhook if configured
 						if updatedJob, fetchErr := c.db.GetJobByID(job.ID); fetchErr == nil {
 							c.notifier.Notify("failed", updatedJob)
@@ -403,23 +415,24 @@ func (c *Coordinator) monitorWorkerHealth() {
 							"job_id", job.ID,
 							"retry_count", job.RetryCount,
 							"max_retries", job.MaxRetries)
-					} else {
+					default:
 						slog.Warn("Skipped stale failure update for job that changed state",
 							"job_id", job.ID)
 					}
 				} else {
 					// Reset job to pending with retry count increment
 					updated, err := c.db.ResetJobToPending(job.ID, true, "processing", job.WorkerID, job.StartedAt)
-					if err != nil {
+					switch {
+					case err != nil:
 						slog.Error("Failed to reset stale job",
 							"job_id", job.ID, "error", err)
-					} else if updated {
+					case updated:
 						c.server.RecordJobRetry("monitor")
 						slog.Info("Reset stale job to pending for retry",
 							"job_id", job.ID,
 							"retry_count", job.RetryCount+1,
 							"max_retries", job.MaxRetries)
-					} else {
+					default:
 						slog.Warn("Skipped stale reset for job that changed state",
 							"job_id", job.ID)
 					}
@@ -433,8 +446,6 @@ func (c *Coordinator) monitorWorkerHealth() {
 }
 
 // monitorFailedJobs periodically checks for failed jobs that can be retried
-//
-//nolint:gocognit // Failed job retry logic with exponential backoff is inherently complex
 func (c *Coordinator) monitorFailedJobs() {
 	defer c.wg.Done()
 
@@ -446,9 +457,6 @@ func (c *Coordinator) monitorFailedJobs() {
 
 	ticker := time.NewTicker(retryCheckInterval)
 	defer ticker.Stop()
-
-	// Track retry attempts and last retry time for exponential backoff
-	retryBackoff := make(map[string]time.Time)
 
 	for {
 		select {
@@ -466,22 +474,26 @@ func (c *Coordinator) monitorFailedJobs() {
 			}
 
 			for _, job := range failedJobs {
-				// Calculate exponential backoff delay
-				// Base delay: 2 minutes, exponentially increases with retry count
-				// Formula: 2^retry_count minutes (capped at 60 minutes)
-				delayMinutes := min(1<<uint(job.RetryCount), 60) // 2^retry_count capped at 60
+				// Calculate exponential backoff delay.
+				// Formula: 2^retry_count minutes, capped at 60 minutes. The shift
+				// amount is clamped so a large (misconfigured) retry_count cannot
+				// overflow int and produce a negative, always-elapsed delay.
+				shift := job.RetryCount
+				if shift > 6 { // 2^6 = 64 already exceeds the 60-minute cap
+					shift = 6
+				}
+				delayMinutes := min(1<<uint(shift), 60)
 				backoffDuration := time.Duration(delayMinutes) * time.Minute
 
-				// Check if enough time has passed since last check
-				if lastRetry, exists := retryBackoff[job.ID]; exists {
-					if time.Since(lastRetry) < backoffDuration {
-						// Not yet time to retry
-						continue
-					}
+				// Space out retries using the persisted failure time (completed_at)
+				// rather than an in-memory map. The map approach never worked: a job
+				// leaves the 'failed' state the moment it is requeued, so its entry
+				// was wiped every cycle and the backoff never took effect. Using the
+				// stored timestamp also makes backoff survive master restarts.
+				if job.CompletedAt != nil && time.Since(*job.CompletedAt) < backoffDuration {
+					// Not yet time to retry
+					continue
 				}
-
-				// Update last retry time
-				retryBackoff[job.ID] = time.Now()
 
 				// Reset job to pending with incremented retry count
 				updated, err := c.db.ResetJobToPending(job.ID, true, "failed", "", job.StartedAt)
@@ -502,21 +514,6 @@ func (c *Coordinator) monitorFailedJobs() {
 					"max_retries", job.MaxRetries,
 					"backoff_minutes", delayMinutes,
 					"error", job.ErrorMessage)
-			}
-
-			// Clean up backoff map for jobs that are no longer failed
-			// to prevent memory growth
-			for jobID := range retryBackoff {
-				found := false
-				for _, job := range failedJobs {
-					if job.ID == jobID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					delete(retryBackoff, jobID)
-				}
 			}
 
 			c.server.RefreshQueueDepth()

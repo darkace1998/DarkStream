@@ -8,6 +8,33 @@ import (
 	"github.com/darkace1998/video-converter-cli/commands"
 )
 
+// commandHandlers maps each subcommand name to the function that runs it.
+func commandHandlers() map[string]func([]string) {
+	return map[string]func([]string){
+		"master":        commands.Master,
+		"worker":        commands.Worker,
+		"status":        commands.Status,
+		"stats":         commands.Stats,
+		"retry":         commands.Retry,
+		"detect":        commands.Detect,
+		"validate":      commands.Validate,
+		"cancel":        commands.Cancel,
+		"cancel-jobs":   commands.CancelJobs,
+		"requeue":       commands.Requeue,
+		"prune":         commands.Prune,
+		"workers":       commands.Workers,
+		"submit":        commands.Submit,
+		"job":           commands.Job,
+		"jobs":          commands.Jobs,
+		"priority":      commands.Priority,
+		"worker-pause":  commands.WorkerPause,
+		"worker-resume": commands.WorkerResume,
+		"worker-remove": commands.WorkerRemove,
+		"queue-pause":   commands.QueuePause,
+		"queue-resume":  commands.QueueResume,
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -17,49 +44,12 @@ func main() {
 	cmd := os.Args[1]
 	subArgs := os.Args[2:]
 
+	if handler, ok := commandHandlers()[cmd]; ok {
+		handler(subArgs)
+		return
+	}
+
 	switch cmd {
-	case "master":
-		commands.Master(subArgs)
-	case "worker":
-		commands.Worker(subArgs)
-	case "status":
-		commands.Status(subArgs)
-	case "stats":
-		commands.Stats(subArgs)
-	case "retry":
-		commands.Retry(subArgs)
-	case "detect":
-		commands.Detect(subArgs)
-	case "validate":
-		commands.Validate(subArgs)
-	case "cancel":
-		commands.Cancel(subArgs)
-	case "cancel-jobs":
-		commands.CancelJobs(subArgs)
-	case "requeue":
-		commands.Requeue(subArgs)
-	case "prune":
-		commands.Prune(subArgs)
-	case "workers":
-		commands.Workers(subArgs)
-	case "submit":
-		commands.Submit(subArgs)
-	case "job":
-		commands.Job(subArgs)
-	case "jobs":
-		commands.Jobs(subArgs)
-	case "priority":
-		commands.Priority(subArgs)
-	case "worker-pause":
-		commands.WorkerPause(subArgs)
-	case "worker-resume":
-		commands.WorkerResume(subArgs)
-	case "worker-remove":
-		commands.WorkerRemove(subArgs)
-	case "queue-pause":
-		commands.QueuePause(subArgs)
-	case "queue-resume":
-		commands.QueueResume(subArgs)
 	case "help", "--help", "-h":
 		printUsage()
 	default:

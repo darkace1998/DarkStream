@@ -3,13 +3,14 @@ package main
 
 import (
 	"flag"
-	"github.com/darkace1998/video-converter-common/utils"
 	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/darkace1998/video-converter-common/utils"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-worker/internal/client"
@@ -27,7 +28,8 @@ func main() {
 	var cfg *models.WorkerConfig
 	var err error
 
-	if *masterURL != "" {
+	switch {
+	case *masterURL != "":
 		// Remote configuration mode: fetch all config from master
 		cfg, err = loadConfigFromMaster(*masterURL, *workerID)
 		if err != nil {
@@ -35,14 +37,14 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Configuration loaded from master at %s", *masterURL)
-	} else if *configPath != "" {
+	case *configPath != "":
 		// Local configuration mode: load from file
 		cfg, err = config.LoadWorkerConfig(*configPath)
 		if err != nil {
 			log.Printf("Failed to load config: %v", err)
 			os.Exit(1)
 		}
-	} else {
+	default:
 		// Default to config.yaml if neither -url nor -config is provided
 		cfg, err = config.LoadWorkerConfig("config.yaml")
 		if err != nil {

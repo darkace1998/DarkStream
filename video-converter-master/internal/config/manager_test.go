@@ -8,18 +8,24 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 )
 
+// Test fixture constants used across the config test suite.
+const (
+	testCodecH264 = "h264"
+	testFormatMP4 = "mp4"
+)
+
 func TestNewManager_FallsBackToYAMLDefaults(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "active-config.json")
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",
 		AudioBitrate:     "128k",
-		OutputFormat:     "mp4",
+		OutputFormat:     testFormatMP4,
 	}
 
 	mgr, err := NewManager(jsonPath, yamlDefaults, nil)
@@ -31,13 +37,13 @@ func TestNewManager_FallsBackToYAMLDefaults(t *testing.T) {
 	if cfg.Video.Resolution != "1920x1080" {
 		t.Errorf("Video.Resolution = %q, want \"1920x1080\"", cfg.Video.Resolution)
 	}
-	if cfg.Video.Codec != "h264" {
+	if cfg.Video.Codec != testCodecH264 {
 		t.Errorf("Video.Codec = %q, want \"h264\"", cfg.Video.Codec)
 	}
 	if cfg.Audio.Codec != "aac" {
 		t.Errorf("Audio.Codec = %q, want \"aac\"", cfg.Audio.Codec)
 	}
-	if cfg.Output.Format != "mp4" {
+	if cfg.Output.Format != testFormatMP4 {
 		t.Errorf("Output.Format = %q, want \"mp4\"", cfg.Output.Format)
 	}
 	if cfg.Version != 1 {
@@ -86,7 +92,7 @@ func TestNewManager_LoadsExistingJSON(t *testing.T) {
 	// Create initial config
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",
@@ -126,7 +132,7 @@ func TestManager_Update_ValidConfig(t *testing.T) {
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",
@@ -159,7 +165,7 @@ func TestManager_Update_InvalidConfig(t *testing.T) {
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",
@@ -184,12 +190,12 @@ func TestManager_GetConversionSettings(t *testing.T) {
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",
 		AudioBitrate:     "128k",
-		OutputFormat:     "mp4",
+		OutputFormat:     testFormatMP4,
 	}
 	mgr, err := NewManager(jsonPath, yamlDefaults, nil)
 	if err != nil {
@@ -197,13 +203,13 @@ func TestManager_GetConversionSettings(t *testing.T) {
 	}
 
 	cs := mgr.GetConversionSettings()
-	if cs.Codec != "h264" {
+	if cs.Codec != testCodecH264 {
 		t.Errorf("Codec = %q, want \"h264\"", cs.Codec)
 	}
 	if cs.AudioCodec != "aac" {
 		t.Errorf("AudioCodec = %q, want \"aac\"", cs.AudioCodec)
 	}
-	if cs.OutputFormat != "mp4" {
+	if cs.OutputFormat != testFormatMP4 {
 		t.Errorf("OutputFormat = %q, want \"mp4\"", cs.OutputFormat)
 	}
 }
@@ -233,7 +239,7 @@ func TestGetDefaultFormat(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"", "mp4"},
+		{"", testFormatMP4},
 		{"mkv", "mkv"},
 		{"webm", "webm"},
 	}
@@ -255,9 +261,9 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: "h264", Bitrate: "5M", Preset: "fast"},
+				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
 				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
-				Output: OutputConfig{Format: "mp4"},
+				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
 			wantErr: false,
@@ -265,9 +271,9 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid resolution format",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "invalid", Codec: "h264", Bitrate: "5M", Preset: "fast"},
+				Video:  VideoConfig{Resolution: "invalid", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
 				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
-				Output: OutputConfig{Format: "mp4"},
+				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
 			wantErr: true,
@@ -277,7 +283,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: &ActiveConfig{
 				Video:  VideoConfig{Resolution: "1920x1080", Codec: "badcodec", Bitrate: "5M", Preset: "fast"},
 				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
-				Output: OutputConfig{Format: "mp4"},
+				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
 			wantErr: true,
@@ -285,9 +291,9 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid preset",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: "h264", Bitrate: "5M", Preset: "badpreset"},
+				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "badpreset"},
 				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
-				Output: OutputConfig{Format: "mp4"},
+				Output: OutputConfig{Format: testFormatMP4},
 				Worker: getDefaultWorkerConfig(),
 			},
 			wantErr: true,
@@ -295,7 +301,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "invalid output format",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Resolution: "1920x1080", Codec: "h264", Bitrate: "5M", Preset: "fast"},
+				Video:  VideoConfig{Resolution: "1920x1080", Codec: testCodecH264, Bitrate: "5M", Preset: "fast"},
 				Audio:  AudioConfig{Codec: "aac", Bitrate: "128k"},
 				Output: OutputConfig{Format: "flv"},
 				Worker: getDefaultWorkerConfig(),
@@ -305,9 +311,9 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "concurrency below minimum",
 			cfg: &ActiveConfig{
-				Video:  VideoConfig{Codec: "h264", Preset: "fast"},
+				Video:  VideoConfig{Codec: testCodecH264, Preset: "fast"},
 				Audio:  AudioConfig{Codec: "aac"},
-				Output: OutputConfig{Format: "mp4"},
+				Output: OutputConfig{Format: testFormatMP4},
 				Worker: WorkerConfig{Concurrency: 0, HeartbeatInterval: 30, JobCheckInterval: 5, JobTimeout: 3600},
 			},
 			wantErr: true,
@@ -330,7 +336,7 @@ func TestManager_PersistsToFile(t *testing.T) {
 
 	yamlDefaults := &models.ConversionSettings{
 		TargetResolution: "1920x1080",
-		Codec:            "h264",
+		Codec:            testCodecH264,
 		Bitrate:          "5M",
 		Preset:           "fast",
 		AudioCodec:       "aac",

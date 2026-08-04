@@ -17,6 +17,12 @@ import (
 
 // Submit manual job to the master server.
 func Submit(args []string) {
+	if err := runSubmit(args); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runSubmit(args []string) error {
 	fs := flag.NewFlagSet("submit", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
 	sourcePath := fs.String("source-path", "", "Path to the source video file (required)")
@@ -27,13 +33,13 @@ func Submit(args []string) {
 
 	if *sourcePath == "" {
 		slog.Error("Missing required flag: --source-path")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	reqURL, err := utils.BuildURL(*masterURL, "/api/job", nil)
 	if err != nil {
 		slog.Error("Failed to build URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	reqBodyMap := map[string]any{
@@ -47,49 +53,53 @@ func Submit(args []string) {
 	reqBodyBytes, err := json.Marshal(reqBodyMap)
 	if err != nil {
 		slog.Error("Failed to encode request body", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	req, err := newMasterRequest(http.MethodPost, reqURL, bytes.NewReader(reqBodyBytes), "application/json")
 	if err != nil {
 		slog.Error("Failed to create request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Failed to communicate with master server", "error", err)
-		os.Exit(1)
+		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Failed to read response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode == http.StatusConflict {
 		slog.Error("Job already exists for this source path", "status", resp.StatusCode)
-		os.Exit(1)
+		return errCommandFailed
 	} else if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		slog.Error("Master server returned error", "status", resp.StatusCode, "body", string(body))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	var job models.Job
 	if err := json.Unmarshal(body, &job); err != nil {
 		slog.Error("Failed to decode response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if *format == "json" {
-		out, _ := json.MarshalIndent(job, "", "  ")
+		out, err := json.MarshalIndent(job, "", "  ")
+		if err != nil {
+			slog.Error("Failed to encode job as JSON", "error", err)
+			return err
+		}
 		fmt.Println(string(out))
 	} else {
 		slog.Info("Job successfully submitted")
 		out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
 		out.PrintTable([]string{"ID", "Status", "Source", "Output"}, [][]string{{job.ID, job.Status, job.SourcePath, job.OutputPath}})
 	}
+	return nil
 }

@@ -331,11 +331,13 @@ func (vd *VulkanDetector) listVulkanDevicesWithInstance(instance vk.Instance) ([
 			build := props.DriverVersion & 0x3F
 			driverVersion = fmt.Sprintf("%d.%d.%d.%d", major, minor, patch, build)
 		} else {
-			// Standard Vulkan version format for other vendors
+			// Standard Vulkan version format (VK_VERSION) applied to the driver
+			// version field itself — not APIVersion, which is the Vulkan API level
+			// the device reports and unrelated to the driver's version.
 			driverVersion = fmt.Sprintf("%d.%d.%d",
-				props.APIVersion.Major(),
-				props.APIVersion.Minor(),
-				props.APIVersion.Patch(),
+				(props.DriverVersion>>22)&0x3FF,
+				(props.DriverVersion>>12)&0x3FF,
+				props.DriverVersion&0xFFF,
 			)
 		}
 

@@ -196,7 +196,10 @@ func (m *Manager) Update(cfg *ActiveConfig) error {
 	m.mu.Lock()
 	cfg.UpdatedAt = time.Now()
 	cfg.Version = m.config.Version + 1
-	m.config = cfg
+	// Store a copy rather than the caller's pointer, so a later mutation of cfg
+	// by the caller cannot race with concurrent readers dereferencing m.config.
+	stored := *cfg
+	m.config = &stored
 	// Marshal config data while still holding the lock to avoid a data race
 	// with concurrent Update() calls that could change m.config.
 	configData, marshalErr := json.MarshalIndent(m.config, "", "  ")
@@ -319,6 +322,22 @@ func (e *ValidationErrors) Error() string {
 func validateConfig(cfg *ActiveConfig) error {
 	var errors []ValidationError
 
+	errors = append(errors, validateVideoConfig(cfg)...)
+	errors = append(errors, validateAudioConfig(cfg)...)
+	errors = append(errors, validateOutputConfig(cfg)...)
+	errors = append(errors, validateWorkerConfig(cfg)...)
+
+	if len(errors) > 0 {
+		return &ValidationErrors{Errors: errors}
+	}
+
+	return nil
+}
+
+// validateVideoConfig validates the video section of the configuration.
+func validateVideoConfig(cfg *ActiveConfig) []ValidationError {
+	var errors []ValidationError
+
 	if cfg.Video.Resolution != "" && !resolutionPattern.MatchString(cfg.Video.Resolution) {
 		errors = append(errors, ValidationError{
 			Field:   "video.resolution",
@@ -347,6 +366,13 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
+	return errors
+}
+
+// validateAudioConfig validates the audio section of the configuration.
+func validateAudioConfig(cfg *ActiveConfig) []ValidationError {
+	var errors []ValidationError
+
 	if cfg.Audio.Codec != "" && !validAudioCodecs[cfg.Audio.Codec] {
 		errors = append(errors, ValidationError{
 			Field:   "audio.codec",
@@ -362,6 +388,13 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
+	return errors
+}
+
+// validateOutputConfig validates the output section of the configuration.
+func validateOutputConfig(cfg *ActiveConfig) []ValidationError {
+	var errors []ValidationError
+
 	if cfg.Output.Format != "" && !validFormats[cfg.Output.Format] {
 		errors = append(errors, ValidationError{
 			Field:   "output.format",
@@ -369,7 +402,13 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	// Validate worker settings
+	return errors
+}
+
+// validateWorkerConfig validates the worker section of the configuration.
+func validateWorkerConfig(cfg *ActiveConfig) []ValidationError {
+	var errors []ValidationError
+
 	if cfg.Worker.Concurrency < 1 {
 		errors = append(errors, ValidationError{
 			Field:   "worker.concurrency",
@@ -407,9 +446,5 @@ func validateConfig(cfg *ActiveConfig) error {
 		})
 	}
 
-	if len(errors) > 0 {
-		return &ValidationErrors{Errors: errors}
-	}
-
-	return nil
+	return errors
 }

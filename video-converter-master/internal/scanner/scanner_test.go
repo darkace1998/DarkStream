@@ -488,7 +488,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-
 func TestScannerWithDuplicateChecker(t *testing.T) {
 	tmpDir := t.TempDir()
 	videosDir := filepath.Join(tmpDir, "videos")

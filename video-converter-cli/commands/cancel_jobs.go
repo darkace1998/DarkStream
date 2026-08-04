@@ -16,21 +16,27 @@ import (
 
 // CancelJobs handles cancelling multiple jobs by status.
 func CancelJobs(args []string) {
+	if err := runCancelJobs(args); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runCancelJobs(args []string) error {
 	fs := flag.NewFlagSet("cancel-jobs", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
-	status := fs.String("status", "pending", "Status of jobs to cancel: pending, processing, or all")
+	status := fs.String("status", statusPending, "Status of jobs to cancel: pending, processing, or all")
 	limit := fs.Int("limit", 100, "Maximum number of jobs to cancel")
 	format := fs.String("format", "table", "Output format: table, json, csv")
 	_ = fs.Parse(args)
 
-	if *status != "pending" && *status != "processing" && *status != "all" {
+	if *status != statusPending && *status != statusProcessing && *status != "all" {
 		slog.Error("Invalid status parameter. Must be 'pending', 'processing', or 'all'")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	if *limit <= 0 {
 		slog.Error("Invalid limit parameter. Must be greater than 0")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	requestURL, err := utils.BuildURL(*masterURL, "/api/jobs/cancel", url.Values{
@@ -39,20 +45,20 @@ func CancelJobs(args []string) {
 	})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		return err
 	}
 
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -64,20 +70,20 @@ func CancelJobs(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Failed to cancel jobs", "status", resp.StatusCode)
 		slog.Info(string(body))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
@@ -103,4 +109,5 @@ func CancelJobs(args []string) {
 			slog.Warn(fmt.Sprintf("⚠️ Failed to cancel %d jobs", failedCount))
 		}
 	}
+	return nil
 }

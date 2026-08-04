@@ -16,6 +16,12 @@ import (
 
 // Priority updates the priority of a job on the master server.
 func Priority(args []string) {
+	if err := runPriority(args); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runPriority(args []string) error {
 	fs := flag.NewFlagSet("priority", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
 	jobID := fs.String("job-id", "", "Job ID to update (required)")
@@ -26,12 +32,12 @@ func Priority(args []string) {
 	if *jobID == "" {
 		slog.Error("Job ID is required")
 		slog.Info("Usage: video-converter-cli priority --job-id <job-id> --priority <0-10>")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	if *priority < 0 || *priority > 10 {
 		slog.Error("Priority must be between 0 and 10")
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	requestURL, err := utils.BuildURL(*masterURL, "/api/job/priority", url.Values{
@@ -40,20 +46,20 @@ func Priority(args []string) {
 	})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		return err
 	}
 	// We are sending data in query params, so content type application/json is incorrect since body is nil.
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", *masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -65,20 +71,20 @@ func Priority(args []string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Error("Failed to update job priority", "status", resp.StatusCode)
 		slog.Info(fmt.Sprintf("Response: %s", string(body)))
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	var result map[string]any
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(*format))
@@ -92,4 +98,5 @@ func Priority(args []string) {
 			slog.Info(msg)
 		}
 	}
+	return nil
 }

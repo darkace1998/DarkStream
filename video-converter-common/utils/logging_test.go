@@ -28,7 +28,7 @@ func captureStdout(f func()) string {
 		outC <- buf.String()
 	}()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old // restoring the real stdout
 	return <-outC
 }

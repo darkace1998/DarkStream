@@ -48,11 +48,13 @@ func TestJob(t *testing.T) {
 	Job([]string{"--master-url", ts.URL, "--job-id", "not-found"})
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf strings.Builder
-	b := make([]byte, 1024); n, _ := r.Read(b); buf.Write(b[:n])
+	b := make([]byte, 1024)
+	n, _ := r.Read(b)
+	buf.Write(b[:n])
 	output := buf.String()
 
 	if !strings.Contains(output, "test-job-123") {

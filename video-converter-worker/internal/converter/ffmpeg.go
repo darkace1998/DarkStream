@@ -125,15 +125,19 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 		return fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
-	// Track progress if callback provided and duration is known
-	if progressCallback != nil && duration > 0 {
-		go fc.trackProgress(stderr, duration, progressCallback, log)
-	} else {
-		// Always consume stderr to prevent FFmpeg from blocking when the pipe buffer fills
-		go func() {
+	// Always consume stderr so FFmpeg never blocks when the pipe buffer fills.
+	// All reads MUST complete before cmd.Wait() is called, otherwise Wait may
+	// close the pipe while the reader is still running (see os/exec docs).
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		if progressCallback != nil && duration > 0 {
+			fc.trackProgress(stderr, duration, progressCallback, log)
+		} else {
 			_, _ = io.Copy(io.Discard, stderr)
-		}()
-	}
+		}
+	}()
+	<-readDone
 
 	err = cmd.Wait()
 	if err != nil {
@@ -179,11 +183,9 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	cfg *models.ConversionConfig,
 	log *slog.Logger,
 ) []string {
-	args := []string{
-		"-i", job.SourcePath,
-		"-progress", "pipe:2", // Output progress to stderr
-	}
-
+	// Hardware-acceleration flags are per-input options and MUST precede the
+	// "-i" they apply to, otherwise ffmpeg rejects them as output options.
+	args := []string{"-progress", "pipe:2"} // Output progress to stderr
 	if cfg.UseVulkan {
 		// Use Vulkan for hardware decoding
 		args = append(args,
@@ -191,6 +193,8 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 			"-hwaccel_device", "0", // Device index
 		)
 	}
+
+	args = append(args, "-i", job.SourcePath)
 
 	// Video filtering and encoding
 	args = append(args,
@@ -319,8 +323,12 @@ func (fc *FFmpegConverter) getOutputFormatWithLogger(format string, log *slog.Lo
 
 // getVideoDuration extracts the duration of a video file using ffprobe
 func (fc *FFmpegConverter) getVideoDuration(sourcePath string) (float64, error) {
-	// Determine ffprobe path from ffmpeg path
-	ffprobePath := strings.Replace(fc.ffmpegPath, "ffmpeg", "ffprobe", 1)
+	// Determine ffprobe path from ffmpeg path by rewriting only the final path
+	// component, so a parent directory containing "ffmpeg" is not corrupted
+	// (e.g. /opt/ffmpeg/bin/ffmpeg -> /opt/ffmpeg/bin/ffprobe).
+	dir := filepath.Dir(fc.ffmpegPath)
+	base := strings.Replace(filepath.Base(fc.ffmpegPath), "ffmpeg", "ffprobe", 1)
+	ffprobePath := filepath.Join(dir, base)
 
 	// #nosec G204 - ffprobePath is derived from validated fc.ffmpegPath
 	cmd := exec.Command(ffprobePath,

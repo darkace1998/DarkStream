@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,20 @@ import (
 )
 
 const masterAPIKeyEnvVar = "DARKSTREAM_API_KEY"
+
+// errCommandFailed signals that a command should exit non-zero. The failure
+// has already been reported to the user via slog, so callers only need to
+// translate it into a process exit code.
+var errCommandFailed = errors.New("command failed")
+
+// Job status constants shared across command output.
+const (
+	statusPending    = "pending"
+	statusProcessing = "processing"
+	statusCompleted  = "completed"
+	statusFailed     = "failed"
+	statusCancelled  = "cancelled"
+)
 
 var masterHTTPClient = &http.Client{Timeout: 15 * time.Second}
 

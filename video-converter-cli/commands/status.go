@@ -33,22 +33,28 @@ func Status(args []string) {
 }
 
 func displayStatus(masterURL, format string) {
+	if err := runDisplayStatus(masterURL, format); err != nil {
+		os.Exit(1)
+	}
+}
+
+func runDisplayStatus(masterURL, format string) error {
 	url, err := utils.BuildURL(masterURL, "/api/status", nil)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		os.Exit(1)
+		return err
 	}
 	req, err := newMasterRequest(http.MethodGet, url, nil, "")
 	if err != nil {
 		slog.Error("Error creating request", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Error connecting to master server", "error", err)
 		slog.Info(fmt.Sprintf("Make sure the master server is running at %s", masterURL))
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		err := resp.Body.Close()
@@ -63,20 +69,20 @@ func displayStatus(masterURL, format string) {
 		if len(body) > 0 {
 			slog.Info(string(body))
 		}
-		os.Exit(1)
+		return errCommandFailed
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Error reading response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	var stats map[string]any
 	err = json.Unmarshal(body, &stats)
 	if err != nil {
 		slog.Error("Error parsing response", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	out := formatter.New(os.Stdout, formatter.ParseFormat(format))
@@ -87,15 +93,16 @@ func displayStatus(masterURL, format string) {
 	case formatter.FormatCSV:
 		headers := []string{"Status", "Count"}
 		rows := [][]string{
-			{"completed", fmt.Sprintf("%d", getIntValue(stats, "completed"))},
-			{"processing", fmt.Sprintf("%d", getIntValue(stats, "processing"))},
-			{"pending", fmt.Sprintf("%d", getIntValue(stats, "pending"))},
-			{"failed", fmt.Sprintf("%d", getIntValue(stats, "failed"))},
+			{statusCompleted, fmt.Sprintf("%d", getIntValue(stats, statusCompleted))},
+			{statusProcessing, fmt.Sprintf("%d", getIntValue(stats, statusProcessing))},
+			{statusPending, fmt.Sprintf("%d", getIntValue(stats, statusPending))},
+			{statusFailed, fmt.Sprintf("%d", getIntValue(stats, statusFailed))},
 		}
 		_ = out.PrintCSV(headers, rows)
 	default:
 		printStatusTable(stats)
 	}
+	return nil
 }
 
 func watchStatus(masterURL string, interval int, format string) {
@@ -122,10 +129,10 @@ func watchStatus(masterURL string, interval int, format string) {
 }
 
 func printStatusTable(stats map[string]any) {
-	completed := getIntValue(stats, "completed")
-	processing := getIntValue(stats, "processing")
-	pending := getIntValue(stats, "pending")
-	failed := getIntValue(stats, "failed")
+	completed := getIntValue(stats, statusCompleted)
+	processing := getIntValue(stats, statusProcessing)
+	pending := getIntValue(stats, statusPending)
+	failed := getIntValue(stats, statusFailed)
 	total := completed + processing + pending + failed
 
 	slog.Info("📊 Conversion Progress")

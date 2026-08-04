@@ -9,7 +9,7 @@ import (
 
 func TestQueuePauseResume(t *testing.T) {
 	srv := newTestServer(t)
-	defer srv.db.Close()
+	defer func() { _ = srv.db.Close() }()
 
 	// Initial state: Queue is NOT paused
 	if srv.queuePaused.Load() {

@@ -3,6 +3,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,25 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
 )
+
+// sleepWithContext waits for d to elapse or ctx to be cancelled, whichever comes
+// first. It returns nil if the full delay elapsed, or ctx.Err() if the context
+// was cancelled. A nil ctx falls back to a plain sleep (used where no context is
+// wired, e.g. startup or tests).
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // ErrNoJobsAvailable is returned when no jobs are available from the master
 var ErrNoJobsAvailable = errors.New("no jobs available")
@@ -40,6 +60,23 @@ type MasterClient struct {
 	bandwidthLimit       int64 // bytes per second (0 = unlimited)
 	enableResumeDownload bool
 	apiKey               string
+	ctx                  context.Context // optional; used to abort retry backoff on shutdown
+}
+
+// SetContext wires a context whose cancellation aborts inter-attempt retry
+// backoff and in-flight HTTP requests, so a download/upload/heartbeat does not
+// keep running after the worker begins shutting down.
+func (mc *MasterClient) SetContext(ctx context.Context) {
+	mc.ctx = ctx
+}
+
+// reqContext returns the context to attach to outgoing requests. It falls back
+// to context.Background() when none has been wired (e.g. in tests).
+func (mc *MasterClient) reqContext() context.Context {
+	if mc.ctx != nil {
+		return mc.ctx
+	}
+	return context.Background()
 }
 
 // New creates a new MasterClient instance
@@ -92,7 +129,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 		return nil, fmt.Errorf("failed to build request URL: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -155,7 +192,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		return nil, fmt.Errorf("failed to build request URL: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -220,7 +257,7 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 	if err != nil {
 		return fmt.Errorf("failed to build request URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -269,7 +306,7 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 	if err != nil {
 		return fmt.Errorf("failed to build request URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -314,7 +351,7 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 		slog.Error("Failed to build heartbeat request URL", "error", err)
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create heartbeat request", "error", err)
 		return
@@ -362,7 +399,7 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 		slog.Error("Failed to build job progress request URL", "error", err)
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create job progress request", "error", err)
 		return
@@ -391,7 +428,33 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 	}
 }
 
+// httpStatusError signals a non-success HTTP response and carries the status
+// code so retry loops can tell permanent client errors from transient ones.
+type httpStatusError struct {
+	statusCode int
+	body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected status code: %d, body: %s", e.statusCode, e.body)
+}
+
+// isPermanentHTTPError reports whether err represents a 4xx client error that a
+// retry cannot fix. 408 (Request Timeout) and 429 (Too Many Requests) are
+// treated as transient and remain retryable.
+func isPermanentHTTPError(err error) bool {
+	var se *httpStatusError
+	if errors.As(err, &se) {
+		return se.statusCode >= 400 && se.statusCode < 500 &&
+			se.statusCode != http.StatusRequestTimeout &&
+			se.statusCode != http.StatusTooManyRequests
+	}
+	return false
+}
+
 // DownloadSourceVideo downloads the source video file from the master
+//
+//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
@@ -404,7 +467,9 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("download cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.downloadSourceVideoAttempt(jobID, outputPath, nil)
@@ -413,6 +478,9 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 		}
 
 		slog.Error("Download attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		if isPermanentHTTPError(err) {
+			return fmt.Errorf("download failed with non-retryable error: %w", err)
+		}
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to download video after %d attempts: %w", maxRetries, err)
 		}
@@ -495,6 +563,8 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 }
 
 // UploadConvertedVideo uploads the converted video file to the master
+//
+//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
@@ -507,7 +577,9 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.uploadConvertedVideoAttempt(jobID, filePath, nil)
@@ -516,6 +588,11 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 		}
 
 		slog.Error("Upload attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		// Do not re-send a non-idempotent multipart upload after a permanent
+		// client error (e.g. 401/400); it will only fail again identically.
+		if isPermanentHTTPError(err) {
+			return fmt.Errorf("upload failed with non-retryable error: %w", err)
+		}
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to upload video after %d attempts: %w", maxRetries, err)
 		}
@@ -592,7 +669,9 @@ func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("download cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.downloadSourceVideoAttempt(jobID, outputPath, progressCallback)
@@ -621,7 +700,9 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.uploadConvertedVideoAttempt(jobID, filePath, progressCallback)
@@ -674,7 +755,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	}
 
 	// Create HTTP request with Range header for resume
-	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
@@ -701,23 +782,41 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 
 	// Handle response status
 	var totalContentLength int64
+	knownLength := false
 	//nolint:gocritic // if-else chain with compound condition not suitable for switch
 	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
 		// Resume successful
-		totalContentLength = startOffset + resp.ContentLength
+		if resp.ContentLength >= 0 {
+			totalContentLength = startOffset + resp.ContentLength
+			knownLength = true
+		}
 		slog.Info("Resuming download", "job_id", jobID, "offset", startOffset, "remaining", resp.ContentLength)
 	} else if resp.StatusCode == http.StatusOK {
 		// Full download (or resume not supported)
 		totalContentLength = resp.ContentLength
+		knownLength = resp.ContentLength >= 0
 		startOffset = 0
+	} else if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && startOffset > 0 {
+		// The partial file is stale/too large for a resume. Discard it so the next
+		// retry starts a fresh full download instead of reproducing this 416 every
+		// time and burning the entire retry budget deterministically.
+		if rerr := os.Remove(outputPath); rerr != nil {
+			slog.Warn("Failed to remove stale partial download", "path", outputPath, "error", rerr)
+		}
+		return fmt.Errorf("resume failed with status 416; discarded partial download for a fresh retry")
 	} else {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
-	// Validate Content-Length header
-	if totalContentLength <= 0 {
-		return fmt.Errorf("Content-Length header missing or invalid")
+	// A missing Content-Length (e.g. a chunked / streamed response, ContentLength
+	// == -1) is acceptable: stream the body to EOF and skip the exact-size check
+	// below. Integrity is still enforced downstream via the source checksum when
+	// the job provides one.
+	if !knownLength {
+		totalContentLength = 0
+		slog.Warn("Download response has no Content-Length; size validation will rely on checksum",
+			"job_id", jobID, "status", resp.StatusCode)
 	}
 
 	// Open/create output file
@@ -770,9 +869,9 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		return fmt.Errorf("failed to write video file: %w", err)
 	}
 
-	// Validate total file size
+	// Validate total file size, but only when the server declared one.
 	finalSize := startOffset + bytesWritten
-	if finalSize != totalContentLength {
+	if knownLength && finalSize != totalContentLength {
 		if !mc.enableResumeDownload {
 			rerr := os.Remove(outputPath)
 			if rerr != nil {
@@ -862,7 +961,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	if err != nil {
 		return fmt.Errorf("failed to build upload URL: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, requestURL, pipeReader)
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, pipeReader)
 	if err != nil {
 		return fmt.Errorf("failed to create upload request: %w", err)
 	}
@@ -895,7 +994,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
 	// Parse response

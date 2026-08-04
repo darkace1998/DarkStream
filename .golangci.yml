@@ -1,9 +1,9 @@
+version: "2"
 
-
-linters:    
+linters:
   default: all
   disable:
-    # Disable overly strict or impractical linters
+    # Disable overly strict or impractical linters. See LINTER_CONFIGURATION.md.
     - depguard           # Allow all imports (too restrictive for this project)
     - exhaustruct        # Don't require all struct fields (too verbose)
     - exhaustive         # Don't require all switch cases (allow default handling)
@@ -14,7 +14,8 @@ linters:
     - paralleltest       # Don't require t.Parallel() (may not be needed for all tests)
     - testpackage        # Allow tests in same package (white-box testing)
     - varnamelen         # Allow short variable names (standard Go practice)
-    - wsl    
+    - wsl                # Whitespace linter is too opinionated
+    - wsl_v5             # Whitespace linter rewrite, likewise too opinionated
     - tagliatelle        # Don't enforce tag naming convention (allow snake_case for JSON)
     - perfsprint         # Don't enforce fmt.Sprintf vs string concat (micro-optimization)
     - lll                # Don't enforce line length (some lines need to be long)
@@ -24,6 +25,20 @@ linters:
     - nestif             # Don't flag nested if statements
     - whitespace         # Don't enforce whitespace rules
     - gosec              # Disabled due to SSA panic in golangci-lint v2.x
+    - err113             # Allow dynamic errors (fmt.Errorf); static errors not always practical
+    - mnd                # Don't flag magic numbers; constants aren't always necessary
+    - intrange           # Don't require Go 1.22+ range syntax
+    # New/renamed opinionated linters in golangci-lint v2, disabled to match the
+    # same "too strict / not practical" philosophy as the entries above.
+    - noinlineerr        # Allow inline `if err := f(); err != nil` (idiomatic Go)
+    - funcorder          # Don't enforce a specific ordering of methods within a file
+    - wrapcheck          # Don't require wrapping every returned external error
+    - containedctx       # Allow storing a context in a struct (used for shutdown propagation)
+    - contextcheck       # Don't flag non-inherited contexts (fresh contexts are intentional)
+    - nonamedreturns     # Allow named returns
+    - embeddedstructfieldcheck # Don't enforce embedded-field ordering
+    - forbidigo          # Allow fmt.Print* — the CLI's job is to print to stdout
+    - nilnil             # Allow the idiomatic (nil, nil) "skip / not found" return
   settings:
     cyclop:
       max-complexity: 20

@@ -25,6 +25,9 @@ type Tracker struct {
 // ErrJobAlreadyExists is returned when attempting to create a job that already exists
 var ErrJobAlreadyExists = errors.New("job already exists")
 
+// sqlAndStartedAt is the SQL fragment appended to guard job transitions against a stale started_at value.
+const sqlAndStartedAt = " AND started_at = ?"
+
 // ConnectionPoolConfig holds configuration for database connection pooling
 type ConnectionPoolConfig struct {
 	MaxOpenConnections int           // Maximum number of open connections to the database
@@ -867,10 +870,10 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	return workers, nil
 }
 
-// PruneJobs removes jobs with the specified status (completed, failed, or all).
+// PruneJobs removes jobs with the specified status (completed, failed, cancelled, or all).
 // Returns the number of jobs deleted and any error.
 func (t *Tracker) PruneJobs(status string) (int, error) {
-	if status != "completed" && status != "failed" && status != "all" {
+	if status != "completed" && status != "failed" && status != "cancelled" && status != "all" {
 		return 0, fmt.Errorf("invalid status for pruning: %s", status)
 	}
 
@@ -878,7 +881,7 @@ func (t *Tracker) PruneJobs(status string) (int, error) {
 	var args []any
 
 	if status == "all" {
-		query = `DELETE FROM jobs WHERE status IN ('completed', 'failed')`
+		query = `DELETE FROM jobs WHERE status IN ('completed', 'failed', 'cancelled')`
 	} else {
 		query = `DELETE FROM jobs WHERE status = ?`
 		args = append(args, status)
@@ -1071,7 +1074,7 @@ func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool, expectedS
 		args = append(args, expectedWorkerID)
 	}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 
@@ -1097,7 +1100,7 @@ func (t *Tracker) MarkJobCompleted(jobID, workerID string, outputSize int64, out
 	`
 	args := []any{workerID, now, outputSize, outputChecksum, jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1108,17 +1111,20 @@ func (t *Tracker) MarkJobCompleted(jobID, workerID string, outputSize int64, out
 }
 
 // MarkJobFailed transitions a processing job to failed if it still belongs to the worker.
+// completed_at records when the attempt failed, which the retry monitor uses to
+// space out retries; ResetJobToPending clears it again when the job is requeued.
 func (t *Tracker) MarkJobFailed(jobID, workerID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
 	query := `
 		UPDATE jobs
 		SET status = 'failed',
 			worker_id = ?,
-			error_message = ?
+			error_message = ?,
+			completed_at = ?
 		WHERE id = ? AND status = 'processing' AND worker_id = ?
 	`
-	args := []any{workerID, errorMessage, jobID, workerID}
+	args := []any{workerID, errorMessage, time.Now(), jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1140,7 +1146,7 @@ func (t *Tracker) MarkJobFailedPermanently(jobID, workerID, errorMessage string,
 	`
 	args := []any{workerID, errorMessage, completedAt, jobID, workerID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1151,16 +1157,19 @@ func (t *Tracker) MarkJobFailedPermanently(jobID, workerID, errorMessage string,
 }
 
 // MarkJobCancelled cancels a job if it is still pending or processing.
+// The job is moved to the distinct 'cancelled' terminal status so the retry
+// monitor (which only reprocesses 'failed' jobs) cannot resurrect it.
 func (t *Tracker) MarkJobCancelled(jobID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
 	query := `
 		UPDATE jobs
-		SET status = 'failed',
+		SET status = 'cancelled',
+			completed_at = ?,
 			error_message = ?
 		WHERE id = ? AND status IN ('pending', 'processing')
 	`
-	args := []any{errorMessage, jobID}
+	args := []any{time.Now(), errorMessage, jobID}
 	if expectedStartedAt != nil {
-		query += " AND started_at = ?"
+		query += sqlAndStartedAt
 		args = append(args, *expectedStartedAt)
 	}
 	matched, err := t.execJobTransition(query, args...)
@@ -1513,8 +1522,8 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	validType := regexp.MustCompile(`^[a-zA-Z]+$`)
 
-	var placeholders []string
-	var args []any
+	placeholders := make([]string, 0, len(columns))
+	args := make([]any, 0, len(columns))
 	for _, col := range columns {
 		// Strict validation of column name and data type to prevent SQL injection
 		if !validName.MatchString(col.name) {
@@ -1532,7 +1541,7 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 	if err != nil {
 		return fmt.Errorf("failed to query existing columns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	existingCols := make(map[string]bool)
 	for rows.Next() {
