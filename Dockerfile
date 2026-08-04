@@ -3,6 +3,8 @@
 FROM ubuntu:24.04 AS builder
 
 # Install Go 1.25 and build dependencies
+# Note: libx11-dev/libwayland-dev are needed alongside libvulkan-dev because
+# golang-vulkan-api v1.2.0 compiles Xlib/Wayland surface (WSI) bindings on Linux.
 # Note: the master module requires Go >= 1.25 (transitively via prometheus/client_golang),
 # and builds run with GOPROXY=direct, which cannot auto-download a newer toolchain,
 # so the installed toolchain must already satisfy every module's go directive.
@@ -15,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     pkg-config \
     libvulkan-dev \
+    libx11-dev \
+    libwayland-dev \
     vulkan-tools \
     wget \
     && wget -O go.tar.gz https://go.dev/dl/go1.25.0.linux-amd64.tar.gz \
