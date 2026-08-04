@@ -762,11 +762,30 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	for {
+		// Emit one event per tick. Errors inside the helper skip that event but
+		// still fall through to the select below, so a transient DB error can
+		// never turn this into a tight, cancellation-ignoring busy loop.
+		s.writeStatsStreamEvent(w, flusher)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Loop again
+		}
+	}
+}
+
+// writeStatsStreamEvent collects the current stats snapshot and writes a single
+// SSE event. It returns early (skipping the event) on any collection or encoding
+// error rather than looping, so callers must invoke it once per tick.
+func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flusher) {
+	{
 		// Collect stats
 		jobStats, err := s.db.GetJobStats()
 		if err != nil {
 			slog.Error("Failed to get job stats for stream", "error", err)
-			continue
+			return
 		}
 
 		workers, workerErr := s.db.GetWorkers()
@@ -856,18 +875,11 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 		eventData, err := json.Marshal(response)
 		if err != nil {
 			slog.Error("Failed to marshal stats stream event", "error", err)
-			continue
+			return
 		}
 
 		_, _ = fmt.Fprintf(w, "event: stats\ndata: %s\n\n", eventData)
 		flusher.Flush()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Loop again
-		}
 	}
 }
 
@@ -1224,8 +1236,11 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 		// Try bytes=start-end format
 		if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); n == 2 {
 			validRange = true
-		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 {
-			// bytes=start- format
+		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=%d-", &start); n == 1 && start >= 0 {
+			// bytes=start- format. The start >= 0 guard is required because %d
+			// consumes the leading '-' of a suffix range ("bytes=-500") as a
+			// negative start; without it that request would be misparsed here and
+			// rejected instead of falling through to the suffix branch below.
 			end = fileSize - 1
 			validRange = true
 		} else if n, _ := fmt.Sscanf(rangeHeader, "bytes=-%d", &end); n == 1 {
@@ -2046,7 +2061,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	// Store previous status for logging
 	previousStatus := job.Status
 
-	// Update job status to cancelled (using failed with specific error message)
+	// Update job status to the terminal 'cancelled' state.
 	updated, err := s.db.MarkJobCancelled(job.ID, "Job cancelled by user", job.StartedAt)
 	if err != nil {
 		slog.Error("Failed to cancel job", "job_id", jobID, "error", err)
@@ -2271,7 +2286,10 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the config from request body
+	// Read the config from request body, capped so a client cannot force an
+	// arbitrarily large allocation. Config files are only a few KB in practice.
+	const maxConfigBodySize = 1 << 20 // 1 MiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxConfigBodySize)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -2896,6 +2914,12 @@ func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Also delete its config if any
 	_ = s.db.DeleteWorkerConfig(workerID)
+
+	// Drop the worker's heartbeat metric series so removed workers do not leak
+	// Prometheus cardinality for the lifetime of the process.
+	if s.metrics != nil {
+		s.metrics.RemoveWorkerHeartbeat(workerID)
+	}
 
 	slog.Info("Deleted worker", "worker_id", workerID)
 	w.WriteHeader(http.StatusOK)

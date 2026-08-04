@@ -2048,3 +2048,60 @@ func TestPruneJobs(t *testing.T) {
 		t.Errorf("Unexpected stats after pruning all jobs: %v", stats)
 	}
 }
+
+// TestMarkJobCancelledNotRetryable verifies a cancelled job lands in the
+// distinct 'cancelled' status and is not picked up by the retry monitor, which
+// would otherwise silently resurrect it.
+func TestMarkJobCancelledNotRetryable(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	tracker, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() {
+		if cerr := tracker.Close(); cerr != nil {
+			t.Logf("Failed to close tracker: %v", cerr)
+		}
+	}()
+
+	job := &models.Job{
+		ID:         "cancel-me",
+		SourcePath: "/source/cancel.mp4",
+		OutputPath: "/output/cancel.mp4",
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+	if err := tracker.CreateJob(job); err != nil {
+		t.Fatalf("Failed to create job: %v", err)
+	}
+
+	updated, err := tracker.MarkJobCancelled(job.ID, "Job cancelled by user", nil)
+	if err != nil {
+		t.Fatalf("Failed to cancel job: %v", err)
+	}
+	if !updated {
+		t.Fatal("Expected pending job to be cancelled")
+	}
+
+	got, err := tracker.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("Failed to fetch cancelled job: %v", err)
+	}
+	if got.Status != "cancelled" {
+		t.Errorf("Expected status 'cancelled', got %q", got.Status)
+	}
+
+	retryable, err := tracker.GetRetryableFailedJobs()
+	if err != nil {
+		t.Fatalf("Failed to get retryable jobs: %v", err)
+	}
+	for _, rj := range retryable {
+		if rj.ID == job.ID {
+			t.Errorf("Cancelled job %s must not be returned as retryable", job.ID)
+		}
+	}
+}

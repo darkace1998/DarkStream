@@ -731,11 +731,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             if (!confirm(msg)) return;
 
             try {
-                const response = await fetch('/api/jobs/prune?status=' + status, {
-                    method: 'DELETE',
-                    headers: getAuthHeaders()
+                const response = await authorizedFetch('/api/jobs/prune?status=' + status, {
+                    method: 'DELETE'
                 });
-                const data = await handleResponse(response);
+                if (!response.ok) {
+                    throw new Error('Request failed with status ' + response.status);
+                }
+                const data = await response.json();
                 alert('Cleared ' + data.deleted_count + ' jobs');
                 window.location.reload();
             } catch (error) {
@@ -806,7 +808,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         // Connect to stats stream for real-time updates
         function connectStatsStream() {
             let url = '/api/stats/stream';
-            const apiKey = localStorage.getItem('darkstream_api_key');
+            const apiKey = localStorage.getItem(apiKeyStorageKey);
             if (apiKey) {
                 url += '?api_key=' + encodeURIComponent(apiKey);
             }
@@ -1611,8 +1613,8 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         }
 
         async function doAction(action) {
-            const apiKey = localStorage.getItem('darkstream_api_key') || '';
-            let url = '/api/job/' + action + '?id=' + encodeURIComponent(jobId);
+            const apiKey = localStorage.getItem('darkstreamAdminApiKey') || '';
+            let url = '/api/job/' + action + '?job_id=' + encodeURIComponent(jobId);
             if (apiKey) {
                 url += '&api_key=' + encodeURIComponent(apiKey);
             }
@@ -1650,8 +1652,8 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         // Progress polling for processing jobs
         if (jobStatus === 'processing') {
             setInterval(async () => {
-                let url = '/api/job/progress?id=' + encodeURIComponent(jobId);
-                const apiKey = localStorage.getItem('darkstream_api_key');
+                let url = '/api/job/progress?job_id=' + encodeURIComponent(jobId);
+                const apiKey = localStorage.getItem('darkstreamAdminApiKey');
                 if (apiKey) url += '&api_key=' + encodeURIComponent(apiKey);
 
                 try {

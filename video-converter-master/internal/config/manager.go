@@ -196,7 +196,10 @@ func (m *Manager) Update(cfg *ActiveConfig) error {
 	m.mu.Lock()
 	cfg.UpdatedAt = time.Now()
 	cfg.Version = m.config.Version + 1
-	m.config = cfg
+	// Store a copy rather than the caller's pointer, so a later mutation of cfg
+	// by the caller cannot race with concurrent readers dereferencing m.config.
+	stored := *cfg
+	m.config = &stored
 	// Marshal config data while still holding the lock to avoid a data race
 	// with concurrent Update() calls that could change m.config.
 	configData, marshalErr := json.MarshalIndent(m.config, "", "  ")

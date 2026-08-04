@@ -867,10 +867,10 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	return workers, nil
 }
 
-// PruneJobs removes jobs with the specified status (completed, failed, or all).
+// PruneJobs removes jobs with the specified status (completed, failed, cancelled, or all).
 // Returns the number of jobs deleted and any error.
 func (t *Tracker) PruneJobs(status string) (int, error) {
-	if status != "completed" && status != "failed" && status != "all" {
+	if status != "completed" && status != "failed" && status != "cancelled" && status != "all" {
 		return 0, fmt.Errorf("invalid status for pruning: %s", status)
 	}
 
@@ -878,7 +878,7 @@ func (t *Tracker) PruneJobs(status string) (int, error) {
 	var args []any
 
 	if status == "all" {
-		query = `DELETE FROM jobs WHERE status IN ('completed', 'failed')`
+		query = `DELETE FROM jobs WHERE status IN ('completed', 'failed', 'cancelled')`
 	} else {
 		query = `DELETE FROM jobs WHERE status = ?`
 		args = append(args, status)
@@ -1108,15 +1108,18 @@ func (t *Tracker) MarkJobCompleted(jobID, workerID string, outputSize int64, out
 }
 
 // MarkJobFailed transitions a processing job to failed if it still belongs to the worker.
+// completed_at records when the attempt failed, which the retry monitor uses to
+// space out retries; ResetJobToPending clears it again when the job is requeued.
 func (t *Tracker) MarkJobFailed(jobID, workerID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
 	query := `
 		UPDATE jobs
 		SET status = 'failed',
 			worker_id = ?,
-			error_message = ?
+			error_message = ?,
+			completed_at = ?
 		WHERE id = ? AND status = 'processing' AND worker_id = ?
 	`
-	args := []any{workerID, errorMessage, jobID, workerID}
+	args := []any{workerID, errorMessage, time.Now(), jobID, workerID}
 	if expectedStartedAt != nil {
 		query += " AND started_at = ?"
 		args = append(args, *expectedStartedAt)
@@ -1151,14 +1154,17 @@ func (t *Tracker) MarkJobFailedPermanently(jobID, workerID, errorMessage string,
 }
 
 // MarkJobCancelled cancels a job if it is still pending or processing.
+// The job is moved to the distinct 'cancelled' terminal status so the retry
+// monitor (which only reprocesses 'failed' jobs) cannot resurrect it.
 func (t *Tracker) MarkJobCancelled(jobID, errorMessage string, expectedStartedAt *time.Time) (bool, error) {
 	query := `
 		UPDATE jobs
-		SET status = 'failed',
+		SET status = 'cancelled',
+			completed_at = ?,
 			error_message = ?
 		WHERE id = ? AND status IN ('pending', 'processing')
 	`
-	args := []any{errorMessage, jobID}
+	args := []any{time.Now(), errorMessage, jobID}
 	if expectedStartedAt != nil {
 		query += " AND started_at = ?"
 		args = append(args, *expectedStartedAt)

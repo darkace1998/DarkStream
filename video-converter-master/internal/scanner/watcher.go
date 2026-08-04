@@ -25,6 +25,13 @@ type Watcher struct {
 	cancel       context.CancelFunc
 	pendingFiles map[string]*time.Timer
 	pendingMu    sync.Mutex
+	closing      bool // guarded by pendingMu; once set, no new debounce timers are armed
+
+	// sendMu serializes sends on Jobs against closing the channel. Debounce
+	// callbacks run in their own (untracked) goroutines, so without this a timer
+	// firing during Close() could send on an already-closed Jobs channel and panic.
+	sendMu sync.RWMutex
+	closed bool // guarded by sendMu
 }
 
 // NewWatcher creates a new file system watcher based on the scanner configuration
@@ -51,8 +58,9 @@ func NewWatcher(scanner *Scanner) (*Watcher, error) {
 
 // Start begins watching the directory tree
 func (w *Watcher) Start() error {
-	// Add root path and all subdirectories recursively
-	err := w.addDirRecursive(w.scanner.RootPath, 0)
+	// Add root path and all subdirectories recursively. Existing files are not
+	// enqueued here; the caller performs an initial ScanDirectory for those.
+	err := w.addDirRecursive(w.scanner.RootPath, 0, false)
 	if err != nil {
 		return fmt.Errorf("failed to add directories to watcher: %w", err)
 	}
@@ -68,22 +76,61 @@ func (w *Watcher) Start() error {
 func (w *Watcher) Close() error {
 	w.cancel()
 	err := w.watcher.Close()
+
+	// Stop any pending debounce timers so their callbacks cannot fire after the
+	// Jobs channel is closed, and refuse to arm new ones.
+	w.pendingMu.Lock()
+	w.closing = true
+	for _, timer := range w.pendingFiles {
+		timer.Stop()
+	}
+	w.pendingFiles = make(map[string]*time.Timer)
+	w.pendingMu.Unlock()
+
+	// Wait for watchLoop (the sole sender on Errors) to exit.
 	w.wg.Wait()
+
+	// Take the write lock so any debounce callback already past the closing check
+	// finishes its send before we close the channels; the closed flag then makes
+	// later callbacks no-op instead of panicking.
+	w.sendMu.Lock()
+	w.closed = true
 	close(w.Jobs)
 	close(w.Errors)
+	w.sendMu.Unlock()
+
 	return err
 }
 
-// addDirRecursive adds a directory and its subdirectories to the watcher
-func (w *Watcher) addDirRecursive(dir string, currentDepth int) error {
+// sendJob delivers a job on the Jobs channel without racing Close(). It returns
+// once the job is sent, the context is cancelled, or the watcher is closing.
+func (w *Watcher) sendJob(job *models.Job) {
+	w.sendMu.RLock()
+	defer w.sendMu.RUnlock()
+	if w.closed {
+		return
+	}
+	select {
+	case w.Jobs <- job:
+	case <-w.ctx.Done():
+	}
+}
+
+// addDirRecursive adds a directory and its subdirectories to the watcher. When
+// processFiles is true, video files already present in the tree are enqueued as
+// jobs — used when a populated directory appears at runtime, whose existing
+// files generate no further fsnotify events.
+func (w *Watcher) addDirRecursive(dir string, currentDepth int, processFiles bool) error {
+	opts := w.scanner.GetOptions()
+
 	// Check depth limit
-	if w.scanner.Options.MaxDepth >= 0 && currentDepth > w.scanner.Options.MaxDepth {
+	if opts.MaxDepth >= 0 && currentDepth > opts.MaxDepth {
 		return nil
 	}
 
 	// Skip hidden directories if configured
 	baseName := filepath.Base(dir)
-	if strings.HasPrefix(baseName, ".") && w.scanner.Options.SkipHiddenDirs {
+	if strings.HasPrefix(baseName, ".") && opts.SkipHiddenDirs {
 		// Only skip if it's not the root path
 		if dir != w.scanner.RootPath {
 			return nil
@@ -104,11 +151,20 @@ func (w *Watcher) addDirRecursive(dir string, currentDepth int) error {
 	}
 
 	for _, entry := range entries {
+		fullPath := filepath.Join(dir, entry.Name())
 		if entry.IsDir() {
-			fullPath := filepath.Join(dir, entry.Name())
-			if err := w.addDirRecursive(fullPath, currentDepth+1); err != nil {
+			if err := w.addDirRecursive(fullPath, currentDepth+1, processFiles); err != nil {
 				slog.Warn("Failed to add subdirectory to watcher", "path", fullPath, "error", err)
 			}
+			continue
+		}
+		if processFiles {
+			job, procErr := w.scanner.ProcessFile(fullPath)
+			if procErr != nil || job == nil {
+				continue
+			}
+			slog.Info("Watcher found existing video file in new directory", "path", fullPath, "job_id", job.ID)
+			w.sendJob(job)
 		}
 	}
 
@@ -161,6 +217,11 @@ func (w *Watcher) debounceEvent(path string) {
 	w.pendingMu.Lock()
 	defer w.pendingMu.Unlock()
 
+	// Do not arm new timers once Close() has begun tearing down the watcher.
+	if w.closing {
+		return
+	}
+
 	// If there's an existing timer, reset it
 	if timer, exists := w.pendingFiles[path]; exists {
 		timer.Reset(2 * time.Second) // Wait 2 seconds of inactivity before processing
@@ -188,13 +249,15 @@ func (w *Watcher) processEventDebounced(path string) {
 		return
 	}
 
-	// If it's a new directory, add it to the watcher (recursively, though it should be empty initially)
+	// If it's a new directory, watch it and enqueue any files it already contains.
+	// A directory can appear fully populated (e.g. an atomic mv into the tree),
+	// and those pre-existing files generate no further fsnotify events.
 	if info.IsDir() {
 		// Calculate depth relative to root path
 		relPath, err := filepath.Rel(w.scanner.RootPath, path)
 		if err == nil {
 			depth := len(strings.Split(relPath, string(os.PathSeparator)))
-			if err := w.addDirRecursive(path, depth); err != nil {
+			if err := w.addDirRecursive(path, depth, true); err != nil {
 				slog.Warn("Failed to watch new directory", "path", path, "error", err)
 			}
 		}
@@ -210,10 +273,6 @@ func (w *Watcher) processEventDebounced(path string) {
 
 	if job != nil {
 		slog.Info("Watcher found new video file", "path", path, "job_id", job.ID)
-		select {
-		case w.Jobs <- job:
-		case <-w.ctx.Done():
-			return
-		}
+		w.sendJob(job)
 	}
 }

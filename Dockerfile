@@ -2,7 +2,10 @@
 # Stage 1: Build stage - Use Ubuntu 24.04 for newer Vulkan headers
 FROM ubuntu:24.04 AS builder
 
-# Install Go 1.24 and build dependencies
+# Install Go 1.25 and build dependencies
+# Note: the master module requires Go >= 1.25 (transitively via prometheus/client_golang),
+# and builds run with GOPROXY=direct, which cannot auto-download a newer toolchain,
+# so the installed toolchain must already satisfy every module's go directive.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
@@ -14,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan-dev \
     vulkan-tools \
     wget \
-    && wget -O go.tar.gz https://go.dev/dl/go1.24.9.linux-amd64.tar.gz \
+    && wget -O go.tar.gz https://go.dev/dl/go1.25.0.linux-amd64.tar.gz \
     && tar -C /usr/local -xzf go.tar.gz \
     && rm go.tar.gz \
     && rm -rf /var/lib/apt/lists/*

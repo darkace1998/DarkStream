@@ -43,8 +43,7 @@ func Job(args []string) {
 		os.Exit(1)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := doMasterRequest(req)
 	if err != nil {
 		slog.Error("Failed to communicate with master server", "error", err)
 		os.Exit(1)

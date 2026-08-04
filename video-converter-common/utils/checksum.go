@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 )
 
 // CalculateFileSHA256 calculates the SHA256 checksum of a file
@@ -40,5 +41,7 @@ func VerifyFileSHA256(filePath, expectedChecksum string) (bool, error) {
 		return false, err
 	}
 
-	return actualChecksum == expectedChecksum, nil
+	// Compare case-insensitively: hex.EncodeToString emits lowercase, but an
+	// expected checksum supplied by an external tool may be upper- or mixed-case.
+	return strings.EqualFold(actualChecksum, expectedChecksum), nil
 }

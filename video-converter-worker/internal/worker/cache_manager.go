@@ -126,8 +126,15 @@ func (cm *CacheManager) Cleanup() error {
 		}
 	}
 
+	// Subtract only what this cleanup removed rather than overwriting with the
+	// pre-scan total. The scan at the top of Cleanup runs without the lock, so an
+	// absolute assignment here would discard any AddFile/RemoveFile deltas that
+	// happened concurrently and let the accounting drift.
 	cm.mu.Lock()
-	cm.currentSize = totalSize
+	cm.currentSize -= removedSize
+	if cm.currentSize < 0 {
+		cm.currentSize = 0
+	}
 	cm.mu.Unlock()
 
 	if removedCount > 0 {

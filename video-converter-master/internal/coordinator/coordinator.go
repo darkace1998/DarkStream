@@ -447,9 +447,6 @@ func (c *Coordinator) monitorFailedJobs() {
 	ticker := time.NewTicker(retryCheckInterval)
 	defer ticker.Stop()
 
-	// Track retry attempts and last retry time for exponential backoff
-	retryBackoff := make(map[string]time.Time)
-
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -466,22 +463,26 @@ func (c *Coordinator) monitorFailedJobs() {
 			}
 
 			for _, job := range failedJobs {
-				// Calculate exponential backoff delay
-				// Base delay: 2 minutes, exponentially increases with retry count
-				// Formula: 2^retry_count minutes (capped at 60 minutes)
-				delayMinutes := min(1<<uint(job.RetryCount), 60) // 2^retry_count capped at 60
+				// Calculate exponential backoff delay.
+				// Formula: 2^retry_count minutes, capped at 60 minutes. The shift
+				// amount is clamped so a large (misconfigured) retry_count cannot
+				// overflow int and produce a negative, always-elapsed delay.
+				shift := job.RetryCount
+				if shift > 6 { // 2^6 = 64 already exceeds the 60-minute cap
+					shift = 6
+				}
+				delayMinutes := min(1<<uint(shift), 60)
 				backoffDuration := time.Duration(delayMinutes) * time.Minute
 
-				// Check if enough time has passed since last check
-				if lastRetry, exists := retryBackoff[job.ID]; exists {
-					if time.Since(lastRetry) < backoffDuration {
-						// Not yet time to retry
-						continue
-					}
+				// Space out retries using the persisted failure time (completed_at)
+				// rather than an in-memory map. The map approach never worked: a job
+				// leaves the 'failed' state the moment it is requeued, so its entry
+				// was wiped every cycle and the backoff never took effect. Using the
+				// stored timestamp also makes backoff survive master restarts.
+				if job.CompletedAt != nil && time.Since(*job.CompletedAt) < backoffDuration {
+					// Not yet time to retry
+					continue
 				}
-
-				// Update last retry time
-				retryBackoff[job.ID] = time.Now()
 
 				// Reset job to pending with incremented retry count
 				updated, err := c.db.ResetJobToPending(job.ID, true, "failed", "", job.StartedAt)
@@ -502,21 +503,6 @@ func (c *Coordinator) monitorFailedJobs() {
 					"max_retries", job.MaxRetries,
 					"backoff_minutes", delayMinutes,
 					"error", job.ErrorMessage)
-			}
-
-			// Clean up backoff map for jobs that are no longer failed
-			// to prevent memory growth
-			for jobID := range retryBackoff {
-				found := false
-				for _, job := range failedJobs {
-					if job.ID == jobID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					delete(retryBackoff, jobID)
-				}
 			}
 
 			c.server.RefreshQueueDepth()

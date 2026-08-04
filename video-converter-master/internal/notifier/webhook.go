@@ -3,6 +3,7 @@ package notifier
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -81,7 +82,11 @@ func (wn *WebhookNotifier) Notify(event string, job *models.Job) {
 			slog.Error("Failed to deliver webhook", "error", err, "url", wn.webhookURL, "job_id", j.ID)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			// Drain before closing so the underlying connection can be reused.
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			slog.Error("Webhook delivered but received non-success status", "status", resp.StatusCode, "url", wn.webhookURL, "job_id", j.ID)

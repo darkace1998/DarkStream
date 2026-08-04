@@ -19,6 +19,14 @@ func BuildURL(baseURL, endpoint string, query url.Values) (string, error) {
 	}
 
 	resolved := base.ResolveReference(ref)
+	// ResolveReference replaces the entire path when endpoint is an absolute path
+	// (e.g. "/api/status"), which silently drops any path prefix on the base URL
+	// such as a reverse-proxy subpath ("http://host/darkstream"). Re-join the base
+	// prefix so prefixed deployments keep working; the default (no base path) is
+	// unaffected.
+	if strings.HasPrefix(ref.Path, "/") && base.Path != "" && base.Path != "/" {
+		resolved.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(ref.Path, "/")
+	}
 	if query != nil {
 		resolved.RawQuery = query.Encode()
 	}

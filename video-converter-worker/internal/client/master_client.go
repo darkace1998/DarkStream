@@ -391,6 +391,30 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 	}
 }
 
+// httpStatusError signals a non-success HTTP response and carries the status
+// code so retry loops can tell permanent client errors from transient ones.
+type httpStatusError struct {
+	statusCode int
+	body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected status code: %d, body: %s", e.statusCode, e.body)
+}
+
+// isPermanentHTTPError reports whether err represents a 4xx client error that a
+// retry cannot fix. 408 (Request Timeout) and 429 (Too Many Requests) are
+// treated as transient and remain retryable.
+func isPermanentHTTPError(err error) bool {
+	var se *httpStatusError
+	if errors.As(err, &se) {
+		return se.statusCode >= 400 && se.statusCode < 500 &&
+			se.statusCode != http.StatusRequestTimeout &&
+			se.statusCode != http.StatusTooManyRequests
+	}
+	return false
+}
+
 // DownloadSourceVideo downloads the source video file from the master
 func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	// Retry logic with exponential backoff
@@ -413,6 +437,9 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 		}
 
 		slog.Error("Download attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		if isPermanentHTTPError(err) {
+			return fmt.Errorf("download failed with non-retryable error: %w", err)
+		}
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to download video after %d attempts: %w", maxRetries, err)
 		}
@@ -516,6 +543,11 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 		}
 
 		slog.Error("Upload attempt failed", "job_id", jobID, "attempt", attempt+1, "error", err)
+		// Do not re-send a non-idempotent multipart upload after a permanent
+		// client error (e.g. 401/400); it will only fail again identically.
+		if isPermanentHTTPError(err) {
+			return fmt.Errorf("upload failed with non-retryable error: %w", err)
+		}
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("failed to upload video after %d attempts: %w", maxRetries, err)
 		}
@@ -710,9 +742,17 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		// Full download (or resume not supported)
 		totalContentLength = resp.ContentLength
 		startOffset = 0
+	} else if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && startOffset > 0 {
+		// The partial file is stale/too large for a resume. Discard it so the next
+		// retry starts a fresh full download instead of reproducing this 416 every
+		// time and burning the entire retry budget deterministically.
+		if rerr := os.Remove(outputPath); rerr != nil {
+			slog.Warn("Failed to remove stale partial download", "path", outputPath, "error", rerr)
+		}
+		return fmt.Errorf("resume failed with status 416; discarded partial download for a fresh retry")
 	} else {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
 	// Validate Content-Length header
@@ -895,7 +935,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
 	// Parse response

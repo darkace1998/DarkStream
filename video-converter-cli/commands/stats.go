@@ -211,7 +211,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 
 			processing := getIntValueFromAny(jobs["processing"])
 			pending := getIntValueFromAny(jobs["pending"])
-			if processing > 0 {
+			if processing > 0 || pending > 0 {
 				slog.Info(fmt.Sprintf("  ├─ Queue Depth: %d pending, %d processing", pending, processing))
 			}
 		}

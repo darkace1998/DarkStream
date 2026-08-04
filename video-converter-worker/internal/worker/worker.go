@@ -60,6 +60,25 @@ type Worker struct {
 
 // New creates a new Worker instance
 func New(cfg *models.WorkerConfig) (*Worker, error) {
+	// Apply safe defaults for fields that, if left at zero, would crash or stall
+	// the worker. These can arrive as zero from a sparse config file or from a
+	// master that omits them in remote-config mode, so guard here regardless of
+	// source: Concurrency 0 -> no job goroutines ever start; HeartbeatInterval 0
+	// -> time.NewTicker(0) panics; JobCheckInterval 0 -> hot error-retry loop;
+	// FFmpeg.Timeout 0 -> context.WithTimeout fires immediately, failing every job.
+	if cfg.Worker.Concurrency <= 0 {
+		cfg.Worker.Concurrency = 1
+	}
+	if cfg.Worker.HeartbeatInterval <= 0 {
+		cfg.Worker.HeartbeatInterval = 30 * time.Second
+	}
+	if cfg.Worker.JobCheckInterval <= 0 {
+		cfg.Worker.JobCheckInterval = 5 * time.Second
+	}
+	if cfg.FFmpeg.Timeout <= 0 {
+		cfg.FFmpeg.Timeout = time.Hour
+	}
+
 	vulkanDetector := converter.NewVulkanDetector(cfg.Vulkan.PreferredDevice)
 
 	ffmpegConverter := converter.NewFFmpegConverter(

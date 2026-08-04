@@ -112,6 +112,11 @@ func Validate(args []string) {
 	}
 
 	printValidationResult(*configPath, *configType, errors)
+	if len(errors) > 0 {
+		// Exit non-zero so scripts/CI can detect an invalid config, matching the
+		// local-validation path above.
+		os.Exit(1)
+	}
 }
 
 func validateConfigLocally(configType string, content []byte) []string {

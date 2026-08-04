@@ -74,6 +74,14 @@ func (s *Scanner) SetOptions(opts ScanOptions) {
 	}
 }
 
+// GetOptions returns a snapshot of the current scanner options taken under the
+// lock, so callers can read option fields without racing SetOptions.
+func (s *Scanner) GetOptions() ScanOptions {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Options
+}
+
 // ScanDirectory walks the directory tree and finds all video files
 func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
 	var jobs []*models.Job

@@ -259,6 +259,13 @@ func (m *Metrics) RecordWorkerHeartbeat(workerID, hostname string) {
 	m.WorkerHeartbeat.WithLabelValues(workerID, hostname).SetToCurrentTime()
 }
 
+// RemoveWorkerHeartbeat deletes the heartbeat time-series for a worker. Without
+// this, every distinct worker_id (e.g. after a restart that regenerates the ID)
+// leaves a permanent series, so the metric grows without bound over time.
+func (m *Metrics) RemoveWorkerHeartbeat(workerID string) {
+	m.WorkerHeartbeat.DeletePartialMatch(prometheus.Labels{"worker_id": workerID})
+}
+
 // RecordAPIRequest records an API request
 func (m *Metrics) RecordAPIRequest(endpoint, method, status string, latencySeconds float64) {
 	m.APIRequests.WithLabelValues(endpoint, method, status).Inc()
