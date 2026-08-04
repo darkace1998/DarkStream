@@ -10,6 +10,18 @@ DarkStream is built using Go. The project uses a Go workspace (`go.work`) encomp
 
 1.  **Go 1.24+**: Ensure you have Go version 1.24 or later installed.
 2.  **Git**: For version control.
+3.  **Vulkan build dependencies (only for `-tags vulkan` builds)**: The worker's GPU
+    detection is behind the `vulkan` build tag and links against
+    `github.com/darkace1998/golang-vulkan-api`. Since v1.2.0 that library compiles
+    Xlib and Wayland surface (WSI) bindings on Linux, so its headers are required in
+    addition to the Vulkan ones:
+
+    ```bash
+    # Debian/Ubuntu
+    sudo apt-get install -y pkg-config libvulkan-dev libx11-dev libwayland-dev
+    ```
+
+    Default builds (`go build ./...`) do not use the tag and need none of these.
 
 ### Cloning and Setup
 
