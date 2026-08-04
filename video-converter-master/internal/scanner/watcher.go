@@ -184,10 +184,18 @@ func (w *Watcher) watchLoop() {
 				return
 			}
 
-			// Create and Write events indicate a file is being added/modified.
-			// We debounce these events to wait for the file to finish writing.
-			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) {
+			switch {
+			case event.Has(fsnotify.Create) || event.Has(fsnotify.Write):
+				// A file/dir is being added or modified. Debounce to wait for the
+				// write to settle before processing.
 				w.debounceEvent(event.Name)
+			case event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename):
+				// The path was deleted or moved away. Drop its watch and any
+				// pending timer so stale watches don't accumulate as directories
+				// are renamed/removed over the watcher's lifetime. When a rename
+				// lands inside the tree, its destination arrives as a separate
+				// Create event and is (re-)watched there.
+				w.handleRemovedPath(event.Name)
 			}
 
 		case err, ok := <-w.watcher.Errors:
@@ -202,6 +210,25 @@ func (w *Watcher) watchLoop() {
 			}
 		}
 	}
+}
+
+// handleRemovedPath stops watching a path that was removed or renamed away and
+// cancels any pending debounce timer for it. Watching a directory that no longer
+// exists is pointless, and a pending timer would only fire a no-op (or, for a
+// renamed file, act on a stale path).
+func (w *Watcher) handleRemovedPath(path string) {
+	// fsnotify may already have dropped the watch when the inode disappeared, in
+	// which case Remove returns an error that is expected and safe to ignore.
+	_ = w.watcher.Remove(path)
+
+	w.pendingMu.Lock()
+	if timer, exists := w.pendingFiles[path]; exists {
+		timer.Stop()
+		delete(w.pendingFiles, path)
+	}
+	w.pendingMu.Unlock()
+
+	slog.Debug("Stopped watching removed or renamed path", "path", path)
 }
 
 // debounceEvent schedules the processing of a file after a delay.

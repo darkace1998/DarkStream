@@ -40,7 +40,7 @@ func displayWorkers(masterURL string, activeOnly bool, format string) {
 	requestURL, err := utils.BuildURL(masterURL, "/api/workers", query)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	req, err := newMasterRequest(http.MethodGet, requestURL, nil, "")

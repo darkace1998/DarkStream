@@ -28,7 +28,7 @@ func Prune(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/jobs/prune", url.Values{"status": []string{*status}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	req, err := newMasterRequest(http.MethodDelete, requestURL, nil, "application/json")

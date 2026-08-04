@@ -27,7 +27,7 @@ func WorkerPause(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/worker/pause", url.Values{"worker_id": []string{*workerID}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {
@@ -67,7 +67,7 @@ func WorkerResume(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/worker/resume", url.Values{"worker_id": []string{*workerID}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {
@@ -107,7 +107,7 @@ func WorkerRemove(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/worker", url.Values{"worker_id": []string{*workerID}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodDelete, requestURL, nil, "application/json")
 	if err != nil {

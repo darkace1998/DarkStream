@@ -116,6 +116,11 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Propagate the worker's context so retry backoff in the client aborts
+	// promptly on shutdown instead of sleeping out its full delay.
+	masterClient.SetContext(ctx)
+	configFetcher.SetContext(ctx)
+
 	// Initialize job semaphore for concurrency control
 	jobSemaphore := make(chan struct{}, cfg.Worker.Concurrency)
 

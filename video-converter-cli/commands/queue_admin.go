@@ -19,7 +19,7 @@ func QueuePause(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/queue/pause", nil)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {
@@ -52,7 +52,7 @@ func QueueResume(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/queue/resume", nil)
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "application/json")
 	if err != nil {

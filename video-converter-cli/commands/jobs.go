@@ -41,7 +41,7 @@ func displayJobs(masterURL, status string, limit int, format string) {
 	requestURL, err := utils.BuildURL(masterURL, "/api/jobs", mapToValues(query))
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 
 	req, err := newMasterRequest(http.MethodGet, requestURL, nil, "")

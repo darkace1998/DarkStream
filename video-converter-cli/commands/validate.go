@@ -62,7 +62,7 @@ func Validate(args []string) {
 	requestURL, err := utils.BuildURL(*masterURL, "/api/validate-config", url.Values{"type": []string{*configType}})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	req, err := newMasterRequest(http.MethodPost, requestURL, bytes.NewReader(configData), "application/yaml")
 	if err != nil {

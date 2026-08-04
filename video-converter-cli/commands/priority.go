@@ -40,7 +40,7 @@ func Priority(args []string) {
 	})
 	if err != nil {
 		slog.Error("Error building request URL", "error", err)
-		return
+		os.Exit(1)
 	}
 	// We are sending data in query params, so content type application/json is incorrect since body is nil.
 	req, err := newMasterRequest(http.MethodPost, requestURL, nil, "")

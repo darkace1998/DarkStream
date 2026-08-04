@@ -2,8 +2,13 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -129,5 +134,68 @@ func TestThrottledReader(t *testing.T) {
 
 	if elapsed > maxExpected {
 		t.Logf("Warning: Read took longer than expected: %v (expected max %v)", elapsed, maxExpected)
+	}
+}
+
+// TestSleepWithContext verifies retry backoff aborts promptly when the context
+// is cancelled and otherwise waits the full delay.
+func TestSleepWithContext(t *testing.T) {
+	// Cancelled context returns its error well before the delay elapses.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := sleepWithContext(ctx, 5*time.Second); err == nil {
+		t.Error("expected error from cancelled context, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("expected prompt return on cancellation, waited %v", elapsed)
+	}
+
+	// A live context waits the full (short) delay and returns nil.
+	start = time.Now()
+	if err := sleepWithContext(context.Background(), 20*time.Millisecond); err != nil {
+		t.Errorf("expected nil after full delay, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Errorf("returned too early: %v", elapsed)
+	}
+
+	// A nil context falls back to a plain sleep and returns nil.
+	if err := sleepWithContext(nil, time.Millisecond); err != nil {
+		t.Errorf("expected nil for nil context, got %v", err)
+	}
+}
+
+// TestDownloadWithoutContentLength verifies a chunked response with no
+// Content-Length is accepted and written fully (previously rejected outright).
+func TestDownloadWithoutContentLength(t *testing.T) {
+	payload := bytes.Repeat([]byte("videodata"), 1000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("test server ResponseWriter is not a Flusher")
+			return
+		}
+		// Flushing mid-write forces a chunked response with no Content-Length.
+		w.WriteHeader(http.StatusOK)
+		half := len(payload) / 2
+		_, _ = w.Write(payload[:half])
+		fl.Flush()
+		_, _ = w.Write(payload[half:])
+	}))
+	defer srv.Close()
+
+	mc := New(srv.URL, "worker-test", false)
+	out := filepath.Join(t.TempDir(), "src.mp4")
+	if err := mc.DownloadSourceVideo("job1", out); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("downloaded %d bytes, want %d", len(got), len(payload))
 	}
 }

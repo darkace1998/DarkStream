@@ -3,6 +3,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,25 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
 )
+
+// sleepWithContext waits for d to elapse or ctx to be cancelled, whichever comes
+// first. It returns nil if the full delay elapsed, or ctx.Err() if the context
+// was cancelled. A nil ctx falls back to a plain sleep (used where no context is
+// wired, e.g. startup or tests).
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // ErrNoJobsAvailable is returned when no jobs are available from the master
 var ErrNoJobsAvailable = errors.New("no jobs available")
@@ -40,6 +60,14 @@ type MasterClient struct {
 	bandwidthLimit       int64 // bytes per second (0 = unlimited)
 	enableResumeDownload bool
 	apiKey               string
+	ctx                  context.Context // optional; used to abort retry backoff on shutdown
+}
+
+// SetContext wires a context whose cancellation aborts inter-attempt retry
+// backoff, so an in-flight download/upload does not keep sleeping after the
+// worker begins shutting down.
+func (mc *MasterClient) SetContext(ctx context.Context) {
+	mc.ctx = ctx
 }
 
 // New creates a new MasterClient instance
@@ -428,7 +456,9 @@ func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("download cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.downloadSourceVideoAttempt(jobID, outputPath, nil)
@@ -534,7 +564,9 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.uploadConvertedVideoAttempt(jobID, filePath, nil)
@@ -624,7 +656,9 @@ func (mc *MasterClient) DownloadSourceVideoWithProgress(jobID, outputPath string
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying download", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("download cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.downloadSourceVideoAttempt(jobID, outputPath, progressCallback)
@@ -653,7 +687,9 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 			shiftAmount := attempt - 1
 			delay := baseDelay * time.Duration(1<<shiftAmount)
 			slog.Info("Retrying upload", "job_id", jobID, "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			if err := sleepWithContext(mc.ctx, delay); err != nil {
+				return fmt.Errorf("upload cancelled during retry backoff: %w", err)
+			}
 		}
 
 		err := mc.uploadConvertedVideoAttempt(jobID, filePath, progressCallback)
@@ -733,14 +769,19 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 
 	// Handle response status
 	var totalContentLength int64
+	knownLength := false
 	//nolint:gocritic // if-else chain with compound condition not suitable for switch
 	if resp.StatusCode == http.StatusPartialContent && startOffset > 0 {
 		// Resume successful
-		totalContentLength = startOffset + resp.ContentLength
+		if resp.ContentLength >= 0 {
+			totalContentLength = startOffset + resp.ContentLength
+			knownLength = true
+		}
 		slog.Info("Resuming download", "job_id", jobID, "offset", startOffset, "remaining", resp.ContentLength)
 	} else if resp.StatusCode == http.StatusOK {
 		// Full download (or resume not supported)
 		totalContentLength = resp.ContentLength
+		knownLength = resp.ContentLength >= 0
 		startOffset = 0
 	} else if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && startOffset > 0 {
 		// The partial file is stale/too large for a resume. Discard it so the next
@@ -755,9 +796,14 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
-	// Validate Content-Length header
-	if totalContentLength <= 0 {
-		return fmt.Errorf("Content-Length header missing or invalid")
+	// A missing Content-Length (e.g. a chunked / streamed response, ContentLength
+	// == -1) is acceptable: stream the body to EOF and skip the exact-size check
+	// below. Integrity is still enforced downstream via the source checksum when
+	// the job provides one.
+	if !knownLength {
+		totalContentLength = 0
+		slog.Warn("Download response has no Content-Length; size validation will rely on checksum",
+			"job_id", jobID, "status", resp.StatusCode)
 	}
 
 	// Open/create output file
@@ -810,9 +856,9 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 		return fmt.Errorf("failed to write video file: %w", err)
 	}
 
-	// Validate total file size
+	// Validate total file size, but only when the server declared one.
 	finalSize := startOffset + bytesWritten
-	if finalSize != totalContentLength {
+	if knownLength && finalSize != totalContentLength {
 		if !mc.enableResumeDownload {
 			rerr := os.Remove(outputPath)
 			if rerr != nil {

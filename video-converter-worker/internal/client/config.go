@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,7 +35,16 @@ type ConfigFetcher struct {
 	refreshInterval time.Duration
 	maxRetries      int
 	retryBaseDelay  time.Duration
-	fetching        bool // Prevents concurrent fetch operations
+	fetching        bool            // Prevents concurrent fetch operations
+	ctx             context.Context // optional; aborts retry backoff on shutdown
+}
+
+// SetContext wires a context whose cancellation aborts inter-attempt retry
+// backoff during runtime config refreshes.
+func (cf *ConfigFetcher) SetContext(ctx context.Context) {
+	cf.mu.Lock()
+	defer cf.mu.Unlock()
+	cf.ctx = ctx
 }
 
 // NewConfigFetcher creates a new ConfigFetcher instance with default settings
@@ -148,7 +158,12 @@ func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
 		if attempt > 0 {
 			delay := cf.retryBaseDelay * time.Duration(1<<(attempt-1))
 			slog.Info("Retrying config fetch", "attempt", attempt+1, "delay", delay)
-			time.Sleep(delay)
+			cf.mu.RLock()
+			ctx := cf.ctx
+			cf.mu.RUnlock()
+			if serr := sleepWithContext(ctx, delay); serr != nil {
+				return nil, fmt.Errorf("config fetch cancelled during retry backoff: %w", serr)
+			}
 		}
 
 		cfg, err := cf.fetchConfigAttempt()
