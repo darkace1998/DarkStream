@@ -69,10 +69,15 @@ so it was realigned:
   client's shutdown-propagation context), **nonamedreturns**, and
   **embeddedstructfieldcheck**.
 
-Remaining findings from the still-enabled bug-finding linters (errcheck, gocritic,
-goconst, dupl, nilnil, complexity, etc.) are pre-existing and tracked by the
-todo.md item "Re-enable and address findings from currently disabled linters";
-they are intentionally not addressed here.
+Two further linters are disabled because they flag idiomatic patterns rather than
+defects in this codebase:
+
+- **forbidigo**: the CLI's primary job is writing results to stdout, so
+  `fmt.Print*` calls are intentional, not stray debug output.
+- **nilnil**: the scanner and tracker use the idiomatic `(nil, nil)` return to
+  mean "skipped / not found, no error"; callers branch on the nil value.
+
+All other findings from the enabled linters have been addressed in code.
 
 ## Adjusted Settings
 

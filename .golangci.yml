@@ -37,6 +37,8 @@ linters:
     - contextcheck       # Don't flag non-inherited contexts (fresh contexts are intentional)
     - nonamedreturns     # Allow named returns
     - embeddedstructfieldcheck # Don't enforce embedded-field ordering
+    - forbidigo          # Allow fmt.Print* — the CLI's job is to print to stdout
+    - nilnil             # Allow the idiomatic (nil, nil) "skip / not found" return
   settings:
     cyclop:
       max-complexity: 20
