@@ -17,11 +17,11 @@ import (
 func Prune(args []string) {
 	fs := flag.NewFlagSet("prune", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
-	status := fs.String("status", "all", "Status of jobs to prune: completed, failed, all (default)")
+	status := fs.String("status", "all", "Status of jobs to prune: completed, failed, cancelled, all (default)")
 	_ = fs.Parse(args)
 
-	if *status != "completed" && *status != "failed" && *status != "all" {
-		slog.Error("Invalid status parameter. Must be 'completed', 'failed', or 'all'")
+	if *status != "completed" && *status != "failed" && *status != "cancelled" && *status != "all" {
+		slog.Error("Invalid status parameter. Must be 'completed', 'failed', 'cancelled', or 'all'")
 		os.Exit(1)
 	}
 

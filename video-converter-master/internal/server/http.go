@@ -43,6 +43,8 @@ const (
 	statusProcessing = "processing"
 	statusPending    = "pending"
 	statusFailed     = "failed"
+	statusCompleted  = "completed"
+	statusCancelled  = "cancelled"
 	statusHealthy    = "healthy"
 	statusUnhealthy  = "unhealthy"
 	statusDegraded   = "degraded"
@@ -1807,9 +1809,9 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 	if status != "" {
 		// Validate status value
-		validStatuses := []string{statusPending, statusProcessing, "completed", statusFailed}
+		validStatuses := []string{statusPending, statusProcessing, statusCompleted, statusFailed, statusCancelled}
 		if !slices.Contains(validStatuses, status) {
-			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed", http.StatusBadRequest)
+			http.Error(w, "Invalid status parameter. Valid values: pending, processing, completed, failed, cancelled", http.StatusBadRequest)
 			return
 		}
 		jobs, err = s.db.GetJobsByStatus(status, limit)
@@ -2088,7 +2090,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PruneJobs handles deleting jobs with specified status (completed, failed, or all)
+// PruneJobs handles deleting jobs with specified status (completed, failed, cancelled, or all)
 func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2096,8 +2098,8 @@ func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
-	if status != "completed" && status != "failed" && status != "all" {
-		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', or 'all'", http.StatusBadRequest)
+	if status != statusCompleted && status != statusFailed && status != statusCancelled && status != "all" {
+		http.Error(w, "Invalid status parameter. Must be 'completed', 'failed', 'cancelled', or 'all'", http.StatusBadRequest)
 		return
 	}
 
@@ -2516,6 +2518,15 @@ func (s *Server) UpdateWorkerCounts(total, active int) {
 // RecordJobRetry increments the retry counter metric.
 func (s *Server) RecordJobRetry(reason string) {
 	s.metrics.RecordJobRetry(reason)
+}
+
+// RemoveWorkerMetrics drops a worker's per-worker metric series. Called when a
+// worker goes offline so restarted/churned workers (which get fresh IDs) do not
+// leak Prometheus cardinality for the process lifetime.
+func (s *Server) RemoveWorkerMetrics(workerID string) {
+	if s.metrics != nil {
+		s.metrics.RemoveWorkerHeartbeat(workerID)
+	}
 }
 
 type metricsResponseWriter struct {

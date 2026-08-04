@@ -726,7 +726,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         async function pruneJobs(status) {
             let msg = 'Are you sure you want to clear ' + status + ' jobs?';
             if (status === 'all') {
-                msg = 'Are you sure you want to clear all completed and failed jobs?';
+                msg = 'Are you sure you want to clear all completed, failed and cancelled jobs?';
             }
             if (!confirm(msg)) return;
 

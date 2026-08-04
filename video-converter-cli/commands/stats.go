@@ -152,7 +152,7 @@ func printStatsTable(stats map[string]any, workerData map[string]any, detailed b
 		slog.Info("📋 Job Status:")
 
 		// Print in order
-		statusOrder := []string{"completed", "processing", "pending", "failed"}
+		statusOrder := []string{"completed", "processing", "pending", "failed", "cancelled"}
 		for _, status := range statusOrder {
 			if count, ok := jobs[status]; ok {
 				icon := getStatusIcon(status)

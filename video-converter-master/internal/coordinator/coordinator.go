@@ -332,6 +332,11 @@ func (c *Coordinator) monitorWorkerHealth() {
 						slog.Error("Failed to mark worker as offline",
 							"worker_id", worker.WorkerID, "error", err)
 					}
+
+					// Drop its heartbeat metric series so a worker that never
+					// returns (e.g. restarted with a new ID) does not leak metric
+					// cardinality. If it reconnects, its next heartbeat recreates it.
+					c.server.RemoveWorkerMetrics(worker.WorkerID)
 				}
 			}
 

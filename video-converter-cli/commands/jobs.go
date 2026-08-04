@@ -19,7 +19,7 @@ import (
 func Jobs(args []string) {
 	fs := flag.NewFlagSet("jobs", flag.ExitOnError)
 	masterURL := fs.String("master-url", "http://localhost:8080", "Master server URL")
-	status := fs.String("status", "", "Filter by status: pending, processing, completed, failed")
+	status := fs.String("status", "", "Filter by status: pending, processing, completed, failed, cancelled")
 	limit := fs.Int("limit", 50, "Maximum number of jobs to display")
 	format := fs.String("format", "table", "Output format: table, json, csv")
 	watch := fs.Bool("watch", false, "Watch for updates (refresh every 5 seconds)")
@@ -259,6 +259,8 @@ func getStatusIcon(status string) string {
 		return "✅"
 	case "failed":
 		return "❌"
+	case "cancelled":
+		return "🚫"
 	default:
 		return "❓"
 	}
