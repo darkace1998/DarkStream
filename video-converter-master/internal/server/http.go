@@ -947,6 +947,13 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 			"pending_jobs":    pendingJobs,
 			"processing_jobs": processingJobsData,
 			"recent_jobs":     recentJobViews,
+			// Libraries, capabilities and the configuration version travel on the
+			// same stream. They were fetched once when the page loaded, so job
+			// counts, a worker reconnecting, or a setting changed in another tab
+			// left those panels stale until a manual reload.
+			"libraries":      s.libraryOverview(),
+			"capabilities":   s.capabilityOverview(),
+			"config_version": s.configMgr.Get().Version,
 		}
 
 		eventData, err := json.Marshal(response)
@@ -3002,6 +3009,92 @@ func findFormFile(reader *multipart.Reader, field string) (*multipart.Part, erro
 		if cerr := part.Close(); cerr != nil {
 			slog.Debug("Failed to close skipped multipart part", "error", cerr)
 		}
+	}
+}
+
+// libraryOverview describes the configured libraries for the live dashboard.
+func (s *Server) libraryOverview() []map[string]any {
+	libs := s.configMgr.GetLibraries()
+
+	counts, err := s.db.CountJobsByLibrary()
+	if err != nil {
+		slog.Debug("Failed to count jobs per library for stream", "error", err)
+		counts = map[string]int{}
+	}
+
+	out := make([]map[string]any, 0, len(libs))
+	for _, lib := range libs {
+		out = append(out, map[string]any{
+			"id":             lib.ID,
+			"name":           lib.Name,
+			"path":           lib.Path,
+			"output_path":    lib.OutputPath,
+			"enabled":        lib.Enabled,
+			"replace_source": lib.ReplaceSource,
+			"job_count":      counts[lib.ID],
+			"conversion":     lib.Conversion,
+			"effective":      s.configMgr.EffectiveConversionSettings(lib.ID),
+		})
+	}
+	return out
+}
+
+// backendState summarises one acceleration backend across all online workers,
+// so the dashboard can grey out an option nothing can actually run.
+type backendState struct {
+	Supported bool   `json:"supported"`
+	Workers   int    `json:"workers"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// capabilityOverview reports each online worker's verified encoders, plus which
+// backends are usable anywhere, so the dashboard can keep both the capabilities
+// table and the acceleration pickers current.
+func (s *Server) capabilityOverview() map[string]any {
+	workers, err := s.db.GetActiveWorkers(int(workerOnlineThreshold.Seconds()))
+	if err != nil {
+		slog.Debug("Failed to list workers for capability stream", "error", err)
+		return map[string]any{"workers": []any{}, "backends": map[string]any{}}
+	}
+
+	backends := map[string]*backendState{
+		converterBackendNone:   {},
+		converterBackendVulkan: {},
+	}
+
+	reporting := 0
+	entries := make([]map[string]any, 0, len(workers))
+	for _, wk := range workers {
+		if wk.Capabilities == nil {
+			continue
+		}
+		reporting++
+		entries = append(entries, map[string]any{
+			"worker_id": wk.WorkerID,
+			"gpu":       wk.Capabilities.GPU,
+			"ffmpeg":    wk.Capabilities.FFmpegVersion,
+			"backends":  wk.Capabilities.Backends,
+		})
+
+		for _, b := range wk.Capabilities.Backends {
+			state, ok := backends[b.Name]
+			if !ok {
+				state = &backendState{}
+				backends[b.Name] = state
+			}
+			if b.Working {
+				state.Supported = true
+				state.Workers++
+			} else if state.Detail == "" && b.Detail != "" {
+				state.Detail = b.Detail
+			}
+		}
+	}
+
+	return map[string]any{
+		"workers":  entries,
+		"backends": backends,
+		"known":    reporting > 0,
 	}
 }
 

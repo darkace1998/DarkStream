@@ -96,6 +96,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .stat-value { font-size: 2em; color: #00d9ff; font-weight: bold; }
         .stat-label { color: #888; font-size: 0.85em; }
         .no-data { color: #888; font-style: italic; padding: 30px; text-align: center; }
+        .config-notice { background: #4a3a1a; border: 1px solid #7a5a2a; color: #ffd479; border-radius: 4px; padding: 12px 15px; margin-bottom: 15px; }
         .loading { display: none; }
         .loading.show { display: inline-block; margin-left: 10px; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -194,8 +195,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="libraries-tbody">
-                        <tr><td colspan="7">Loading&hellip;</td></tr>
+                    <tbody id="libraries-tbody" data-empty="No libraries configured yet. Click &quot;Add Library&quot; to get started." data-cols="7">
+                        <tr data-placeholder="1"><td colspan="7" class="no-data">Loading&hellip;</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -492,8 +493,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Detail</th>
                         </tr>
                     </thead>
-                    <tbody id="capabilities-tbody">
-                        <tr><td colspan="7">Loading&hellip;</td></tr>
+                    <tbody id="capabilities-tbody" data-empty="No worker has reported capabilities yet. They are probed when a worker starts." data-cols="7">
+                        <tr data-placeholder="1"><td colspan="7" class="no-data">Loading&hellip;</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -622,6 +623,11 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
         <!-- Configuration Tab -->
         <div id="config" class="tab-content">
+            <div id="config-changed-notice" class="config-notice" style="display:none">
+                These settings were changed elsewhere. Reload the page to see the current values —
+                saving this form now would overwrite them.
+                <button class="btn btn-sm" onclick="location.reload()">Reload</button>
+            </div>
             <form id="configForm">
                 <div class="grid">
                     <div class="card">
@@ -1168,6 +1174,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             return q ? path + '?' + q : path;
         }
 
+        // Kept for the manual Refresh button; the live stream supplies the same
+        // data every couple of seconds.
         async function loadCapabilities() {
             const tbody = document.getElementById('capabilities-tbody');
             if (!tbody) { return; }
@@ -1175,7 +1183,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 const res = await fetch(apiUrlWithKey('/api/workers'));
                 if (!res.ok) { throw new Error('HTTP ' + res.status); }
                 const data = await res.json();
-                renderCapabilities(data.workers || []);
+                renderCapabilities((data.workers || []).map(function(w) {
+                    const c = w.capabilities || {};
+                    return {worker_id: w.worker_id, gpu: c.gpu, backends: c.backends || []};
+                }));
             } catch (err) {
                 tbody.textContent = '';
                 const tr = document.createElement('tr');
@@ -1189,11 +1200,12 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
         function renderCapabilities(workers) {
             const tbody = document.getElementById('capabilities-tbody');
+            if (!tbody) { return; }
             tbody.textContent = '';
 
             let rows = 0;
             workers.forEach(function(wk) {
-                const caps = wk.capabilities;
+                const caps = wk.capabilities || wk;
                 if (!caps || !caps.backends) { return; }
 
                 caps.backends.forEach(function(b, idx) {
@@ -1256,16 +1268,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
         // Mark hardware-acceleration options that no online worker can actually
         // run, so a backend that would fail every job cannot be selected blind.
-        async function annotateHWAccelOptions() {
-            let data;
-            try {
-                const res = await fetch(apiUrlWithKey('/api/capabilities'));
-                if (!res.ok) { return; }
-                data = await res.json();
-            } catch (err) {
-                return;
-            }
-            if (!data || !data.capabilities_known) { return; }
+        // Driven by the live stream, so a worker coming or going is reflected
+        // without reloading the page.
+        function applyBackendSupport(data) {
+            if (!data || !data.known || !data.backends) { return; }
 
             ['hwaccel', 'lib-hwaccel'].forEach(function(id) {
                 const sel = document.getElementById(id);
@@ -1283,6 +1289,22 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     }
                 });
             });
+        }
+
+        // The Configuration form is not overwritten while it is on screen —
+        // replacing fields under someone who is editing them would be hostile —
+        // so a change made elsewhere is surfaced as a notice instead.
+        let knownConfigVersion = null;
+        function noteConfigVersion(version) {
+            if (knownConfigVersion === null) {
+                knownConfigVersion = version;
+                return;
+            }
+            if (version === knownConfigVersion) { return; }
+
+            knownConfigVersion = version;
+            const banner = document.getElementById('config-changed-notice');
+            if (banner) { banner.style.display = 'block'; }
         }
 
         // ---- Library management ----
@@ -1315,75 +1337,178 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
         }
 
-        function renderLibraries(libs) {
-            const tbody = document.getElementById('libraries-tbody');
-            tbody.textContent = '';
+        // Rows are keyed and reused across refreshes. Wiping a tbody and
+        // rebuilding it destroys whatever the user is interacting with: a
+        // browser only fires click when mousedown and mouseup land on the
+        // same element, so buttons silently did nothing whenever a refresh
+        // landed mid-click. Reusing rows also preserves text selection.
+        function syncRows(tbody, items, build, keyOf) {
+            const getKey = keyOf || function(item) { return item.id; };
 
-            if (!libs.length) {
-                const tr = document.createElement('tr');
-                const td = document.createElement('td');
-                td.colSpan = 7;
-                td.textContent = 'No libraries configured yet. Click "Add Library" to get started.';
-                tr.appendChild(td);
-                tbody.appendChild(tr);
-                return;
-            }
+            // Drop any "nothing here" placeholder before syncing; it is
+            // re-added below if the table really is empty.
+            Array.from(tbody.querySelectorAll('tr[data-placeholder]')).forEach(function(tr) {
+                tr.remove();
+            });
 
-            libs.forEach(function(lib) {
-                const tr = document.createElement('tr');
+            const existing = new Map();
+            Array.from(tbody.children).forEach(function(tr) {
+                const key = tr.getAttribute('data-key');
+                if (key) { existing.set(key, tr); }
+            });
 
-                const tdName = document.createElement('td');
-                tdName.textContent = lib.name;
-                const tdPath = document.createElement('td');
-                tdPath.textContent = lib.path;
-                const tdOut = document.createElement('td');
-                tdOut.textContent = lib.replace_source ? '(replaces source)' : (lib.output_path || '-');
-                // Show the settings this library actually converts with, marking
-                // it when they differ from the global configuration.
-                const tdSettings = document.createElement('td');
-                const eff = lib.effective || {};
-                const summary = [eff.resolution, eff.codec, eff.bitrate, eff.output_format]
-                    .filter(Boolean).join(' / ');
-                tdSettings.textContent = summary || '-';
-                if (lib.conversion && Object.keys(lib.conversion).length) {
-                    tdSettings.appendChild(document.createTextNode(' '));
-                    const badgeOverride = document.createElement('span');
-                    badgeOverride.className = 'badge badge-completed';
-                    badgeOverride.textContent = 'custom';
-                    badgeOverride.title = 'Overrides: ' + Object.keys(lib.conversion).join(', ');
-                    tdSettings.appendChild(badgeOverride);
+            const seen = new Set();
+            let previous = null;
+
+            items.forEach(function(item) {
+                const key = String(getKey(item));
+                seen.add(key);
+
+                let tr = existing.get(key);
+                if (!tr) {
+                    tr = document.createElement('tr');
+                    tr.setAttribute('data-key', key);
+                    build(tr, item, true);
+                } else {
+                    build(tr, item, false);
                 }
 
-                const tdJobs = document.createElement('td');
-                tdJobs.textContent = lib.job_count;
-
-                const tdStatus = document.createElement('td');
-                const badge = document.createElement('span');
-                badge.className = 'badge ' + (lib.enabled ? 'badge-success' : 'badge-failed');
-                badge.textContent = lib.enabled ? 'Enabled' : 'Disabled';
-                tdStatus.appendChild(badge);
-
-                const tdActions = document.createElement('td');
-                const btnEdit = document.createElement('button');
-                btnEdit.className = 'btn btn-sm';
-                btnEdit.textContent = 'Edit';
-                btnEdit.onclick = function() { editLibrary(lib); };
-                const btnToggle = document.createElement('button');
-                btnToggle.className = 'btn btn-sm';
-                btnToggle.textContent = lib.enabled ? 'Disable' : 'Enable';
-                btnToggle.onclick = function() {
-                    lib.enabled = !lib.enabled;
-                    saveLibrary(lib);
-                };
-                const btnDel = document.createElement('button');
-                btnDel.className = 'btn btn-danger btn-sm';
-                btnDel.textContent = 'Remove';
-                btnDel.onclick = function() { deleteLibrary(lib); };
-                tdActions.append(btnEdit, btnToggle, btnDel);
-
-                tr.append(tdName, tdPath, tdOut, tdSettings, tdJobs, tdStatus, tdActions);
-                tbody.appendChild(tr);
+                // Keep display order without detaching a row that is
+                // already in the right place.
+                const shouldFollow = previous ? previous.nextSibling : tbody.firstChild;
+                if (tr !== shouldFollow) {
+                    tbody.insertBefore(tr, shouldFollow);
+                }
+                previous = tr;
             });
+
+            existing.forEach(function(tr, key) {
+                if (!seen.has(key)) { tr.remove(); }
+            });
+
+            if (!tbody.children.length) {
+                const tr = document.createElement('tr');
+                tr.setAttribute('data-placeholder', '1');
+                const td = document.createElement('td');
+                td.colSpan = parseInt(tbody.getAttribute('data-cols'), 10) || 1;
+                td.className = 'no-data';
+                td.textContent = tbody.getAttribute('data-empty') || '';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderLibraries(libs) {
+            const tbody = document.getElementById('libraries-tbody');
+            if (!tbody) { return; }
+
+            syncRows(tbody, libs, function(tr, lib, isNew) {
+                const outputText = lib.replace_source ? '(replaces source)' : (lib.output_path || '-');
+                const eff = lib.effective || {};
+                const summary = [eff.resolution, eff.codec, eff.bitrate, eff.output_format]
+                    .filter(Boolean).join(' / ') || '-';
+                const overrides = lib.conversion ? Object.keys(lib.conversion) : [];
+
+                if (isNew) {
+                    const tdName = document.createElement('td');
+                    tdName.className = 'lib-name';
+                    tdName.textContent = lib.name;
+
+                    const tdPath = document.createElement('td');
+                    tdPath.className = 'lib-path truncate';
+                    tdPath.title = lib.path;
+                    tdPath.textContent = lib.path;
+
+                    const tdOut = document.createElement('td');
+                    tdOut.className = 'lib-output truncate';
+                    tdOut.title = outputText;
+                    tdOut.textContent = outputText;
+
+                    const tdSettings = document.createElement('td');
+                    tdSettings.className = 'lib-settings';
+                    renderLibrarySettings(tdSettings, summary, overrides);
+
+                    const tdJobs = document.createElement('td');
+                    tdJobs.className = 'lib-jobs';
+                    tdJobs.textContent = lib.job_count;
+
+                    const tdStatus = document.createElement('td');
+                    const badge = document.createElement('span');
+                    badge.className = 'badge ' + (lib.enabled ? 'badge-success' : 'badge-failed') + ' lib-status';
+                    badge.textContent = lib.enabled ? 'Enabled' : 'Disabled';
+                    tdStatus.appendChild(badge);
+
+                    const tdActions = document.createElement('td');
+                    tdActions.className = 'lib-actions';
+                    buildLibraryActions(tdActions, lib);
+
+                    tr.append(tdName, tdPath, tdOut, tdSettings, tdJobs, tdStatus, tdActions);
+                    return;
+                }
+
+                // Refresh the values that move, leaving the buttons alone so a
+                // click is never landing on a node about to be replaced.
+                const setText = function(sel, value) {
+                    const el = tr.querySelector(sel);
+                    if (el && el.textContent !== value) { el.textContent = value; }
+                };
+                setText('.lib-name', lib.name);
+                setText('.lib-path', lib.path);
+                setText('.lib-output', outputText);
+                setText('.lib-jobs', String(lib.job_count));
+
+                const settingsCell = tr.querySelector('.lib-settings');
+                if (settingsCell && settingsCell.getAttribute('data-summary') !== summary + '|' + overrides.join(',')) {
+                    settingsCell.textContent = '';
+                    renderLibrarySettings(settingsCell, summary, overrides);
+                }
+
+                const badge = tr.querySelector('.lib-status');
+                const statusText = lib.enabled ? 'Enabled' : 'Disabled';
+                if (badge && badge.textContent !== statusText) {
+                    badge.textContent = statusText;
+                    badge.className = 'badge ' + (lib.enabled ? 'badge-success' : 'badge-failed') + ' lib-status';
+
+                    // Enable and Disable swap, so that cell is rebuilt on change.
+                    const cell = tr.querySelector('.lib-actions');
+                    if (cell) { cell.textContent = ''; buildLibraryActions(cell, lib); }
+                }
+            });
+        }
+
+        function renderLibrarySettings(cell, summary, overrides) {
+            cell.setAttribute('data-summary', summary + '|' + overrides.join(','));
+            cell.appendChild(document.createTextNode(summary));
+
+            if (overrides.length) {
+                cell.appendChild(document.createTextNode(' '));
+                const badge = document.createElement('span');
+                badge.className = 'badge badge-completed';
+                badge.textContent = 'custom';
+                badge.title = 'Overrides: ' + overrides.join(', ');
+                cell.appendChild(badge);
+            }
+        }
+
+        function buildLibraryActions(cell, lib) {
+            const btnEdit = document.createElement('button');
+            btnEdit.className = 'btn btn-sm';
+            btnEdit.textContent = 'Edit';
+            btnEdit.onclick = function() { editLibrary(lib); };
+
+            const btnToggle = document.createElement('button');
+            btnToggle.className = 'btn btn-sm';
+            btnToggle.textContent = lib.enabled ? 'Disable' : 'Enable';
+            btnToggle.onclick = function() {
+                saveLibrary(Object.assign({}, lib, {enabled: !lib.enabled}));
+            };
+
+            const btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-danger btn-sm';
+            btnDel.textContent = 'Remove';
+            btnDel.onclick = function() { deleteLibrary(lib); };
+
+            cell.append(btnEdit, document.createTextNode(' '), btnToggle, document.createTextNode(' '), btnDel);
         }
 
         function newLibrary() {
@@ -1471,9 +1596,9 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 }
                 status.textContent = 'Saved.';
                 cancelLibraryEdit();
-                loadLibraries();
+                // First paint before the stream's first tick arrives.
+        loadLibraries();
         loadCapabilities();
-        annotateHWAccelOptions();
             } catch (err) {
                 status.textContent = 'Error: ' + err.message;
             }
@@ -1632,61 +1757,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         }
                     }
 
-                    function syncRows(tbody, items, build, keyOf) {
-                        const getKey = keyOf || function(item) { return item.id; };
-
-                        // Drop any "nothing here" placeholder before syncing; it is
-                        // re-added below if the table really is empty.
-                        Array.from(tbody.querySelectorAll('tr[data-placeholder]')).forEach(function(tr) {
-                            tr.remove();
-                        });
-
-                        const existing = new Map();
-                        Array.from(tbody.children).forEach(function(tr) {
-                            const key = tr.getAttribute('data-key');
-                            if (key) { existing.set(key, tr); }
-                        });
-
-                        const seen = new Set();
-                        let previous = null;
-
-                        items.forEach(function(item) {
-                            const key = String(getKey(item));
-                            seen.add(key);
-
-                            let tr = existing.get(key);
-                            if (!tr) {
-                                tr = document.createElement('tr');
-                                tr.setAttribute('data-key', key);
-                                build(tr, item, true);
-                            } else {
-                                build(tr, item, false);
-                            }
-
-                            // Keep display order without detaching a row that is
-                            // already in the right place.
-                            const shouldFollow = previous ? previous.nextSibling : tbody.firstChild;
-                            if (tr !== shouldFollow) {
-                                tbody.insertBefore(tr, shouldFollow);
-                            }
-                            previous = tr;
-                        });
-
-                        existing.forEach(function(tr, key) {
-                            if (!seen.has(key)) { tr.remove(); }
-                        });
-
-                        if (!tbody.children.length) {
-                            const tr = document.createElement('tr');
-                            tr.setAttribute('data-placeholder', '1');
-                            const td = document.createElement('td');
-                            td.colSpan = parseInt(tbody.getAttribute('data-cols'), 10) || 1;
-                            td.className = 'no-data';
-                            td.textContent = tbody.getAttribute('data-empty') || '';
-                            tr.appendChild(td);
-                            tbody.appendChild(tr);
-                        }
-                    }
 
                     // Update pending jobs table
                     if (data.pending_jobs && document.getElementById('pending-jobs')) {
@@ -1879,6 +1949,20 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                                 workerCell.textContent = job.worker_id || '';
                             }
                         });
+                    }
+
+                    // Libraries, capabilities and the acceleration pickers used to
+                    // be fetched only when the page loaded, so job counts and a
+                    // worker reconnecting never showed until a manual reload.
+                    if (data.libraries) {
+                        renderLibraries(data.libraries);
+                    }
+                    if (data.capabilities) {
+                        renderCapabilities(data.capabilities.workers || []);
+                        applyBackendSupport(data.capabilities);
+                    }
+                    if (data.config_version !== undefined) {
+                        noteConfigVersion(data.config_version);
                     }
 
                     // Update workers table
