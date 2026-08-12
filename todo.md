@@ -3,7 +3,8 @@
 ## Current Status
 - [x] All four modules (`common`, `cli`, `worker`, `master`) build cleanly on Go 1.25.0.
 - [x] End-to-end pipeline verified locally on 2026-08-12: scan → queue → dispatch → download → ffmpeg convert → upload → complete.
-- [ ] **The Go test suite does NOT fully pass** — 4 failures in the master module. See "Verified findings" #2. (The previous claim that the suite passed as of 2026-04-13 only holds when the host TZ is UTC.)
+- [x] The Go test suite passes in every timezone tested (UTC, +02:00, -04:00, +12:00). It previously
+      passed only under `TZ=UTC`; see finding #2.
 
 ---
 
@@ -30,24 +31,34 @@ After the fix all jobs complete and checksums match. This is the only source cha
 - [ ] Surface a clearer error: a server-side rejection currently surfaces as `io: read/write on closed pipe`
       from the copy goroutine rather than the actual HTTP status, which sent debugging down the wrong path.
 
-### 2. [ ] Timezone bug: stale-job detection and worker liveness are wrong off UTC — **HIGH**
-`video-converter-master/internal/db/tracker.go:1005` (and sibling queries)
+### 2. [x] Timezone bug: stale-job detection and worker liveness were wrong off UTC — **FIXED**
+`video-converter-master/internal/db/tracker.go`
 
-Timestamps are written with Go's `time.Now()` (host-local) but compared against SQLite's
-`datetime('now')`, which is **always UTC**. The two are offset by the host's UTC offset.
+Timestamps are written by Go with the host's UTC offset, but were compared against SQLite's
+`datetime('now')`, which is always UTC. The two differ by exactly the host offset.
 
-Reproduced: these 4 tests fail at UTC+02:00 and pass under `TZ=UTC`:
-`TestGetActiveWorkers`, `TestGetJobHistory`, `TestGetStaleProcessingJobs`, `TestHealthCheck_StaleJobs`.
+**Seen in production, not just in tests.** Seven jobs sat in `processing` with no worker running them
+— orphans from workers killed mid-job — and the queue stopped moving entirely, which looked like
+"Vulkan isn't being used any more" because nothing was converting at all. At UTC+02:00 the stale check
+compared a stored `2026-08-12 20:26:25+02:00` against a cutoff of `18:38:53`, so jobs abandoned 42
+minutes earlier counted as fresh and would not have been reclaimed for roughly two extra hours. West
+of UTC the same arithmetic runs the other way and kills healthy in-flight jobs early.
 
-This is not just a test bug — in production:
-- **East of UTC** (e.g. CEST): stale jobs are detected `offset` hours *late*, so crashed-worker jobs
-  stay stuck in `processing` for hours; dead workers keep counting as active.
-- **West of UTC** (e.g. US): jobs are declared stale `offset` hours *early*, so **healthy in-flight
-  jobs get killed and requeued**, wasting work and potentially looping.
+Fixed by comparing absolute instants rather than strings: `strftime('%s', …)` resolves both sides to
+epoch seconds, and SQLite parses the stored offset correctly, so no data migration was needed. Applies
+to stale-job detection, worker liveness and job history.
 
-- [ ] Store all timestamps in UTC (`time.Now().UTC()`) and/or use `strftime('%Y-%m-%d %H:%M:%S','now')`
-      consistently; never mix Go-generated and SQLite-generated time in one column.
-- [ ] Add a CI job that runs the suite under a non-UTC `TZ` to keep this from regressing.
+A second, subtler bug surfaced while fixing it: `strftime` returns **TEXT**, and SQLite sorts every
+TEXT value above every INTEGER, so `strftime(...) >= <number>` is unconditionally true. The first
+attempt therefore "passed" by treating every worker as online. Both sides are now cast to integers.
+
+Verified by running the suite in four zones — `UTC`, `Europe/Berlin` (+02:00), `America/New_York`
+(-04:00) and `Pacific/Auckland` (+12:00) — all green, where previously four tests only passed under
+`TZ=UTC`.
+
+- [ ] Add a CI job that runs the suite under a non-UTC `TZ` so this cannot regress.
+- [ ] Reclaim a dead worker's jobs from its heartbeat rather than waiting out the two-hour job
+      timeout: when a worker is known offline its in-flight jobs are already lost.
 
 ### 3. [x] Hardcoded 1 MB minimum output size failed all short/small videos — **FIXED**
 `video-converter-worker/internal/converter/ffmpeg.go`

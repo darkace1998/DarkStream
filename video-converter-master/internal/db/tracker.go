@@ -820,7 +820,8 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
 			COALESCE(library_id, '')
 		FROM jobs
-		WHERE created_at BETWEEN ? AND ?
+		WHERE CAST(strftime('%s', created_at) AS INTEGER)
+			BETWEEN CAST(strftime('%s', ?) AS INTEGER) AND CAST(strftime('%s', ?) AS INTEGER)
 		ORDER BY created_at DESC
 	`
 
@@ -984,7 +985,8 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 			COALESCE(status, 'online') as status,
 			COALESCE(capabilities, '')
 		FROM workers
-		WHERE last_heartbeat >= datetime('now', '-' || ? || ' seconds')
+		WHERE CAST(strftime('%s', last_heartbeat) AS INTEGER) >=
+			CAST(strftime('%s', 'now') AS INTEGER) - ?
 		ORDER BY last_heartbeat DESC
 	`
 
@@ -1167,7 +1169,8 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 		FROM jobs
 		WHERE status = 'processing'
 		AND started_at IS NOT NULL
-		AND started_at <= datetime('now', '-' || ? || ' seconds')
+		AND CAST(strftime('%s', started_at) AS INTEGER) <=
+			CAST(strftime('%s', 'now') AS INTEGER) - ?
 		ORDER BY started_at ASC
 	`
 
