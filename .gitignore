@@ -44,3 +44,10 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Local all-in-one runtime directory: media, cache, database and logs live here.
+# The launcher and its configs are kept; everything it generates is not.
+/run/*
+!/run/all-in-one.sh
+!/run/master.yaml
+!/run/worker.yaml

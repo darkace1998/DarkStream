@@ -1,0 +1,44 @@
+worker:
+  id: worker-local-1
+  concurrency: 2
+  master_url: http://localhost:8080
+  api_key: ""
+  heartbeat_interval: 10s
+  job_check_interval: 3s
+  job_timeout: 30m
+  max_api_requests_per_min: 120
+  max_backoff_interval: 10s
+  initial_backoff_interval: 1s
+
+storage:
+  mount_path: /root/projects/Darkstream/run
+  download_timeout: 10m
+  upload_timeout: 10m
+  cache_path: /root/projects/Darkstream/run/cache
+  chunk_size: 10485760
+  max_cache_size: 10737418240
+  cache_cleanup_age: 24h
+  bandwidth_limit: 0
+  enable_resume_download: true
+
+ffmpeg:
+  path: /opt/ffmpeg9/bin/ffmpeg
+  use_vulkan: false
+  timeout: 30m
+
+vulkan:
+  preferred_device: auto
+  enable_validation: false
+
+conversion:
+  target_resolution: 1280x720
+  codec: h264
+  bitrate: 2M
+  preset: ultrafast
+  audio_codec: aac
+  audio_bitrate: 128k
+
+logging:
+  level: info
+  format: text
+  output_path: /root/projects/Darkstream/run/worker.log
