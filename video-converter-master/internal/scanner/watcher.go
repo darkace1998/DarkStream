@@ -159,7 +159,7 @@ func (w *Watcher) addDirRecursive(dir string, currentDepth int, processFiles boo
 			continue
 		}
 		if processFiles {
-			job, procErr := w.scanner.ProcessFile(fullPath)
+			job, procErr := w.scanner.ProcessFileSettled(fullPath)
 			if procErr != nil || job == nil {
 				continue
 			}
@@ -291,8 +291,10 @@ func (w *Watcher) processEventDebounced(path string) {
 		return
 	}
 
-	// It's a file, process it
-	job, err := w.scanner.ProcessFile(path)
+	// It's a file, process it. ProcessFileSettled confirms the file has stopped
+	// changing before hashing it, so a copy still in progress is left for a later
+	// event rather than being recorded with a partial checksum.
+	job, err := w.scanner.ProcessFileSettled(path)
 	if err != nil {
 		slog.Warn("Failed to process new file from watcher", "path", path, "error", err)
 		return

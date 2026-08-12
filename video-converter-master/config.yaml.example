@@ -43,6 +43,14 @@ conversion:
   audio_codec: aac
   audio_bitrate: 128k
   output_format: mp4  # mp4, mkv, webm, avi
+  # Hardware-acceleration backend used by workers: none (CPU), nvenc, or vulkan.
+  # This is served to workers via /api/config and is editable in the Web UI, so
+  # changing it takes effect on the next job without restarting a worker.
+  # NOTE: these conversion settings are only a FIRST-RUN SEED. Once
+  # <database.path dir>/active-config.json exists it is authoritative and edits
+  # here are ignored. Change settings in the Web UI, or delete that file to
+  # re-seed from this file.
+  hwaccel: none
 
 # Worker defaults - these settings are provided to workers when they connect
 # Workers can be started with just: worker -url http://master:8080

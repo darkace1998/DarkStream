@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,14 +24,21 @@ import (
 
 // Coordinator orchestrates the master server components
 type Coordinator struct {
-	config   *models.MasterConfig
-	db       *db.Tracker
-	scanner  *scanner.Scanner
-	server   *server.Server
-	notifier *notifier.WebhookNotifier
-	ctx      context.Context //nolint:containedctx
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	config    *models.MasterConfig
+	db        *db.Tracker
+	configMgr *config.Manager
+	server    *server.Server
+	notifier  *notifier.WebhookNotifier
+	ctx       context.Context //nolint:containedctx
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+
+	// scanMu guards the per-library scanners and watchers, which are rebuilt
+	// whenever libraries are changed in the Web UI.
+	scanMu        sync.Mutex
+	scanners      []*scanner.Scanner
+	watchers      []*scanner.Watcher
+	watchersReady bool
 }
 
 // New creates a new coordinator instance
@@ -55,9 +62,9 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		return nil, fmt.Errorf("failed to create database tracker: %w", err)
 	}
 
-	// Initialize configuration manager
-	// Config file will be stored next to the database file
-	configPath := filepath.Join(filepath.Dir(cfg.Database.Path), "active-config.json")
+	// Initialize configuration manager. The store lives next to the database by
+	// default and is the authoritative source of configuration from now on.
+	configPath := config.ActiveConfigPath(cfg.Database.Path)
 
 	// Convert YAML worker defaults to config.WorkerConfig format
 	var workerDefaults *config.WorkerConfig
@@ -81,74 +88,56 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		}
 	}
 
-	configMgr, err := config.NewManager(configPath, &cfg.Conversion, workerDefaults)
+	configMgr, err := config.NewManagerWithSeed(configPath, config.Seed{
+		Conversion: &cfg.Conversion,
+		Worker:     workerDefaults,
+		Scanner:    scannerSeedFromYAML(cfg),
+		Libraries:  librarySeedFromYAML(cfg),
+		Notify:     notifySeedFromYAML(cfg),
+	})
 	if err != nil {
 		_ = tracker.Close()
 		return nil, fmt.Errorf("failed to create config manager: %w", err)
 	}
-
-	scn := scanner.New(
-		cfg.Scanner.RootPath,
-		cfg.Scanner.VideoExtensions,
-		cfg.Scanner.OutputBase,
-	)
-
-	// Configure scanner options from config
-	scn.SetOptions(scanner.ScanOptions{
-		MaxDepth:         cfg.Scanner.RecursiveDepth,
-		MinFileSize:      cfg.Scanner.MinFileSize,
-		MaxFileSize:      cfg.Scanner.MaxFileSize,
-		SkipHiddenFiles:  cfg.Scanner.SkipHiddenFiles,
-		SkipHiddenDirs:   cfg.Scanner.SkipHiddenDirs,
-		ReplaceSource:    cfg.Scanner.ReplaceSource,
-		DetectDuplicates: cfg.Scanner.DetectDuplicates,
-		DuplicateChecker: tracker.HasJobWithSourceChecksum,
-	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := server.New(tracker, addr, configMgr, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Coordinator{
-		config:   cfg,
-		db:       tracker,
-		scanner:  scn,
-		server:   srv,
-		notifier: notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
-		ctx:      ctx,
-		cancel:   cancel,
-	}, nil
+	c := &Coordinator{
+		config:    cfg,
+		db:        tracker,
+		configMgr: configMgr,
+		server:    srv,
+		notifier:  notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+
+	c.rebuildScanners()
+
+	// Rebuild scanning whenever libraries or scan settings change in the Web UI
+	// so operators never have to restart the master to pick up a new library.
+	configMgr.OnChange(func() {
+		c.rebuildScanners()
+		c.restartWatchers()
+		srv.SetAllowedDirs(c.allowedDirs())
+		go func() { _, _ = c.scanAllLibraries(true) }()
+	})
+	srv.SetAllowedDirs(c.allowedDirs())
+
+	return c, nil
 }
 
 // Start starts the coordinator and all its components
 func (c *Coordinator) Start() error {
-	// Scan for all video files
-	slog.Info("Scanning for video files", "path", c.config.Scanner.RootPath)
-	jobs, err := c.scanner.ScanDirectory()
-	if err != nil {
-		return fmt.Errorf("failed to scan directory: %w", err)
-	}
-
-	slog.Info("Found video files", "count", len(jobs))
-
-	// Insert jobs into database
-	failedInsertions := 0
-	for _, job := range jobs {
-		err := c.db.CreateJob(job)
-		if err != nil {
-			if errors.Is(err, db.ErrJobAlreadyExists) {
-				// Job already exists, skip silently
-				continue
-			}
-			slog.Error("Failed to create job", "job_id", job.ID, "error", err)
-			failedInsertions++
-		}
+	// Scan every configured library. A failure in one library is logged and
+	// skipped rather than preventing the master from starting.
+	if _, err := c.scanAllLibraries(false); err != nil {
+		slog.Warn("One or more libraries failed to scan at startup", "error", err)
 	}
 	c.server.RefreshQueueDepth()
-	if failedInsertions > 0 {
-		slog.Warn("Some jobs failed to be inserted", "failed_count", failedInsertions, "total_jobs", len(jobs))
-	}
 
 	// Start monitoring worker health
 	c.wg.Add(1)
@@ -158,28 +147,19 @@ func (c *Coordinator) Start() error {
 	c.wg.Add(1)
 	go c.monitorFailedJobs()
 
-	// Start periodic scanning for new files if scan_interval is configured
-	if c.config.Scanner.ScanInterval > 0 {
+	// Start periodic scanning for new files if a scan interval is configured
+	if c.configMgr.GetScannerConfig().ScanInterval > 0 {
 		c.wg.Add(1)
 		go c.periodicScan()
 	} else {
 		slog.Info("Periodic scanning disabled (scan_interval not set)")
 	}
 
-	// Start file system watcher if enabled
-	if c.config.Scanner.EnableWatch {
-		watcher, err := scanner.NewWatcher(c.scanner)
-		if err != nil {
-			slog.Error("Failed to initialize file system watcher", "error", err)
-		} else {
-			if err := watcher.Start(); err != nil {
-				slog.Error("Failed to start file system watcher", "error", err)
-			} else {
-				c.wg.Add(1)
-				go c.listenWatcherEvents(watcher)
-			}
-		}
-	}
+	// Start a file system watcher per library if enabled
+	c.scanMu.Lock()
+	c.watchersReady = true
+	c.scanMu.Unlock()
+	c.startWatchers()
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -208,7 +188,7 @@ func (c *Coordinator) Start() error {
 	}()
 
 	// Wait for HTTP server to exit
-	err = <-serverErrChan
+	err := <-serverErrChan
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("HTTP server exited unexpectedly", "error", err)
 		c.cancel()
@@ -222,6 +202,7 @@ func (c *Coordinator) Start() error {
 	// Wait for monitoring goroutines to stop before closing database
 	slog.Info("Waiting for monitoring goroutines to stop")
 	c.wg.Wait()
+	c.closeWatchers()
 
 	// Drain in-flight webhook deliveries from the coordinator's notifier.
 	notifierCtx, notifierCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -242,10 +223,258 @@ func (c *Coordinator) Start() error {
 	return err
 }
 
+// librarySeedFromYAML converts a legacy single-root scanner block into one
+// library, so an existing deployment keeps scanning the same tree after
+// upgrading to multi-library support. Returns nil when no root is configured.
+func librarySeedFromYAML(cfg *models.MasterConfig) []config.Library {
+	root := strings.TrimSpace(cfg.Scanner.RootPath)
+	if root == "" {
+		return nil
+	}
+
+	return []config.Library{{
+		ID:            "default",
+		Name:          "Default",
+		Path:          root,
+		OutputPath:    cfg.Scanner.OutputBase,
+		Enabled:       true,
+		ReplaceSource: cfg.Scanner.ReplaceSource,
+	}}
+}
+
+// scannerSeedFromYAML converts the legacy scanner block into the shared scan
+// settings. Returns nil when the block is empty so built-in defaults apply.
+func scannerSeedFromYAML(cfg *models.MasterConfig) *config.ScannerConfig {
+	if len(cfg.Scanner.VideoExtensions) == 0 && cfg.Scanner.ScanInterval == 0 {
+		return nil
+	}
+
+	seed := config.DefaultScannerConfig()
+	if len(cfg.Scanner.VideoExtensions) > 0 {
+		seed.VideoExtensions = cfg.Scanner.VideoExtensions
+	}
+	seed.RecursiveDepth = cfg.Scanner.RecursiveDepth
+	seed.ScanInterval = int(cfg.Scanner.ScanInterval.Seconds())
+	seed.MinFileSize = cfg.Scanner.MinFileSize
+	seed.MaxFileSize = cfg.Scanner.MaxFileSize
+	seed.SkipHiddenFiles = cfg.Scanner.SkipHiddenFiles
+	seed.SkipHiddenDirs = cfg.Scanner.SkipHiddenDirs
+	seed.DetectDuplicates = cfg.Scanner.DetectDuplicates
+	seed.EnableWatch = cfg.Scanner.EnableWatch
+	return &seed
+}
+
+// notifySeedFromYAML converts the legacy notifications block.
+func notifySeedFromYAML(cfg *models.MasterConfig) *config.NotifyConfig {
+	if cfg.Notifications.WebhookURL == "" {
+		return nil
+	}
+	return &config.NotifyConfig{
+		WebhookURL: cfg.Notifications.WebhookURL,
+		Events:     cfg.Notifications.Events,
+	}
+}
+
+// rebuildScanners recreates one scanner per enabled library from the current
+// web configuration. Existing watchers are closed first; new ones are started
+// by startWatchers.
+func (c *Coordinator) rebuildScanners() {
+	libs := c.configMgr.GetEnabledLibraries()
+	scanCfg := c.configMgr.GetScannerConfig()
+
+	scanners := make([]*scanner.Scanner, 0, len(libs))
+	for _, lib := range libs {
+		exts := scanCfg.VideoExtensions
+		if len(lib.VideoExtensions) > 0 {
+			exts = lib.VideoExtensions
+		}
+
+		outputBase := lib.OutputPath
+		if lib.ReplaceSource {
+			// ReplaceSource writes over the source tree, so the output base is
+			// the library itself.
+			outputBase = lib.Path
+		}
+
+		scn := scanner.New(lib.Path, exts, outputBase)
+		scn.LibraryID = lib.ID
+		scn.LibraryName = lib.Name
+		// Name converted files after the format this library actually produces,
+		// otherwise a library set to mkv would still emit ".mp4" paths.
+		scn.OutputExt = "." + c.configMgr.EffectiveConversionSettings(lib.ID).OutputFormat
+
+		depth := scanCfg.RecursiveDepth
+		if lib.RecursiveDepth != nil {
+			depth = *lib.RecursiveDepth
+		}
+
+		scn.SetOptions(scanner.ScanOptions{
+			MaxDepth:         depth,
+			MinFileAge:       time.Duration(scanCfg.MinFileAge) * time.Second,
+			MinFileSize:      scanCfg.MinFileSize,
+			MaxFileSize:      scanCfg.MaxFileSize,
+			SkipHiddenFiles:  scanCfg.SkipHiddenFiles,
+			SkipHiddenDirs:   scanCfg.SkipHiddenDirs,
+			ReplaceSource:    lib.ReplaceSource,
+			DetectDuplicates: scanCfg.DetectDuplicates,
+			DuplicateChecker: c.db.HasJobWithSourceChecksum,
+		})
+
+		scanners = append(scanners, scn)
+	}
+
+	c.scanMu.Lock()
+	c.scanners = scanners
+	c.scanMu.Unlock()
+
+	slog.Info("Library scanners rebuilt", "libraries", len(scanners))
+}
+
+// currentScanners returns a snapshot of the active scanners.
+func (c *Coordinator) currentScanners() []*scanner.Scanner {
+	c.scanMu.Lock()
+	defer c.scanMu.Unlock()
+
+	out := make([]*scanner.Scanner, len(c.scanners))
+	copy(out, c.scanners)
+	return out
+}
+
+// allowedDirs returns every directory the master is permitted to read from or
+// write to, derived from the configured libraries. Without this, uploads for a
+// newly added library would be rejected by path validation.
+func (c *Coordinator) allowedDirs() []string {
+	libs := c.configMgr.GetLibraries()
+	dirs := make([]string, 0, len(libs)*2)
+	for _, lib := range libs {
+		if lib.Path != "" {
+			dirs = append(dirs, lib.Path)
+		}
+		if lib.OutputPath != "" {
+			dirs = append(dirs, lib.OutputPath)
+		}
+	}
+	return dirs
+}
+
+// scanAllLibraries scans every enabled library and inserts the jobs it finds.
+// When quiet is true, routine "no new files" outcomes are logged at debug level.
+func (c *Coordinator) scanAllLibraries(quiet bool) (newJobs int, err error) {
+	scanners := c.currentScanners()
+	if len(scanners) == 0 {
+		if !quiet {
+			slog.Warn("No libraries configured; add one in the Web UI to start converting")
+		}
+		return 0, nil
+	}
+
+	totalFound := 0
+	for _, scn := range scanners {
+		jobs, scanErr := scn.ScanDirectory()
+		if scanErr != nil {
+			// One bad library (e.g. an unmounted share) must not stop the others.
+			slog.Error("Library scan failed",
+				"library", scn.LibraryName, "path", scn.RootPath, "error", scanErr)
+			err = scanErr
+			continue
+		}
+		totalFound += len(jobs)
+
+		for _, job := range jobs {
+			createErr := c.db.CreateJob(job)
+			switch {
+			case createErr == nil:
+				newJobs++
+			case errors.Is(createErr, db.ErrJobAlreadyExists):
+				// Already queued or converted; nothing to do.
+			default:
+				slog.Error("Failed to create job",
+					"job_id", job.ID, "library", scn.LibraryName, "error", createErr)
+			}
+		}
+	}
+
+	if newJobs > 0 {
+		slog.Info("Library scan complete",
+			"new_jobs", newJobs, "files_seen", totalFound, "libraries", len(scanners))
+		c.server.RefreshQueueDepth()
+	} else if !quiet {
+		slog.Info("Library scan complete", "new_jobs", 0, "files_seen", totalFound,
+			"libraries", len(scanners))
+	}
+
+	return newJobs, err
+}
+
+// closeWatchers stops every running watcher. Each watcher is removed from the
+// slice under the lock before being closed, so it is closed exactly once even if
+// a rebuild and a shutdown race.
+func (c *Coordinator) closeWatchers() {
+	c.scanMu.Lock()
+	watchers := c.watchers
+	c.watchers = nil
+	c.scanMu.Unlock()
+
+	for _, w := range watchers {
+		if err := w.Close(); err != nil {
+			slog.Warn("Failed to close watcher", "error", err)
+		}
+	}
+}
+
+// restartWatchers swaps the running watchers for a fresh set matching the
+// current libraries. Without this, a library added in the Web UI would only be
+// picked up by the periodic scan and never watched live.
+func (c *Coordinator) restartWatchers() {
+	c.closeWatchers()
+	c.startWatchers()
+}
+
+// startWatchers starts a filesystem watcher for each library when watching is
+// enabled. Watchers are replaced wholesale when libraries change.
+func (c *Coordinator) startWatchers() {
+	if !c.configMgr.GetScannerConfig().EnableWatch {
+		return
+	}
+
+	// Watchers are only started once the coordinator is running; before that,
+	// Start() is responsible for the initial set.
+	c.scanMu.Lock()
+	ready := c.watchersReady
+	c.scanMu.Unlock()
+	if !ready {
+		return
+	}
+
+	for _, scn := range c.currentScanners() {
+		w, err := scanner.NewWatcher(scn)
+		if err != nil {
+			slog.Error("Failed to initialize watcher",
+				"library", scn.LibraryName, "error", err)
+			continue
+		}
+		if err := w.Start(); err != nil {
+			slog.Error("Failed to start watcher",
+				"library", scn.LibraryName, "error", err)
+			_ = w.Close()
+			continue
+		}
+
+		c.scanMu.Lock()
+		c.watchers = append(c.watchers, w)
+		c.scanMu.Unlock()
+
+		c.wg.Add(1)
+		go c.listenWatcherEvents(w)
+		slog.Info("Watching library", "library", scn.LibraryName, "path", scn.RootPath)
+	}
+}
+
 // listenWatcherEvents processes jobs emitted by the file system watcher
 func (c *Coordinator) listenWatcherEvents(w *scanner.Watcher) {
 	defer c.wg.Done()
-	defer func() { _ = w.Close() }()
+	// The watcher is closed by closeWatchers, not here: Watcher.Close() closes
+	// its channels, so closing it twice would panic.
 
 	for {
 		select {
@@ -522,10 +751,12 @@ func (c *Coordinator) monitorFailedJobs() {
 // periodicScan periodically scans for new video files
 func (c *Coordinator) periodicScan() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(c.config.Scanner.ScanInterval)
+
+	interval := time.Duration(c.configMgr.GetScannerConfig().ScanInterval) * time.Second
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	slog.Info("Periodic scanner started", "interval", c.config.Scanner.ScanInterval)
+	slog.Info("Periodic scanner started", "interval", interval)
 
 	for {
 		select {
@@ -533,29 +764,9 @@ func (c *Coordinator) periodicScan() {
 			slog.Info("Periodic scanner stopping")
 			return
 		case <-ticker.C:
-			slog.Debug("Scanning for new video files")
-			jobs, err := c.scanner.ScanDirectory()
-			if err != nil {
-				slog.Error("Periodic scan failed", "error", err)
-				continue
-			}
-
-			newJobsCount := 0
-			for _, job := range jobs {
-				err := c.db.CreateJob(job)
-				if err == nil {
-					newJobsCount++
-				} else if !errors.Is(err, db.ErrJobAlreadyExists) {
-					// Error other than "already exists"
-					slog.Error("Failed to create job during periodic scan", "job_id", job.ID, "error", err)
-				}
-			}
-
-			if newJobsCount > 0 {
-				slog.Info("Found new video files during periodic scan", "new_jobs", newJobsCount, "total_scanned", len(jobs))
-				c.server.RefreshQueueDepth()
-			} else {
-				slog.Debug("No new video files found", "total_scanned", len(jobs))
+			slog.Debug("Scanning libraries for new video files")
+			if _, err := c.scanAllLibraries(true); err != nil {
+				slog.Error("Periodic scan reported errors", "error", err)
 			}
 		}
 	}

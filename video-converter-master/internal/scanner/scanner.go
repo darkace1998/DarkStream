@@ -18,8 +18,18 @@ import (
 	"github.com/darkace1998/video-converter-common/utils"
 )
 
+// DefaultMinFileAge is how long a file must have gone unmodified before it is
+// considered finished being written. Anything shorter risks hashing a partial
+// upload, which produces a checksum the finished file can never match.
+const DefaultMinFileAge = 10 * time.Second
+
 // ScanOptions configures scanner behavior
 type ScanOptions struct {
+	// MinFileAge skips files modified more recently than this, so a file still
+	// being copied in is left alone until the writer stops. Zero means
+	// DefaultMinFileAge; negative disables the check entirely.
+	MinFileAge time.Duration
+
 	MaxDepth         int                                 // -1 for unlimited, 0 for root only, >0 for specific depth
 	MinFileSize      int64                               // Minimum file size in bytes (0 = no minimum)
 	MaxFileSize      int64                               // Maximum file size in bytes (0 = no maximum)
@@ -32,6 +42,13 @@ type ScanOptions struct {
 
 // Scanner discovers video files in a directory tree
 type Scanner struct {
+	// LibraryID and LibraryName attribute discovered files to the library that
+	// owns them. Empty when the scanner is not bound to a library.
+	LibraryID   string
+	LibraryName string
+	// OutputExt is the file extension given to converted files, derived from the
+	// output format that applies to this library. Empty defaults to ".mp4".
+	OutputExt       string
 	RootPath        string
 	VideoExtensions map[string]bool
 	OutputBase      string
@@ -62,6 +79,73 @@ func New(rootPath string, extensions []string, outputBase string) *Scanner {
 		},
 		seenHashes: make(map[string]string),
 	}
+}
+
+// outputExtension returns the extension converted files should be given,
+// defaulting to ".mp4" when the library has no explicit output format.
+func (s *Scanner) outputExtension() string {
+	if s.OutputExt == "" {
+		return ".mp4"
+	}
+	if !strings.HasPrefix(s.OutputExt, ".") {
+		return "." + s.OutputExt
+	}
+	return s.OutputExt
+}
+
+// ProcessFileSettled is the entry point used by the filesystem watcher. The
+// watcher has already waited for writes to go quiet, so instead of requiring the
+// file to be a fixed age — which would delay every watched file — it confirms
+// stability directly: if the file changes across a short observation window it is
+// still being written, and the watcher will receive another event for it.
+func (s *Scanner) ProcessFileSettled(fullPath string) (*models.Job, error) {
+	before, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, nil // vanished again; nothing to do
+	}
+
+	time.Sleep(settleObservationWindow)
+
+	after, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, nil
+	}
+
+	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		slog.Debug("File is still being written, leaving it for a later event",
+			"path", fullPath, "size_before", before.Size(), "size_after", after.Size())
+		return nil, nil
+	}
+
+	// Stability is confirmed, so the age heuristic would only add latency.
+	s.mu.Lock()
+	opts := s.Options
+	s.Options.MinFileAge = -1
+	s.mu.Unlock()
+
+	job, err := s.ProcessFile(fullPath)
+
+	s.mu.Lock()
+	s.Options.MinFileAge = opts.MinFileAge
+	s.mu.Unlock()
+
+	return job, err
+}
+
+// settleObservationWindow is how long ProcessFileSettled waits between the two
+// observations it uses to decide whether a file has stopped changing.
+const settleObservationWindow = 750 * time.Millisecond
+
+// effectiveMinFileAge resolves the configured settle time, applying the default
+// when unset.
+func (o ScanOptions) effectiveMinFileAge() time.Duration {
+	if o.MinFileAge == 0 {
+		return DefaultMinFileAge
+	}
+	if o.MinFileAge < 0 {
+		return 0
+	}
+	return o.MinFileAge
 }
 
 // SetOptions configures scanner options
@@ -186,6 +270,18 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		return nil, nil
 	}
 
+	// Skip files that are still being written. A file whose modification time is
+	// only moments old is very likely mid-copy; hashing it now would record the
+	// checksum of a partial file, and every conversion of it would then fail with
+	// a checksum mismatch that no retry could fix.
+	if minAge := opts.effectiveMinFileAge(); minAge > 0 {
+		if age := time.Since(fileInfo.ModTime()); age < minAge {
+			slog.Debug("Skipping file that is still being written",
+				"path", fullPath, "age", age, "min_age", minAge)
+			return nil, nil
+		}
+	}
+
 	// Apply size filters
 	fileSize := fileInfo.Size()
 	if opts.MinFileSize > 0 && fileSize < opts.MinFileSize {
@@ -214,7 +310,7 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 			slog.Warn("Failed to compute relative path", "root", s.RootPath, "path", fullPath, "error", relErr)
 			return nil, relErr
 		}
-		outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+".mp4")
+		outputPath = filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, ext)+s.outputExtension())
 	}
 
 	// Validate paths before creating job
@@ -243,6 +339,7 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 
 	job := &models.Job{
 		ID:             generateJobID(fullPath),
+		LibraryID:      s.LibraryID,
 		SourcePath:     fullPath,
 		OutputPath:     outputPath,
 		Status:         "pending",

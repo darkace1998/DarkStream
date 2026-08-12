@@ -4,6 +4,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -115,10 +116,10 @@ func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, er
 func (t *Tracker) CreateJob(job *models.Job) error {
 	result, err := t.db.Exec(`
 		INSERT OR IGNORE INTO jobs (
-			id, source_path, output_path, status, priority, retry_count,
+			id, library_id, source_path, output_path, status, priority, retry_count,
 			max_retries, created_at, source_checksum
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.SourcePath, job.OutputPath, job.Status, job.Priority,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, job.ID, job.LibraryID, job.SourcePath, job.OutputPath, job.Status, job.Priority,
 		job.RetryCount, job.MaxRetries, job.CreatedAt, job.SourceChecksum)
 	if err != nil {
 		return fmt.Errorf("failed to execute insert: %w", err)
@@ -138,6 +139,112 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 	return nil
 }
 
+// ReplaceJobLog stores a job's execution log, replacing any previous log for
+// that job. Replacing rather than appending keeps a requeued job's history
+// showing the run that actually produced its current state.
+func (t *Tracker) ReplaceJobLog(jobID string, entries []models.JobLogEntry) error {
+	tx, err := t.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin job log transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM job_logs WHERE job_id = ?`, jobID); err != nil {
+		return fmt.Errorf("failed to clear previous job log: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO job_logs (job_id, ts, level, stage, message)
+		VALUES (?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare job log insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, e := range entries {
+		if _, err := stmt.Exec(jobID, e.Timestamp, e.Level, e.Stage, e.Message); err != nil {
+			return fmt.Errorf("failed to insert job log entry: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit job log: %w", err)
+	}
+
+	return nil
+}
+
+// GetJobLog returns a job's execution log in the order it was recorded.
+func (t *Tracker) GetJobLog(jobID string) ([]models.JobLogEntry, error) {
+	rows, err := t.db.Query(`
+		SELECT ts, level, COALESCE(stage, ''), message
+		FROM job_logs
+		WHERE job_id = ?
+		ORDER BY id ASC
+	`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query job log: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	entries := make([]models.JobLogEntry, 0, 32)
+	for rows.Next() {
+		var e models.JobLogEntry
+		if scanErr := rows.Scan(&e.Timestamp, &e.Level, &e.Stage, &e.Message); scanErr != nil {
+			return nil, fmt.Errorf("failed to scan job log entry: %w", scanErr)
+		}
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job log: %w", err)
+	}
+
+	return entries, nil
+}
+
+// DeleteJobLogs removes stored logs for the given jobs, used when jobs are
+// pruned so the log table does not outlive them.
+func (t *Tracker) DeleteJobLogs(jobIDs []string) error {
+	for _, id := range jobIDs {
+		if _, err := t.db.Exec(`DELETE FROM job_logs WHERE job_id = ?`, id); err != nil {
+			return fmt.Errorf("failed to delete job log: %w", err)
+		}
+	}
+	return nil
+}
+
+// CountJobsByLibrary returns the number of jobs per library ID. Jobs created
+// before libraries existed have an empty library ID and are grouped under "".
+func (t *Tracker) CountJobsByLibrary() (map[string]int, error) {
+	rows, err := t.db.Query(`
+		SELECT COALESCE(library_id, ''), COUNT(*)
+		FROM jobs
+		GROUP BY COALESCE(library_id, '')
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count jobs by library: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var libraryID string
+		var count int
+		if scanErr := rows.Scan(&libraryID, &count); scanErr != nil {
+			return nil, fmt.Errorf("failed to scan library count: %w", scanErr)
+		}
+		counts[libraryID] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating library counts: %w", err)
+	}
+
+	return counts, nil
+}
+
 // GetJobByID retrieves a job by its ID
 func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 	var job models.Job
@@ -149,6 +256,7 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
 			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, ''),
 			COALESCE(source_width, 0), COALESCE(source_height, 0),
 			COALESCE(source_video_codec, ''), COALESCE(source_audio_codec, ''),
 			COALESCE(source_bitrate, 0), COALESCE(source_file_size, 0)
@@ -157,7 +265,7 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize,
-		&job.SourceChecksum, &job.OutputChecksum,
+		&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID,
 		&job.SourceWidth, &job.SourceHeight,
 		&job.SourceVideoCodec, &job.SourceAudioCodec,
 		&job.SourceBitrate, &job.SourceFileSize)
@@ -186,14 +294,15 @@ func (t *Tracker) GetNextPendingJob() (*models.Job, error) {
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs WHERE status = 'pending'
 		ORDER BY priority DESC, created_at ASC LIMIT 1
 	`).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 		&startedAt, &completedAt, &job.ErrorMessage,
 		&job.SourceDuration, &job.OutputSize,
-		&job.SourceChecksum, &job.OutputChecksum)
+		&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan job row: %w", err)
@@ -257,7 +366,8 @@ func (t *Tracker) ClaimNextPendingJobs(ctx context.Context, workerID string, lim
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs WHERE status = 'pending'
 		ORDER BY priority DESC, created_at ASC
 		LIMIT ?
@@ -325,7 +435,8 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs WHERE status = 'pending'
 		ORDER BY priority DESC, created_at ASC
 		LIMIT ?
@@ -352,7 +463,7 @@ func (t *Tracker) GetNextPendingJobs(limit int) ([]*models.Job, error) {
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
-			&job.SourceChecksum, &job.OutputChecksum,
+			&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID,
 		)
 		if scanErr != nil {
 			slog.Warn("Failed to scan job row", "error", scanErr)
@@ -456,19 +567,36 @@ func (t *Tracker) DeleteWorker(workerID string) error {
 
 // UpdateWorkerHeartbeat updates worker status in the database
 func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
+	// Capabilities are stored as JSON so the schema does not need a column per
+	// backend. An empty string means the worker did not report any.
+	var capabilitiesJSON string
+	if hb.Capabilities != nil {
+		encoded, encErr := json.Marshal(hb.Capabilities)
+		if encErr != nil {
+			slog.Warn("Failed to encode worker capabilities", "worker_id", hb.WorkerID, "error", encErr)
+		} else {
+			capabilitiesJSON = string(encoded)
+		}
+	}
+
 	_, err := t.db.Exec(`
 		INSERT INTO workers (
 			id, hostname, last_heartbeat, vulkan_available,
-			active_jobs, gpu_name, cpu_usage, memory_usage, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			active_jobs, gpu_name, cpu_usage, memory_usage, status, capabilities
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			last_heartbeat = excluded.last_heartbeat,
 			active_jobs = excluded.active_jobs,
 			cpu_usage = excluded.cpu_usage,
 			memory_usage = excluded.memory_usage,
+			gpu_name = excluded.gpu_name,
+			vulkan_available = excluded.vulkan_available,
+			-- Keep the last known capabilities if this heartbeat carried none.
+			capabilities = CASE WHEN excluded.capabilities = ''
+				THEN workers.capabilities ELSE excluded.capabilities END,
 			status = CASE WHEN workers.status = 'paused' THEN 'paused' ELSE excluded.status END
 	`, hb.WorkerID, hb.Hostname, hb.Timestamp, hb.VulkanAvailable,
-		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage, hb.Status)
+		hb.ActiveJobs, hb.GPU, hb.CPUUsage, hb.MemoryUsage, hb.Status, capabilitiesJSON)
 	if err != nil {
 		return fmt.Errorf("failed to upsert worker heartbeat: %w", err)
 	}
@@ -554,7 +682,8 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	rows, err := t.db.Query(`
 		SELECT id, hostname, last_heartbeat, vulkan_available,
 			active_jobs, gpu_name, cpu_usage, memory_usage,
-			COALESCE(status, 'online') as status
+			COALESCE(status, 'online') as status,
+			COALESCE(capabilities, '')
 		FROM workers
 		ORDER BY last_heartbeat DESC
 	`)
@@ -572,13 +701,25 @@ func (t *Tracker) GetWorkers() ([]*models.WorkerHeartbeat, error) {
 	for rows.Next() {
 		var w models.WorkerHeartbeat
 		var lastHeartbeat sql.NullTime
+		var capabilitiesJSON string
 		scanErr := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
 			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
+			&capabilitiesJSON,
 		)
 		if scanErr != nil {
 			slog.Warn("Failed to scan worker row", "error", scanErr)
 			continue
+		}
+
+		if capabilitiesJSON != "" {
+			var caps models.WorkerCapabilities
+			if decErr := json.Unmarshal([]byte(capabilitiesJSON), &caps); decErr != nil {
+				slog.Warn("Failed to decode worker capabilities",
+					"worker_id", w.WorkerID, "error", decErr)
+			} else {
+				w.Capabilities = &caps
+			}
 		}
 		if lastHeartbeat.Valid {
 			w.Timestamp = lastHeartbeat.Time
@@ -606,7 +747,8 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs WHERE status = ?
 		ORDER BY created_at DESC
 	`
@@ -638,7 +780,7 @@ func (t *Tracker) GetJobsByStatus(status string, limit int) ([]*models.Job, erro
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
-			&job.SourceChecksum, &job.OutputChecksum,
+			&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID,
 		)
 		if scanErr != nil {
 			slog.Warn("Failed to scan job row", "error", scanErr)
@@ -675,7 +817,8 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs
 		WHERE created_at BETWEEN ? AND ?
 		ORDER BY created_at DESC
@@ -708,7 +851,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
-			&job.SourceChecksum, &job.OutputChecksum,
+			&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID,
 		)
 		if scanErr != nil {
 			slog.Warn("Failed to scan job row", "error", scanErr)
@@ -838,7 +981,8 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	query := `
 		SELECT id, hostname, last_heartbeat, vulkan_available,
 			active_jobs, gpu_name, cpu_usage, memory_usage,
-			COALESCE(status, 'online') as status
+			COALESCE(status, 'online') as status,
+			COALESCE(capabilities, '')
 		FROM workers
 		WHERE last_heartbeat >= datetime('now', '-' || ? || ' seconds')
 		ORDER BY last_heartbeat DESC
@@ -859,10 +1003,21 @@ func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.Wor
 	for rows.Next() {
 		var w models.WorkerHeartbeat
 		var lastHeartbeat sql.NullTime
+		var capabilitiesJSON string
 		err := rows.Scan(
 			&w.WorkerID, &w.Hostname, &lastHeartbeat, &w.VulkanAvailable,
 			&w.ActiveJobs, &w.GPU, &w.CPUUsage, &w.MemoryUsage, &w.Status,
+			&capabilitiesJSON,
 		)
+		if err == nil && capabilitiesJSON != "" {
+			var caps models.WorkerCapabilities
+			if decErr := json.Unmarshal([]byte(capabilitiesJSON), &caps); decErr != nil {
+				slog.Warn("Failed to decode worker capabilities",
+					"worker_id", w.WorkerID, "error", decErr)
+			} else {
+				w.Capabilities = &caps
+			}
+		}
 		if err != nil {
 			slog.Warn("Failed to scan worker row", "error", err)
 			continue
@@ -906,6 +1061,15 @@ func (t *Tracker) PruneJobs(status string) (int, error) {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deleted row count: %w", err)
+	}
+
+	// Drop logs belonging to jobs that no longer exist, so the log table cannot
+	// grow without bound as jobs are pruned.
+	if _, cleanupErr := t.db.Exec(`
+		DELETE FROM job_logs
+		WHERE job_id NOT IN (SELECT id FROM jobs)
+	`); cleanupErr != nil {
+		slog.Warn("Failed to clean up logs for pruned jobs", "error", cleanupErr)
 	}
 
 	return int(rowsAffected), nil
@@ -998,7 +1162,8 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs
 		WHERE status = 'processing'
 		AND started_at IS NOT NULL
@@ -1021,7 +1186,8 @@ func (t *Tracker) GetRetryableFailedJobs() ([]*models.Job, error) {
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs
 		WHERE status = 'failed'
 		AND retry_count < max_retries
@@ -1043,7 +1209,8 @@ func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 			COALESCE(worker_id, ''), retry_count, max_retries,
 			started_at, completed_at, COALESCE(error_message, ''),
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
-			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
+			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
+			COALESCE(library_id, '')
 		FROM jobs
 		WHERE worker_id = ? AND status = 'processing'
 		ORDER BY started_at ASC
@@ -1055,6 +1222,41 @@ func (t *Tracker) GetJobsForWorker(workerID string) ([]*models.Job, error) {
 	}
 
 	return t.scanJobsFromRows(rows)
+}
+
+// UpdateJobSourceChecksum replaces a job's recorded source checksum, used when
+// the source file turns out to have changed since it was scanned.
+func (t *Tracker) UpdateJobSourceChecksum(jobID, checksum string) error {
+	_, err := t.db.Exec(`UPDATE jobs SET source_checksum = ? WHERE id = ?`, checksum, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to update source checksum: %w", err)
+	}
+	return nil
+}
+
+// RefreshJobSourceChecksum records a corrected source checksum and returns the
+// job to the queue. The retry counter is reset because the previous failures
+// were caused by the stale checksum rather than by the job itself — otherwise a
+// job poisoned before the checksum could be corrected stays failed forever with
+// its retries already spent.
+func (t *Tracker) RefreshJobSourceChecksum(jobID, checksum string) error {
+	_, err := t.db.Exec(`
+		UPDATE jobs
+		SET source_checksum = ?,
+			status = 'pending',
+			worker_id = '',
+			started_at = NULL,
+			completed_at = NULL,
+			error_message = '',
+			output_size = NULL,
+			output_checksum = '',
+			retry_count = 0
+		WHERE id = ?
+	`, checksum, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to refresh source checksum: %w", err)
+	}
+	return nil
 }
 
 // ResetJobToPending resets a job status to pending for retry.
@@ -1350,8 +1552,20 @@ func (t *Tracker) initSchema() error {
 		gpu_name TEXT,
 		cpu_usage REAL,
 		memory_usage REAL,
-		status TEXT DEFAULT 'online'
+		status TEXT DEFAULT 'online',
+		capabilities TEXT
 	);
+
+	CREATE TABLE IF NOT EXISTS job_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		job_id TEXT NOT NULL,
+		ts TIMESTAMP NOT NULL,
+		level TEXT NOT NULL,
+		stage TEXT,
+		message TEXT NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
 
 	CREATE TABLE IF NOT EXISTS job_progress (
 		job_id TEXT PRIMARY KEY,
@@ -1401,6 +1615,11 @@ func (t *Tracker) initSchema() error {
 	}
 
 	// Add worker status column if it doesn't exist (migration)
+	err = t.migrateWorkerCapabilitiesColumn()
+	if err != nil {
+		return err
+	}
+
 	err = t.migrateWorkerStatusColumn()
 	if err != nil {
 		return fmt.Errorf("failed to migrate worker status column: %w", err)
@@ -1486,6 +1705,29 @@ func (t *Tracker) migrateWorkerStatusColumn() error {
 	return nil
 }
 
+// migrateWorkerCapabilitiesColumn adds the capabilities column to the workers
+// table if it doesn't exist, so existing installations can store probed encoder
+// support without recreating their database.
+func (t *Tracker) migrateWorkerCapabilitiesColumn() error {
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('workers') WHERE name='capabilities'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for capabilities column: %w", err)
+	}
+
+	if columnExists == 0 {
+		slog.Info("Adding capabilities column to workers table")
+		_, err := t.db.Exec(`ALTER TABLE workers ADD COLUMN capabilities TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add capabilities column: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // migratePriorityColumn adds priority column to jobs table if it doesn't exist
 func (t *Tracker) migratePriorityColumn() error {
 	// Check if priority column exists in jobs table
@@ -1528,6 +1770,7 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 		{"source_audio_codec", "TEXT"},
 		{"source_bitrate", sqlTypeInteger},
 		{"source_file_size", sqlTypeInteger},
+		{"library_id", "TEXT"},
 	}
 
 	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
@@ -1600,7 +1843,7 @@ func (t *Tracker) scanJobsFromRows(rows *sql.Rows) ([]*models.Job, error) {
 			&job.WorkerID, &job.RetryCount, &job.MaxRetries,
 			&startedAt, &completedAt, &job.ErrorMessage,
 			&job.SourceDuration, &job.OutputSize,
-			&job.SourceChecksum, &job.OutputChecksum,
+			&job.SourceChecksum, &job.OutputChecksum, &job.LibraryID,
 		)
 		if err != nil {
 			slog.Warn("Failed to scan job row", "error", err)

@@ -229,8 +229,10 @@ func TestGetDefaultWorkerConfig(t *testing.T) {
 	if cfg.LogLevel != constants.LogLevelInfo {
 		t.Errorf("LogLevel = %q, want \"info\"", cfg.LogLevel)
 	}
-	if !cfg.UseVulkan {
-		t.Error("UseVulkan = false, want true")
+	// Hardware encoding is opt-in: an unusable GPU backend fails every job
+	// rather than falling back to CPU, so the default must be off.
+	if cfg.UseVulkan {
+		t.Error("UseVulkan = true, want false")
 	}
 	if !cfg.EnableResumeDownload {
 		t.Error("EnableResumeDownload = false, want true")

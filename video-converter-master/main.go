@@ -14,10 +14,12 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to config file")
+	configPath := flag.String("config", "config.yaml",
+		"Optional YAML file used to seed configuration on first run. "+
+			"DarkStream runs without it; settings are managed in the Web UI.")
 	flag.Parse()
 
-	cfg, err := config.LoadMasterConfig(*configPath)
+	cfg, usedFile, err := config.LoadMasterBootstrap(*configPath)
 	if err != nil {
 		// Use standard log before slog is initialized
 		log.Printf("Failed to load config: %v", err)
@@ -25,6 +27,14 @@ func main() {
 	}
 
 	utils.InitLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath)
+
+	if usedFile {
+		slog.Info("Seeded configuration from YAML file; the Web UI is authoritative from now on",
+			"path", *configPath)
+	} else {
+		slog.Info("Starting without a config file; configure DarkStream in the Web UI",
+			"host", cfg.Server.Host, "port", cfg.Server.Port, "database", cfg.Database.Path)
+	}
 
 	coord, err := coordinator.New(cfg)
 	if err != nil {

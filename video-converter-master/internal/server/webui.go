@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -69,6 +71,18 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .tab.active { color: #00d9ff; border-bottom-color: #00d9ff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8em; line-height: 1.5; }
+        .joblog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 1100; }
+        .joblog-panel { background: #16213e; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); width: min(1100px, 92vw); max-height: 84vh; margin: 6vh auto 0; display: flex; flex-direction: column; overflow: hidden; }
+        .joblog-header { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #2a3a5e; }
+        .joblog-body { flex: 1 1 auto; max-height: none; margin: 14px; user-select: text; }
+        .log-line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-word; }
+        .log-ts { color: #666; flex: 0 0 auto; }
+        .log-stage { color: #7aa2f7; flex: 0 0 70px; }
+        .log-msg { flex: 1 1 auto; }
+        .log-info .log-msg { color: #ddd; }
+        .log-warn .log-msg { color: #ffd479; }
+        .log-error .log-msg { color: #ff9d9d; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: #16213e; border-radius: 8px; padding: 15px; text-align: center; }
         .stat-value { font-size: 2em; color: #00d9ff; font-weight: bold; }
@@ -145,7 +159,164 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             <div class="tab" data-tab="processing">⚙️ Processing</div>
             <div class="tab" data-tab="history">📜 History</div>
             <div class="tab" data-tab="workers">👥 Workers</div>
+            <div class="tab" data-tab="libraries">📚 Libraries</div>
             <div class="tab" data-tab="config">⚙️ Configuration</div>
+        </div>
+
+        <!-- Libraries Tab -->
+        <div id="libraries" class="tab-content">
+            <div class="card">
+                <h2>Video Libraries
+                    <button class="btn btn-sm refresh-btn" onclick="newLibrary()">+ Add Library</button>
+                </h2>
+                <p style="opacity:.75;margin-bottom:12px">
+                    Each library is a folder tree that DarkStream scans for video files.
+                    Add as many as you like &mdash; they all feed the same job queue.
+                    Changes apply immediately; no restart required.
+                </p>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Source Path</th>
+                            <th>Output Path</th>
+                            <th>Settings</th>
+                            <th>Jobs</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="libraries-tbody">
+                        <tr><td colspan="7">Loading&hellip;</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card" id="library-editor" style="display:none">
+                <h2 id="library-editor-title">Add Library</h2>
+                <form id="libraryForm">
+                    <input type="hidden" id="lib-id" />
+                    <div class="grid">
+                        <div>
+                            <div class="form-group">
+                                <label for="lib-name">Name</label>
+                                <input type="text" id="lib-name" placeholder="e.g. Movies" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-path">Source Path (absolute)</label>
+                                <input type="text" id="lib-path" placeholder="/mnt/storage/movies" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-output">Output Path (absolute)</label>
+                                <input type="text" id="lib-output" placeholder="/mnt/storage/converted/movies" />
+                            </div>
+                        </div>
+                        <div>
+                            <div class="form-group">
+                                <label for="lib-extensions">File Extensions (blank = use global)</label>
+                                <input type="text" id="lib-extensions" placeholder=".mp4, .mkv, .avi" />
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-depth">Recursive Depth (blank = use global)</label>
+                                <input type="number" id="lib-depth" placeholder="-1 = unlimited" />
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" id="lib-enabled" checked /> Enabled</label>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="lib-replace" />
+                                    Replace source files (converts in place &mdash; no output path needed)
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <h3 style="margin-top:18px">Conversion Settings</h3>
+                    <p style="opacity:.75;margin-bottom:12px">
+                        Leave a field on &ldquo;Use global&rdquo; (or blank) to inherit the global
+                        Configuration setting. Anything you set here applies only to this library.
+                    </p>
+                    <div class="grid">
+                        <div>
+                            <div class="form-group">
+                                <label for="lib-resolution">Resolution</label>
+                                <select id="lib-resolution">
+                                    <option value="">Use global</option>
+                                    <option value="3840x2160">3840x2160 (4K)</option>
+                                    <option value="2560x1440">2560x1440 (1440p)</option>
+                                    <option value="1920x1080">1920x1080 (1080p)</option>
+                                    <option value="1280x720">1280x720 (720p)</option>
+                                    <option value="854x480">854x480 (480p)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-codec">Video Codec</label>
+                                <select id="lib-codec">
+                                    <option value="">Use global</option>
+                                    <option value="h264">H.264 (AVC)</option>
+                                    <option value="h265">H.265 (HEVC)</option>
+                                    <option value="vp9">VP9</option>
+                                    <option value="av1">AV1</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-bitrate">Video Bitrate</label>
+                                <input type="text" id="lib-bitrate" placeholder="blank = global (e.g. 5M)" />
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-preset">Encoding Preset</label>
+                                <select id="lib-preset">
+                                    <option value="">Use global</option>
+                                    <option value="ultrafast">Ultrafast</option>
+                                    <option value="veryfast">Veryfast</option>
+                                    <option value="fast">Fast</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="slow">Slow</option>
+                                    <option value="veryslow">Veryslow</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="form-group">
+                                <label for="lib-format">Output Format</label>
+                                <select id="lib-format">
+                                    <option value="">Use global</option>
+                                    <option value="mp4">MP4</option>
+                                    <option value="mkv">MKV</option>
+                                    <option value="webm">WebM</option>
+                                    <option value="avi">AVI</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-audio-codec">Audio Codec</label>
+                                <select id="lib-audio-codec">
+                                    <option value="">Use global</option>
+                                    <option value="aac">AAC</option>
+                                    <option value="mp3">MP3</option>
+                                    <option value="opus">Opus</option>
+                                    <option value="vorbis">Vorbis</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-audio-bitrate">Audio Bitrate</label>
+                                <input type="text" id="lib-audio-bitrate" placeholder="blank = global (e.g. 128k)" />
+                            </div>
+                            <div class="form-group">
+                                <label for="lib-hwaccel">Hardware Acceleration</label>
+                                <select id="lib-hwaccel">
+                                    <option value="">Use global</option>
+                                    <option value="none">None (CPU)</option>
+                                    <option value="vulkan">Vulkan</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn">Save Library</button>
+                    <button type="button" class="btn btn-danger" onclick="cancelLibraryEdit()">Cancel</button>
+                    <span id="library-status" style="margin-left:12px"></span>
+                </form>
+            </div>
         </div>
 
         <!-- Queue Tab -->
@@ -235,7 +406,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <thead>
                         <tr>
                             <th>Job ID</th>
-                            <th>Source</th>
+                            <th>Library</th>
+                            <th>File</th>
                             <th>Status</th>
                             <th>Worker</th>
                             <th>Duration</th>
@@ -247,12 +419,14 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{range .RecentJobs}}
                         <tr>
                             <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
-                            <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
+                            <td><span class="badge badge-pending">{{.LibraryName}}</span></td>
+                            <td class="truncate" title="{{.SourcePath}}">{{.RelPath}}</td>
                             <td><span class="badge {{if eq .Status "completed"}}badge-completed{{else if eq .Status "failed"}}badge-failed{{else}}badge-pending{{end}}">{{.Status}}</span></td>
                             <td>{{.WorkerID}}</td>
                             <td>{{if .SourceDuration}}{{printf "%.0f" .SourceDuration}}s{{else}}-{{end}}</td>
                             <td>{{if .CompletedAt}}{{.CompletedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
                             <td>
+                                <button class="btn btn-secondary btn-sm" onclick="openJobLogModal('{{.ID}}')">Log</button>
                                 {{if eq .Status "failed"}}<button class="btn btn-primary btn-sm" onclick="retryJob('{{.ID}}')">Retry</button>{{end}}
                                 {{if or (eq .Status "completed") (eq .Status "failed") (eq .Status "cancelled")}}
                                 <button class="btn btn-secondary btn-sm" onclick="requeueJob('{{.ID}}')">Re-queue</button>
@@ -278,6 +452,32 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 </div>
                 <p style="color: #888; font-size: 0.85em;">Workers will automatically receive their configuration from the master. Use the "Configure" button to set per-worker settings.</p>
             </div>
+            <div class="card" style="margin-top: 20px;">
+                <h2>🧪 Detected Encoding Capabilities
+                    <button class="btn btn-sm refresh-btn" onclick="loadCapabilities()">Refresh</button>
+                </h2>
+                <p style="opacity:.75;margin-bottom:12px">
+                    Each worker verifies these at startup by running a real test encode through the
+                    same pipeline it uses for jobs &mdash; so a backend marked working here will work
+                    for real conversions, and one marked unusable would fail every job.
+                </p>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Worker</th>
+                            <th>GPU</th>
+                            <th>Backend</th>
+                            <th>Encoder</th>
+                            <th>Result</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody id="capabilities-tbody">
+                        <tr><td colspan="6">Loading&hellip;</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
                 {{if .Workers}}
@@ -318,6 +518,20 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         </div>
 
         <!-- Worker Settings Modal -->
+        <div id="jobLogModal" class="joblog-backdrop" style="display:none" onclick="if (event.target === this) closeJobLogModal()">
+            <div class="joblog-panel">
+                <div class="joblog-header">
+                    <strong id="jobLogModalTitle">Job Log</strong>
+                    <span style="flex:1"></span>
+                    <span id="jobLogCopyStatus" style="color:#95d5b2;font-size:.85em;margin-right:8px"></span>
+                    <button class="btn btn-secondary btn-sm" onclick="copyJobLog()">Copy</button>
+                    <a id="jobLogModalLink" class="btn btn-secondary btn-sm" href="#">Open job</a>
+                    <button class="btn btn-danger btn-sm" onclick="closeJobLogModal()">Close</button>
+                </div>
+                <div id="jobLogModalBody" class="log-view joblog-body">Loading&hellip;</div>
+            </div>
+        </div>
+
         <div id="workerModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000;">
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #16213e; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
                 <h2 style="margin-bottom: 20px;">⚙️ Worker Settings: <span id="modalWorkerId" style="color: #00d9ff;"></span></h2>
@@ -429,6 +643,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                                 <option value="slow" {{if eq .Config.Video.Preset "slow"}}selected{{end}}>Slow</option>
                                 <option value="slower" {{if eq .Config.Video.Preset "slower"}}selected{{end}}>Slower</option>
                                 <option value="veryslow" {{if eq .Config.Video.Preset "veryslow"}}selected{{end}}>Veryslow</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="hwaccel">Hardware Acceleration</label>
+                            <select id="hwaccel" name="hwaccel">
+                                <option value="none" {{if eq .Config.Video.HWAccel "none"}}selected{{end}}>None (CPU)</option>
+                                <option value="vulkan" {{if eq .Config.Video.HWAccel "vulkan"}}selected{{end}}>Vulkan</option>
                             </select>
                         </div>
                     </div>
@@ -634,7 +855,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     resolution: document.getElementById('resolution').value,
                     codec: document.getElementById('codec').value,
                     bitrate: document.getElementById('bitrate').value,
-                    preset: document.getElementById('preset').value
+                    preset: document.getElementById('preset').value,
+                    hwaccel: document.getElementById('hwaccel').value
                 },
                 audio: {
                     codec: document.getElementById('audioCodec').value,
@@ -808,6 +1030,459 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         }
 
         // Connect to stats stream for real-time updates
+        // ---- Job log viewer ----
+
+        // The log is shown in a modal rather than inline in the History table on
+        // purpose: that table is rebuilt wholesale every time a stats event
+        // arrives, which destroyed any text selection inside an inline log (and
+        // could leave the browser's selection anchors pointing at removed nodes).
+        // The modal lives outside the table, so refreshes never touch it.
+        let jobLogModalJobId = null;
+
+        async function openJobLogModal(jobId) {
+            jobLogModalJobId = jobId;
+
+            document.getElementById('jobLogModalTitle').textContent = 'Job Log — ' + jobId;
+            document.getElementById('jobLogModalLink').href = '/ui/job?id=' + encodeURIComponent(jobId);
+            document.getElementById('jobLogModal').style.display = 'block';
+
+            const box = document.getElementById('jobLogModalBody');
+            box.textContent = 'Loading log…';
+
+            try {
+                const res = await fetch(apiUrlWithKey('/api/job/logs', {job_id: jobId}));
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+
+                // Ignore a response for a log the user has already navigated away from.
+                if (jobLogModalJobId !== jobId) return;
+                renderLogInto(box, data.entries || []);
+            } catch (e) {
+                if (jobLogModalJobId === jobId) {
+                    box.textContent = 'Failed to load log: ' + e.message;
+                }
+            }
+        }
+
+        function closeJobLogModal() {
+            jobLogModalJobId = null;
+            document.getElementById('jobLogModal').style.display = 'none';
+        }
+
+        // Copies the log as plain text, which is the usual reason for selecting
+        // it in the first place.
+        async function copyJobLog() {
+            const box = document.getElementById('jobLogModalBody');
+            const lines = Array.from(box.querySelectorAll('.log-line')).map(function(line) {
+                const ts = line.querySelector('.log-ts');
+                const stage = line.querySelector('.log-stage');
+                const msg = line.querySelector('.log-msg');
+                return [ts ? ts.textContent : '', stage ? stage.textContent : '', msg ? msg.textContent : '']
+                    .filter(Boolean).join(' ');
+            });
+            const text = lines.length ? lines.join('\n') : box.textContent;
+
+            const status = document.getElementById('jobLogCopyStatus');
+            try {
+                await navigator.clipboard.writeText(text);
+                status.textContent = 'Copied';
+            } catch (e) {
+                status.textContent = 'Copy failed — select the text manually';
+            }
+            setTimeout(function() { status.textContent = ''; }, 2000);
+        }
+
+        function renderLogInto(container, entries) {
+            container.textContent = '';
+
+            if (!entries.length) {
+                container.textContent = 'No log recorded for this job. Logs are captured while a job runs, so jobs that ran before logging was added have none.';
+                return;
+            }
+
+            entries.forEach(function(e) {
+                const line = document.createElement('div');
+                line.className = 'log-line log-' + (e.level || 'info');
+
+                const ts = document.createElement('span');
+                ts.className = 'log-ts';
+                ts.textContent = new Date(e.timestamp).toLocaleTimeString();
+
+                const stage = document.createElement('span');
+                stage.className = 'log-stage';
+                stage.textContent = e.stage || '';
+
+                const msg = document.createElement('span');
+                msg.className = 'log-msg';
+                msg.textContent = e.message;
+
+                line.append(ts, stage, msg);
+                container.appendChild(line);
+            });
+        }
+
+        // Close on Escape, and on a click of the backdrop itself (but not of the
+        // panel, so dragging a selection past the edge does not dismiss it).
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && jobLogModalJobId !== null) closeJobLogModal();
+        });
+
+        // ---- Worker capability detection ----
+
+        function apiUrlWithKey(path, params) {
+            const qs = new URLSearchParams(params || {});
+            const apiKey = localStorage.getItem(apiKeyStorageKey);
+            if (apiKey) { qs.set('api_key', apiKey); }
+            const q = qs.toString();
+            return q ? path + '?' + q : path;
+        }
+
+        async function loadCapabilities() {
+            const tbody = document.getElementById('capabilities-tbody');
+            if (!tbody) { return; }
+            try {
+                const res = await fetch(apiUrlWithKey('/api/workers'));
+                if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                const data = await res.json();
+                renderCapabilities(data.workers || []);
+            } catch (err) {
+                tbody.textContent = '';
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 6;
+                td.textContent = 'Failed to load capabilities: ' + err.message;
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderCapabilities(workers) {
+            const tbody = document.getElementById('capabilities-tbody');
+            tbody.textContent = '';
+
+            let rows = 0;
+            workers.forEach(function(wk) {
+                const caps = wk.capabilities;
+                if (!caps || !caps.backends) { return; }
+
+                caps.backends.forEach(function(b, idx) {
+                    rows++;
+                    const tr = document.createElement('tr');
+
+                    // Only label the first row of each worker, so the grouping reads clearly.
+                    const tdWorker = document.createElement('td');
+                    tdWorker.textContent = idx === 0 ? wk.worker_id : '';
+                    const tdGpu = document.createElement('td');
+                    tdGpu.textContent = idx === 0 ? (caps.gpu || wk.gpu || '-') : '';
+
+                    const tdBackend = document.createElement('td');
+                    tdBackend.textContent = b.name === 'none' ? 'CPU' : b.name;
+                    const tdEncoder = document.createElement('td');
+                    tdEncoder.textContent = b.encoder || '-';
+
+                    const tdResult = document.createElement('td');
+                    const badge = document.createElement('span');
+                    if (b.working) {
+                        badge.className = 'badge badge-completed';
+                        badge.textContent = 'working';
+                    } else if (b.available) {
+                        badge.className = 'badge badge-failed';
+                        badge.textContent = 'unusable';
+                    } else {
+                        badge.className = 'badge badge-pending';
+                        badge.textContent = 'not built in';
+                    }
+                    tdResult.appendChild(badge);
+
+                    const tdDetail = document.createElement('td');
+                    tdDetail.className = 'truncate';
+                    tdDetail.title = b.detail || '';
+                    tdDetail.textContent = b.detail || '';
+
+                    tr.append(tdWorker, tdGpu, tdBackend, tdEncoder, tdResult, tdDetail);
+                    tbody.appendChild(tr);
+                });
+            });
+
+            if (rows === 0) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 6;
+                td.textContent = 'No worker has reported capabilities yet. They are probed when a worker starts.';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+        }
+
+        // Mark hardware-acceleration options that no online worker can actually
+        // run, so a backend that would fail every job cannot be selected blind.
+        async function annotateHWAccelOptions() {
+            let data;
+            try {
+                const res = await fetch(apiUrlWithKey('/api/capabilities'));
+                if (!res.ok) { return; }
+                data = await res.json();
+            } catch (err) {
+                return;
+            }
+            if (!data || !data.capabilities_known) { return; }
+
+            ['hwaccel', 'lib-hwaccel'].forEach(function(id) {
+                const sel = document.getElementById(id);
+                if (!sel) { return; }
+                Array.from(sel.options).forEach(function(opt) {
+                    if (!opt.value || opt.value === '') { return; }
+                    const info = data.backends[opt.value];
+                    const base = opt.textContent.replace(/ — .*$/, '');
+                    if (info && info.supported) {
+                        opt.textContent = base;
+                        opt.title = info.workers + ' worker(s) verified this backend';
+                    } else {
+                        opt.textContent = base + ' — not supported by any worker';
+                        opt.title = (info && info.detail) ? info.detail : 'No online worker verified this backend';
+                    }
+                });
+            });
+        }
+
+        // ---- Library management ----
+
+        function libraryApiUrl(params) {
+            let url = '/api/libraries';
+            const apiKey = localStorage.getItem(apiKeyStorageKey);
+            const qs = new URLSearchParams(params || {});
+            if (apiKey) { qs.set('api_key', apiKey); }
+            const q = qs.toString();
+            return q ? url + '?' + q : url;
+        }
+
+        async function loadLibraries() {
+            const tbody = document.getElementById('libraries-tbody');
+            if (!tbody) { return; }
+            try {
+                const res = await fetch(libraryApiUrl());
+                if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                const data = await res.json();
+                renderLibraries(data.libraries || []);
+            } catch (err) {
+                tbody.textContent = '';
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 7;
+                td.textContent = 'Failed to load libraries: ' + err.message;
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderLibraries(libs) {
+            const tbody = document.getElementById('libraries-tbody');
+            tbody.textContent = '';
+
+            if (!libs.length) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 7;
+                td.textContent = 'No libraries configured yet. Click "Add Library" to get started.';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            libs.forEach(function(lib) {
+                const tr = document.createElement('tr');
+
+                const tdName = document.createElement('td');
+                tdName.textContent = lib.name;
+                const tdPath = document.createElement('td');
+                tdPath.textContent = lib.path;
+                const tdOut = document.createElement('td');
+                tdOut.textContent = lib.replace_source ? '(replaces source)' : (lib.output_path || '-');
+                // Show the settings this library actually converts with, marking
+                // it when they differ from the global configuration.
+                const tdSettings = document.createElement('td');
+                const eff = lib.effective || {};
+                const summary = [eff.resolution, eff.codec, eff.bitrate, eff.output_format]
+                    .filter(Boolean).join(' / ');
+                tdSettings.textContent = summary || '-';
+                if (lib.conversion && Object.keys(lib.conversion).length) {
+                    tdSettings.appendChild(document.createTextNode(' '));
+                    const badgeOverride = document.createElement('span');
+                    badgeOverride.className = 'badge badge-completed';
+                    badgeOverride.textContent = 'custom';
+                    badgeOverride.title = 'Overrides: ' + Object.keys(lib.conversion).join(', ');
+                    tdSettings.appendChild(badgeOverride);
+                }
+
+                const tdJobs = document.createElement('td');
+                tdJobs.textContent = lib.job_count;
+
+                const tdStatus = document.createElement('td');
+                const badge = document.createElement('span');
+                badge.className = 'badge ' + (lib.enabled ? 'badge-success' : 'badge-failed');
+                badge.textContent = lib.enabled ? 'Enabled' : 'Disabled';
+                tdStatus.appendChild(badge);
+
+                const tdActions = document.createElement('td');
+                const btnEdit = document.createElement('button');
+                btnEdit.className = 'btn btn-sm';
+                btnEdit.textContent = 'Edit';
+                btnEdit.onclick = function() { editLibrary(lib); };
+                const btnToggle = document.createElement('button');
+                btnToggle.className = 'btn btn-sm';
+                btnToggle.textContent = lib.enabled ? 'Disable' : 'Enable';
+                btnToggle.onclick = function() {
+                    lib.enabled = !lib.enabled;
+                    saveLibrary(lib);
+                };
+                const btnDel = document.createElement('button');
+                btnDel.className = 'btn btn-danger btn-sm';
+                btnDel.textContent = 'Remove';
+                btnDel.onclick = function() { deleteLibrary(lib); };
+                tdActions.append(btnEdit, btnToggle, btnDel);
+
+                tr.append(tdName, tdPath, tdOut, tdSettings, tdJobs, tdStatus, tdActions);
+                tbody.appendChild(tr);
+            });
+        }
+
+        function newLibrary() {
+            document.getElementById('library-editor-title').textContent = 'Add Library';
+            document.getElementById('lib-id').value = '';
+            document.getElementById('lib-name').value = '';
+            document.getElementById('lib-path').value = '';
+            document.getElementById('lib-output').value = '';
+            document.getElementById('lib-extensions').value = '';
+            document.getElementById('lib-depth').value = '';
+            document.getElementById('lib-enabled').checked = true;
+            document.getElementById('lib-replace').checked = false;
+            setLibraryConversion(null);
+            document.getElementById('library-editor').style.display = 'block';
+        }
+
+        function editLibrary(lib) {
+            document.getElementById('library-editor-title').textContent = 'Edit Library';
+            document.getElementById('lib-id').value = lib.id;
+            document.getElementById('lib-name').value = lib.name;
+            document.getElementById('lib-path').value = lib.path;
+            document.getElementById('lib-output').value = lib.output_path || '';
+            document.getElementById('lib-extensions').value = (lib.video_extensions || []).join(', ');
+            document.getElementById('lib-depth').value =
+                (lib.recursive_depth === null || lib.recursive_depth === undefined) ? '' : lib.recursive_depth;
+            document.getElementById('lib-enabled').checked = !!lib.enabled;
+            document.getElementById('lib-replace').checked = !!lib.replace_source;
+            setLibraryConversion(lib.conversion);
+            document.getElementById('library-editor').style.display = 'block';
+        }
+
+        // Conversion override fields, keyed by the JSON field they map to.
+        const libConversionFields = {
+            resolution:    'lib-resolution',
+            codec:         'lib-codec',
+            bitrate:       'lib-bitrate',
+            preset:        'lib-preset',
+            output_format: 'lib-format',
+            audio_codec:   'lib-audio-codec',
+            audio_bitrate: 'lib-audio-bitrate',
+            hwaccel:       'lib-hwaccel'
+        };
+
+        function setLibraryConversion(conv) {
+            Object.keys(libConversionFields).forEach(function(key) {
+                const el = document.getElementById(libConversionFields[key]);
+                if (el) { el.value = (conv && conv[key]) ? conv[key] : ''; }
+            });
+        }
+
+        // Collect only the fields that were actually set; omitting a field means
+        // the library inherits the global value.
+        function readLibraryConversion() {
+            const conv = {};
+            let any = false;
+            Object.keys(libConversionFields).forEach(function(key) {
+                const el = document.getElementById(libConversionFields[key]);
+                const val = el ? el.value.trim() : '';
+                if (val) { conv[key] = val; any = true; }
+            });
+            return any ? conv : null;
+        }
+
+        function cancelLibraryEdit() {
+            document.getElementById('library-editor').style.display = 'none';
+            document.getElementById('library-status').textContent = '';
+        }
+
+        async function saveLibrary(lib) {
+            const status = document.getElementById('library-status');
+            try {
+                const res = await fetch(libraryApiUrl(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(lib)
+                });
+                if (!res.ok) {
+                    const body = await res.json().catch(function() { return null; });
+                    if (body && body.errors) {
+                        throw new Error(body.errors.map(function(e) {
+                            return e.field + ': ' + e.message;
+                        }).join('; '));
+                    }
+                    throw new Error('HTTP ' + res.status);
+                }
+                status.textContent = 'Saved.';
+                cancelLibraryEdit();
+                loadLibraries();
+        loadCapabilities();
+        annotateHWAccelOptions();
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message;
+            }
+        }
+
+        async function deleteLibrary(lib) {
+            if (!confirm('Remove library "' + lib.name + '"? Existing jobs are kept.')) { return; }
+            try {
+                const res = await fetch(libraryApiUrl({ id: lib.id }), { method: 'DELETE' });
+                if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                loadLibraries();
+            } catch (err) {
+                alert('Failed to remove library: ' + err.message);
+            }
+        }
+
+        document.getElementById('libraryForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const extRaw = document.getElementById('lib-extensions').value.trim();
+            const depthRaw = document.getElementById('lib-depth').value.trim();
+
+            const lib = {
+                id: document.getElementById('lib-id').value,
+                name: document.getElementById('lib-name').value.trim(),
+                path: document.getElementById('lib-path').value.trim(),
+                output_path: document.getElementById('lib-output').value.trim(),
+                enabled: document.getElementById('lib-enabled').checked,
+                replace_source: document.getElementById('lib-replace').checked
+            };
+
+            if (extRaw) {
+                lib.video_extensions = extRaw.split(',').map(function(s) {
+                    s = s.trim().toLowerCase();
+                    return s && s[0] !== '.' ? '.' + s : s;
+                }).filter(Boolean);
+            }
+            if (depthRaw !== '') {
+                lib.recursive_depth = parseInt(depthRaw, 10);
+            }
+
+            const conv = readLibraryConversion();
+            if (conv) { lib.conversion = conv; }
+
+            saveLibrary(lib);
+        });
+
+        loadLibraries();
+
         function connectStatsStream() {
             let url = '/api/stats/stream';
             const apiKey = localStorage.getItem(apiKeyStorageKey);
@@ -816,7 +1491,9 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
             const evtSource = new EventSource(url);
 
-            evtSource.onmessage = function(event) {
+            // The server emits a *named* SSE event ("event: stats"), which never
+            // triggers onmessage — that only fires for unnamed/default events.
+            evtSource.addEventListener('stats', function(event) {
                 try {
                     const data = JSON.parse(event.data);
 
@@ -959,7 +1636,18 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             aId.appendChild(codeId);
                             tdId.appendChild(aId);
 
-                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+                            const tdLibrary = createElement('td');
+                            const badgeLibrary = createElement('span', {
+                                text: job.library_name || 'Unknown',
+                                className: 'badge badge-pending'
+                            });
+                            tdLibrary.appendChild(badgeLibrary);
+
+                            const tdSource = createElement('td', {
+                                text: job.rel_path || job.source_path,
+                                className: 'truncate',
+                                title: job.source_path
+                            });
 
                             const tdStatus = createElement('td');
                             const badgeStatus = createElement('span', {text: job.status, className: 'badge ' + statusClass});
@@ -970,6 +1658,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             const tdCompleted = createElement('td', {text: completedAt});
 
                             const tdActions = createElement('td');
+                            const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
+                            btnLog.onclick = () => openJobLogModal(job.id);
+                            tdActions.appendChild(btnLog);
+                            tdActions.appendChild(document.createTextNode(' '));
                             if (job.status === 'failed') {
                                 const btnRetry = createElement('button', {text: 'Retry', className: 'btn btn-primary btn-sm'});
                                 btnRetry.onclick = () => retryJob(job.id);
@@ -982,7 +1674,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                                 tdActions.appendChild(btnRequeue);
                             }
 
-                            tr.append(tdId, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
+                            tr.append(tdId, tdLibrary, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
                             tbody.appendChild(tr);
                         });
                     }
@@ -1044,7 +1736,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 } catch (err) {
                     console.error('Failed to parse SSE data:', err);
                 }
-            };
+            });
 
             evtSource.onerror = function() {
                 const indicator = document.getElementById('live-indicator');
@@ -1245,6 +1937,82 @@ type DashboardStats struct {
 	Workers    int
 }
 
+// JobView decorates a job with the library it came from, so the UI can show
+// "Movies / action/film.mkv" instead of an unreadable absolute path. The
+// embedded job keeps every existing field available to templates and JSON.
+type JobView struct {
+	*models.Job
+	LibraryName string `json:"library_name"`
+	RelPath     string `json:"rel_path"`
+}
+
+// unknownLibraryName labels jobs that cannot be attributed to a library, e.g.
+// jobs created before libraries existed whose source tree is no longer
+// configured.
+const unknownLibraryName = "Unknown"
+
+// toJobViews resolves each job's library once for the whole batch.
+func (s *Server) toJobViews(jobs []*models.Job) []JobView {
+	libs := s.configMgr.GetLibraries()
+
+	byID := make(map[string]config.Library, len(libs))
+	for _, lib := range libs {
+		byID[lib.ID] = lib
+	}
+
+	views := make([]JobView, 0, len(jobs))
+	for _, job := range jobs {
+		views = append(views, newJobView(job, byID, libs))
+	}
+	return views
+}
+
+// newJobView attributes a single job to a library. Jobs carrying a library ID
+// resolve directly; older jobs predate the column and are matched by path
+// prefix so history stays readable after an upgrade.
+func newJobView(job *models.Job, byID map[string]config.Library, libs []config.Library) JobView {
+	view := JobView{Job: job, LibraryName: unknownLibraryName, RelPath: filepath.Base(job.SourcePath)}
+
+	lib, ok := byID[job.LibraryID]
+	if !ok {
+		if matched, found := libraryForPath(job.SourcePath, libs); found {
+			lib, ok = matched, true
+		}
+	}
+
+	if !ok {
+		return view
+	}
+
+	view.LibraryName = lib.Name
+	if rel, err := filepath.Rel(lib.Path, job.SourcePath); err == nil && !strings.HasPrefix(rel, "..") {
+		view.RelPath = rel
+	}
+	return view
+}
+
+// libraryForPath finds the library whose root contains path. The longest match
+// wins so that a nested library is preferred over its parent.
+func libraryForPath(path string, libs []config.Library) (config.Library, bool) {
+	var best config.Library
+	found := false
+
+	for _, lib := range libs {
+		if lib.Path == "" {
+			continue
+		}
+		rel, err := filepath.Rel(lib.Path, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if !found || len(lib.Path) > len(best.Path) {
+			best, found = lib, true
+		}
+	}
+
+	return best, found
+}
+
 // WebUIData holds data for rendering the web interface
 type WebUIData struct {
 	Config         *config.ActiveConfig
@@ -1252,7 +2020,7 @@ type WebUIData struct {
 	Stats          DashboardStats
 	PendingJobs    []*models.Job
 	ProcessingJobs []*models.Job
-	RecentJobs     []*models.Job
+	RecentJobs     []JobView
 	MasterURL      string                     // URL for workers to connect
 	WorkerDefaults *models.RemoteWorkerConfig // Worker default settings
 	APIKeyRequired bool
@@ -1348,7 +2116,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		Stats:          stats,
 		PendingJobs:    pendingJobs,
 		ProcessingJobs: processingJobs,
-		RecentJobs:     recentJobs,
+		RecentJobs:     s.toJobViews(recentJobs),
 		MasterURL:      masterURL,
 		WorkerDefaults: workerDefaults,
 		APIKeyRequired: s.apiKey != "",
@@ -1401,7 +2169,11 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg config.ActiveConfig
+	// Decode onto a copy of the current configuration so that a caller which
+	// omits a section (libraries, scanner, notifications) leaves it untouched
+	// instead of silently deleting it. Only the keys actually present in the
+	// request body are changed.
+	cfg := *s.configMgr.Get()
 	err := json.NewDecoder(r.Body).Decode(&cfg)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -1464,6 +2236,14 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         .btn-danger { background: #dc3545; color: #fff; }
         .btn-danger:hover { background: #c82333; }
         .progress-bar { background: #0f0f23; border-radius: 4px; height: 20px; overflow: hidden; margin-top: 10px; }
+        .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 460px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em; line-height: 1.5; }
+        .log-line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-word; }
+        .log-ts { color: #666; flex: 0 0 auto; }
+        .log-stage { color: #7aa2f7; flex: 0 0 70px; }
+        .log-msg { flex: 1 1 auto; }
+        .log-info .log-msg { color: #ddd; }
+        .log-warn .log-msg { color: #ffd479; }
+        .log-error .log-msg { color: #ff9d9d; }
         .progress-fill { background: #00d9ff; height: 100%; transition: width 0.3s ease; }
         .error-box { background: #5c2323; color: #f8d7da; padding: 15px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap; font-family: monospace; }
         code { background: #0f0f23; padding: 2px 5px; border-radius: 3px; font-family: monospace; color: #00d9ff; }
@@ -1596,6 +2376,17 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         </div>
         {{end}}
 
+        <div class="card">
+            <h2>Job Log
+                <button class="btn btn-secondary" style="float:right;font-size:.8em;padding:4px 10px"
+                        onclick="loadJobLog()">Refresh</button>
+            </h2>
+            <p style="color:#aaa;font-size:.85em;margin-bottom:10px">
+                Recorded by the worker while running this job, including FFmpeg's own output.
+            </p>
+            <div id="job-log" class="log-view">Loading&hellip;</div>
+        </div>
+
     </div>
 
     <script>
@@ -1649,6 +2440,56 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
             btnCancel.onclick = () => doAction('cancel');
             btnContainer.appendChild(btnCancel);
         }
+
+        async function loadJobLog() {
+            const container = document.getElementById('job-log');
+            let url = '/api/job/logs?job_id=' + encodeURIComponent(jobId);
+            const apiKey = localStorage.getItem('darkstreamAdminApiKey');
+            if (apiKey) url += '&api_key=' + encodeURIComponent(apiKey);
+
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                renderJobLog(data.entries || []);
+            } catch (e) {
+                container.textContent = 'Failed to load log: ' + e.message;
+            }
+        }
+
+        function renderJobLog(entries) {
+            const container = document.getElementById('job-log');
+            container.textContent = '';
+
+            if (!entries.length) {
+                container.textContent = 'No log recorded for this job. Logs are captured by the worker when a job runs; jobs that ran before logging was added have none.';
+                return;
+            }
+
+            entries.forEach(function(e) {
+                const line = document.createElement('div');
+                line.className = 'log-line log-' + (e.level || 'info');
+
+                const ts = document.createElement('span');
+                ts.className = 'log-ts';
+                ts.textContent = new Date(e.timestamp).toLocaleTimeString();
+
+                const stage = document.createElement('span');
+                stage.className = 'log-stage';
+                stage.textContent = e.stage || '';
+
+                const msg = document.createElement('span');
+                msg.className = 'log-msg';
+                msg.textContent = e.message;
+
+                line.append(ts, stage, msg);
+                container.appendChild(line);
+            });
+
+            container.scrollTop = container.scrollHeight;
+        }
+
+        loadJobLog();
 
         // Progress polling for processing jobs
         if (jobStatus === 'processing') {

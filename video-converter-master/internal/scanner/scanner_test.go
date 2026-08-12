@@ -4,7 +4,26 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+// backdateTree backdates every file under root.
+func backdateTree(t *testing.T, root string) {
+	t.Helper()
+	old := time.Now().Add(-time.Hour)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		return os.Chtimes(path, old, old)
+	})
+	if err != nil {
+		t.Fatalf("backdateTree(%s) error = %v", root, err)
+	}
+}
 
 // Test fixture constants shared across the scanner test suite.
 const (
@@ -42,6 +61,8 @@ func TestScanDirectory(t *testing.T) {
 
 	// Create scanner
 	scanner := New(videosDir, []string{extMP4, extMKV, ".avi"}, outputDir)
+
+	backdateTree(t, videosDir)
 
 	// Scan directory
 	jobs, err := scanner.ScanDirectory()
@@ -108,6 +129,7 @@ func TestScannerWithDepthLimit(t *testing.T) {
 
 	// Test with depth limit 0 (root only)
 	scanner := New(videosDir, []string{extMP4}, outputDir)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth: 0,
 	})
@@ -122,6 +144,7 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	}
 
 	// Test with depth limit 1
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth: 1,
 	})
@@ -136,6 +159,7 @@ func TestScannerWithDepthLimit(t *testing.T) {
 	}
 
 	// Test with unlimited depth
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth: -1,
 	})
@@ -178,6 +202,7 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 
 	// Test with minimum size filter (skip files smaller than 1KB)
 	scanner := New(videosDir, []string{extMP4}, outputDir)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MinFileSize: 1000, // 1KB minimum
 	})
@@ -192,6 +217,7 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 	}
 
 	// Test with maximum size filter (skip files larger than 6KB)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxFileSize: 6000, // 6KB maximum
 	})
@@ -206,6 +232,7 @@ func TestScannerWithSizeFiltering(t *testing.T) {
 	}
 
 	// Test with both min and max size filters
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MinFileSize: 1000, // 1KB minimum
 		MaxFileSize: 6000, // 6KB maximum
@@ -259,6 +286,7 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 
 	// Test with hidden files/dirs skipped (default)
 	scanner := New(videosDir, []string{extMP4}, outputDir)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth:        -1, // Unlimited depth
 		SkipHiddenFiles: true,
@@ -275,6 +303,7 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 	}
 
 	// Test with hidden files included but hidden dirs skipped
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth:        -1, // Unlimited depth
 		SkipHiddenFiles: false,
@@ -291,6 +320,7 @@ func TestScannerWithHiddenFiles(t *testing.T) {
 	}
 
 	// Test with all hidden content included
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		MaxDepth:        -1, // Unlimited depth
 		SkipHiddenFiles: false,
@@ -345,6 +375,7 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 
 	// Test without duplicate detection
 	scanner := New(videosDir, []string{extMP4}, outputDir)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		DetectDuplicates: false,
 	})
@@ -359,6 +390,7 @@ func TestScannerWithDuplicateDetection(t *testing.T) {
 	}
 
 	// Test with duplicate detection
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		DetectDuplicates: true,
 	})
@@ -392,6 +424,7 @@ func TestScannerWithReplaceSource(t *testing.T) {
 
 	// Test with ReplaceSource = false (default)
 	scanner := New(videosDir, []string{extMP4}, outputDir)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		ReplaceSource: false,
 	})
@@ -411,6 +444,7 @@ func TestScannerWithReplaceSource(t *testing.T) {
 	}
 
 	// Test with ReplaceSource = true
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		ReplaceSource: true,
 	})
@@ -514,6 +548,7 @@ func TestScannerWithDuplicateChecker(t *testing.T) {
 	scanner := New(videosDir, []string{extMP4}, outputDir)
 
 	// Test with checker that returns true (duplicate exists)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		DetectDuplicates: true,
 		DuplicateChecker: func(checksum string) (bool, error) {
@@ -531,6 +566,7 @@ func TestScannerWithDuplicateChecker(t *testing.T) {
 	}
 
 	// Test with checker that returns false (no duplicate)
+	backdateTree(t, videosDir)
 	scanner.SetOptions(ScanOptions{
 		DetectDuplicates: true,
 		DuplicateChecker: func(checksum string) (bool, error) {

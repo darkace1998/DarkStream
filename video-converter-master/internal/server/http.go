@@ -30,6 +30,7 @@ import (
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"github.com/darkace1998/video-converter-master/internal/metrics"
 	"github.com/darkace1998/video-converter-master/internal/notifier"
+	"github.com/darkace1998/video-converter-master/internal/scanner"
 	"gopkg.in/yaml.v3"
 )
 
@@ -177,17 +178,18 @@ func (rl *rateLimiter) stop() {
 
 // Server handles HTTP API requests
 type Server struct {
-	db          *db.Tracker
-	addr        string
-	server      *http.Server
-	configMgr   *config.Manager
-	masterCfg   *models.MasterConfig // Master configuration for worker defaults
-	rateLimiter *rateLimiter
-	apiKey      string
-	allowedDirs []string // Allowed directories for file operations (source and output)
-	metrics     *metrics.Metrics
-	notifier    *notifier.WebhookNotifier
-	queuePaused atomic.Bool // New field to pause/resume queue
+	db            *db.Tracker
+	addr          string
+	server        *http.Server
+	configMgr     *config.Manager
+	masterCfg     *models.MasterConfig // Master configuration for worker defaults
+	rateLimiter   *rateLimiter
+	apiKey        string
+	allowedDirsMu sync.RWMutex
+	allowedDirs   []string // Allowed directories for file operations (source and output)
+	metrics       *metrics.Metrics
+	notifier      *notifier.WebhookNotifier
+	queuePaused   atomic.Bool // New field to pause/resume queue
 }
 
 // New creates a new HTTP server instance
@@ -274,6 +276,10 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/jobs/prune", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PruneJobs))))
 	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListWorkers))))
 	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ValidateConfig))))
+	mux.HandleFunc("/api/libraries", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleLibraries)))
+	mux.HandleFunc("/api/capabilities", s.correlationMiddleware(s.rateLimitMiddleware(s.GetCapabilities)))
+	mux.HandleFunc("/api/worker/job-log", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.SubmitJobLog))))
+	mux.HandleFunc("/api/job/logs", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJobLog))))
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -405,6 +411,9 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 	// Update queue depth
 	s.updateQueueDepthMetric()
 
+	// Resolve the settings for this job's library before handing it over.
+	s.attachConversionSettings(job)
+
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(job)
 	if err != nil {
@@ -530,6 +539,12 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.updateQueueDepthMetric()
 
+	// Each job may belong to a different library with different settings, so
+	// resolve them per job rather than once for the batch.
+	for _, job := range pendingJobs {
+		s.attachConversionSettings(job)
+	}
+
 	slog.Info("Batch job assignment",
 		fieldWorkerID, workerID,
 		"requested", limit,
@@ -646,6 +661,18 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to fetch job", fieldJobID, req.JobID, "error", err)
 		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// A checksum mismatch usually means the source was still being written when
+	// it was scanned, so the stored checksum describes a partial file. That is
+	// recoverable and must not be a permanent failure: refresh the checksum from
+	// the file as it stands now and requeue instead.
+	if s.recoverStaleChecksum(job, req.ErrorMessage) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "requeued",
+			"reason": "source checksum refreshed",
+		})
 		return
 	}
 
@@ -882,6 +909,9 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 		if err == nil {
 			recentJobs = append(recentJobs, failed...)
 		}
+		// Decorate with library name and library-relative path so the live
+		// history table shows the same thing as the server-rendered one.
+		recentJobViews := s.toJobViews(recentJobs)
 
 		response := map[string]any{
 			fieldTimestamp:    time.Now(),
@@ -889,7 +919,7 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 			fieldWorkers:      workerMetrics,
 			"pending_jobs":    pendingJobs,
 			"processing_jobs": processingJobsData,
-			"recent_jobs":     recentJobs,
+			"recent_jobs":     recentJobViews,
 		}
 
 		eventData, err := json.Marshal(response)
@@ -1288,7 +1318,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// Validate source path to prevent path traversal attacks
 	// This is defense-in-depth: paths are validated during job creation,
 	// but we re-validate here to protect against database tampering
-	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), job.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file",
 			fieldJobID, jobID,
@@ -1393,7 +1423,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// Validate output path to prevent path traversal attacks
 	// This is defense-in-depth: paths are validated during job creation,
 	// but we re-validate here to protect against database tampering
-	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), job.OutputPath)
 	if err != nil {
 		slog.Error("Path validation failed for output file",
 			fieldJobID, jobID,
@@ -2044,6 +2074,12 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Correct a stale source checksum before requeueing. Without this, a job
+	// whose source was still being copied when it was scanned would fail again
+	// immediately with the same checksum mismatch, no matter how often it is
+	// requeued.
+	s.refreshChecksumIfStale(job)
+
 	// Reset job to pending, do not increment retry count
 	updated, err := s.db.ResetJobToPending(job.ID, false, job.Status, "", job.StartedAt)
 	if err != nil {
@@ -2321,6 +2357,66 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetCapabilities reports which encoding backends the currently online workers
+// have actually verified. The Web UI uses this to warn before an operator picks
+// a backend that no worker can run — otherwise the setting looks like it applied
+// and every subsequent job fails.
+func (s *Server) GetCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workers, err := s.db.GetActiveWorkers(int(workerOnlineThreshold.Seconds()))
+	if err != nil {
+		slog.Error("Failed to list workers for capabilities", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type backendSummary struct {
+		Supported bool     `json:"supported"`
+		Workers   int      `json:"workers"`
+		Detail    string   `json:"detail,omitempty"`
+		WorkerIDs []string `json:"worker_ids,omitempty"`
+	}
+
+	backends := map[string]*backendSummary{
+		converterBackendNone:   {},
+		converterBackendVulkan: {},
+	}
+
+	reporting := 0
+	for _, wk := range workers {
+		if wk.Capabilities == nil {
+			continue
+		}
+		reporting++
+		for _, b := range wk.Capabilities.Backends {
+			summary, ok := backends[b.Name]
+			if !ok {
+				summary = &backendSummary{}
+				backends[b.Name] = summary
+			}
+			if b.Working {
+				summary.Supported = true
+				summary.Workers++
+				summary.WorkerIDs = append(summary.WorkerIDs, wk.WorkerID)
+			} else if summary.Detail == "" && b.Detail != "" {
+				// Keep one representative reason for why it is unusable.
+				summary.Detail = b.Detail
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"backends":           backends,
+		"online_workers":     len(workers),
+		"reporting_workers":  reporting,
+		"capabilities_known": reporting > 0,
+	})
+}
+
 // ValidateConfig handles validating a configuration file
 func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -2549,6 +2645,343 @@ func (s *Server) updateQueueDepthMetric() {
 	if err == nil {
 		s.metrics.SetQueueDepth(float64(count))
 	}
+}
+
+// attachConversionSettings resolves the conversion settings for a job's library
+// and attaches them, so the worker uses the right profile for that job instead
+// of one global setting for everything.
+func (s *Server) attachConversionSettings(job *models.Job) {
+	if job == nil {
+		return
+	}
+	job.Conversion = s.configMgr.EffectiveConversionSettings(job.LibraryID)
+}
+
+// Encoding backend names, mirroring the worker's converter package. They are
+// duplicated rather than imported because the master must not depend on the
+// worker module.
+const (
+	converterBackendNone   = "none"
+	converterBackendVulkan = "vulkan"
+)
+
+// maxJobLogBodySize bounds a submitted job log. Workers already cap what they
+// send; this protects the master from a misbehaving or hostile client.
+const maxJobLogBodySize = 1 << 20 // 1 MiB
+
+// SubmitJobLog stores the execution log a worker collected for a job.
+func (s *Server) SubmitJobLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJobLogBodySize)
+
+	var req struct {
+		JobID    string               `json:"job_id"`
+		WorkerID string               `json:"worker_id"`
+		Entries  []models.JobLogEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if !validateJobID(req.JobID) {
+		http.Error(w, "Invalid or missing job_id", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.ReplaceJobLog(req.JobID, req.Entries); err != nil {
+		slog.Error("Failed to store job log", fieldJobID, req.JobID, "error", err)
+		http.Error(w, "Failed to store job log", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Debug("Stored job log", fieldJobID, req.JobID,
+		fieldWorkerID, req.WorkerID, "entries", len(req.Entries))
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "entries": len(req.Entries)})
+}
+
+// GetJobLog returns a job's stored execution log.
+func (s *Server) GetJobLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get(fieldJobID)
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid or missing job_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	entries, err := s.db.GetJobLog(jobID)
+	if err != nil {
+		slog.Error("Failed to read job log", fieldJobID, jobID, "error", err)
+		http.Error(w, "Failed to read job log", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		fieldJobID: jobID,
+		"entries":  entries,
+		fieldCount: len(entries),
+	})
+}
+
+// refreshChecksumIfStale updates a job's stored source checksum when the file on
+// disk no longer matches it, so a requeue has a chance of succeeding. It is
+// advisory: any problem simply leaves the job as it was.
+func (s *Server) refreshChecksumIfStale(job *models.Job) {
+	if job.SourceChecksum == "" {
+		return
+	}
+
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), job.SourcePath)
+	if err != nil {
+		return
+	}
+
+	info, err := os.Stat(validatedPath)
+	if err != nil {
+		return
+	}
+	if minAge := s.sourceSettleAge(); minAge > 0 && time.Since(info.ModTime()) < minAge {
+		return // still being written; the stored value may yet become correct
+	}
+
+	current, err := utils.CalculateFileSHA256(validatedPath)
+	if err != nil || current == job.SourceChecksum {
+		return
+	}
+
+	if err := s.db.UpdateJobSourceChecksum(job.ID, current); err != nil {
+		slog.Warn("Failed to refresh stale checksum on requeue", fieldJobID, job.ID, "error", err)
+		return
+	}
+
+	slog.Info("Refreshed stale source checksum while requeueing",
+		fieldJobID, job.ID, "path", validatedPath,
+		"old_checksum", job.SourceChecksum, "new_checksum", current)
+	job.SourceChecksum = current
+}
+
+// sourceSettleAge returns how long a source file must have gone unmodified
+// before its checksum is trusted.
+func (s *Server) sourceSettleAge() time.Duration {
+	configured := s.configMgr.GetScannerConfig().MinFileAge
+	if configured < 0 {
+		return 0
+	}
+	if configured == 0 {
+		return scanner.DefaultMinFileAge
+	}
+	return time.Duration(configured) * time.Second
+}
+
+// recoverStaleChecksum handles a reported checksum mismatch. It reports whether
+// the job was recovered and requeued.
+//
+// The mismatch is only recoverable when the file on disk has genuinely changed
+// since it was scanned — the signature of a file that was still being copied in.
+// If the file still hashes to the stored value, the mismatch happened in
+// transfer and is a real failure, so it is left to the normal path.
+func (s *Server) recoverStaleChecksum(job *models.Job, errorMessage string) bool {
+	if job.SourceChecksum == "" || !contains(errorMessage, "checksum mismatch") {
+		return false
+	}
+
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), job.SourcePath)
+	if err != nil {
+		slog.Warn("Cannot refresh checksum for job outside allowed directories",
+			fieldJobID, job.ID, "path", job.SourcePath, "error", err)
+		return false
+	}
+
+	// Only correct the checksum once the file has stopped changing. Hashing a
+	// copy that is still in progress would simply record another partial value.
+	// This is what bounds the recovery: a file being rewritten forever is never
+	// refreshed, so there is no loop to run away.
+	info, err := os.Stat(validatedPath)
+	if err != nil {
+		slog.Warn("Cannot stat source file to refresh checksum",
+			fieldJobID, job.ID, "path", validatedPath, "error", err)
+		return false
+	}
+	if minAge := s.sourceSettleAge(); minAge > 0 && time.Since(info.ModTime()) < minAge {
+		slog.Info("Source file is still being written; leaving job to be retried later",
+			fieldJobID, job.ID, "path", validatedPath, "age", time.Since(info.ModTime()))
+		return false
+	}
+
+	current, err := utils.CalculateFileSHA256(validatedPath)
+	if err != nil {
+		slog.Warn("Failed to recompute source checksum",
+			fieldJobID, job.ID, "path", validatedPath, "error", err)
+		return false
+	}
+
+	if current == job.SourceChecksum {
+		// The file is unchanged, so the copy the worker received was corrupted.
+		// That is a genuine failure worth surfacing.
+		slog.Warn("Checksum mismatch with an unchanged source file; treating as a transfer error",
+			fieldJobID, job.ID, "path", validatedPath)
+		return false
+	}
+
+	if err := s.db.RefreshJobSourceChecksum(job.ID, current); err != nil {
+		slog.Error("Failed to store refreshed checksum", fieldJobID, job.ID, "error", err)
+		return false
+	}
+
+	slog.Info("Source file changed after scanning; refreshed checksum and requeued job",
+		fieldJobID, job.ID,
+		"path", validatedPath,
+		"old_checksum", job.SourceChecksum,
+		"new_checksum", current)
+
+	s.updateQueueDepthMetric()
+	return true
+}
+
+// writeJSON writes v as a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("Failed to encode JSON response", "error", err)
+	}
+}
+
+// HandleLibraries serves the library collection: GET lists the configured
+// libraries, POST creates or updates one, DELETE removes one by id.
+func (s *Server) HandleLibraries(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAPIKeyAuth(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.listLibraries(w)
+	case http.MethodPost:
+		s.saveLibrary(w, r)
+	case http.MethodDelete:
+		s.deleteLibrary(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listLibraries returns the configured libraries along with a job count per
+// library so the UI can show how much each one contributes to the queue.
+func (s *Server) listLibraries(w http.ResponseWriter) {
+	libs := s.configMgr.GetLibraries()
+
+	counts, err := s.db.CountJobsByLibrary()
+	if err != nil {
+		slog.Warn("Failed to count jobs per library", "error", err)
+		counts = map[string]int{}
+	}
+
+	items := make([]map[string]any, 0, len(libs))
+	for _, lib := range libs {
+		items = append(items, map[string]any{
+			"id":               lib.ID,
+			"name":             lib.Name,
+			"path":             lib.Path,
+			"output_path":      lib.OutputPath,
+			"enabled":          lib.Enabled,
+			"replace_source":   lib.ReplaceSource,
+			"video_extensions": lib.VideoExtensions,
+			"recursive_depth":  lib.RecursiveDepth,
+			"job_count":        counts[lib.ID],
+			// Included so clients that round-trip a library (e.g. the enable/
+			// disable toggle) do not drop its overrides, and so the UI can show
+			// which settings differ from the global ones.
+			"conversion": lib.Conversion,
+			"effective":  s.configMgr.EffectiveConversionSettings(lib.ID),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"libraries": items,
+		"count":     len(items),
+	})
+}
+
+// saveLibrary creates or updates a single library.
+func (s *Server) saveLibrary(w http.ResponseWriter, r *http.Request) {
+	const maxLibraryBodySize = 64 << 10
+	r.Body = http.MaxBytesReader(w, r.Body, maxLibraryBodySize)
+
+	var lib config.Library
+	if err := json.NewDecoder(r.Body).Decode(&lib); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	saved, err := s.configMgr.SaveLibrary(&lib)
+	if err != nil {
+		var validationErrs *config.ValidationErrors
+		if errors.As(err, &validationErrs) {
+			writeJSON(w, http.StatusBadRequest, validationErrs)
+			return
+		}
+		slog.Error("Failed to save library", "error", err)
+		http.Error(w, "Failed to save library", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Library saved", "id", saved.ID, "name", saved.Name, "path", saved.Path)
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// deleteLibrary removes a library. Jobs already discovered from it are kept.
+func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "Missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.configMgr.DeleteLibrary(id); err != nil {
+		slog.Warn("Failed to delete library", "id", id, "error", err)
+		http.Error(w, "Library not found", http.StatusNotFound)
+		return
+	}
+
+	slog.Info("Library deleted", "id", id)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "id": id})
+}
+
+// SetAllowedDirs replaces the directories the master may read from and write
+// to. It is called whenever libraries change in the Web UI so that a newly
+// added library's paths pass validation without restarting the master.
+func (s *Server) SetAllowedDirs(dirs []string) {
+	cleaned := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if strings.TrimSpace(d) != "" {
+			cleaned = append(cleaned, d)
+		}
+	}
+
+	s.allowedDirsMu.Lock()
+	s.allowedDirs = cleaned
+	s.allowedDirsMu.Unlock()
+
+	slog.Info("Allowed directories updated", "count", len(cleaned))
+}
+
+// AllowedDirs returns a snapshot of the currently allowed directories.
+func (s *Server) AllowedDirs() []string {
+	s.allowedDirsMu.RLock()
+	defer s.allowedDirsMu.RUnlock()
+
+	out := make([]string, len(s.allowedDirs))
+	copy(out, s.allowedDirs)
+	return out
 }
 
 // RefreshQueueDepth updates the queue depth metric from the database.
@@ -3024,7 +3457,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate paths
-	validatedSource, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.SourcePath)
+	validatedSource, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), req.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file", "path", req.SourcePath, "error", err)
 		http.Error(w, "Invalid source path", http.StatusForbidden)
@@ -3039,7 +3472,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 
 	var outputPath string
 	if req.OutputPath != "" {
-		validatedOutput, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.OutputPath)
+		validatedOutput, err := utils.ValidatePathInAllowedDirs(s.AllowedDirs(), req.OutputPath)
 		if err != nil {
 			slog.Error("Path validation failed for output file", "path", req.OutputPath, "error", err)
 			http.Error(w, "Invalid output path", http.StatusForbidden)

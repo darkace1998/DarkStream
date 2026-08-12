@@ -45,6 +45,13 @@ func TestEndToEndConversion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to copy test video %s: %v", video, err)
 		}
+		// The scanner skips files modified in the last few seconds so it never
+		// hashes a copy still in progress. These fixtures are complete the moment
+		// copyFile returns, so backdate them rather than waiting.
+		old := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(dst, old, old); err != nil {
+			t.Fatalf("Failed to backdate test video %s: %v", video, err)
+		}
 	}
 
 	// Create master config
