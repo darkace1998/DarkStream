@@ -130,8 +130,8 @@ type WorkerConfig struct {
 		// saturate the host and can get a container killed by its supervisor.
 		MaxThreads int           `yaml:"max_threads"`
 		Path       string        `yaml:"path"`
-		UseVulkan bool          `yaml:"use_vulkan"`
-		Timeout   time.Duration `yaml:"timeout"`
+		UseVulkan  bool          `yaml:"use_vulkan"`
+		Timeout    time.Duration `yaml:"timeout"`
 	} `yaml:"ffmpeg"`
 
 	Vulkan struct {

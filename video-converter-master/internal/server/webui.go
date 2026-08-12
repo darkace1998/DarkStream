@@ -20,6 +20,143 @@ import (
 // workerOnlineThreshold defines how long since last heartbeat before a worker is considered offline
 const workerOnlineThreshold = 2 * time.Minute
 
+// jobLogTailScript is shared by the dashboard's log modal and the job detail
+// page so both tail a running job identically. It is spliced into each template
+// rather than duplicated, because the append-instead-of-redraw rule below is
+// easy to get subtly wrong in one copy and not the other.
+const jobLogTailScript = `
+        // ---- Live job log ----
+        //
+        // A running job's log keeps growing while someone is reading it.
+        // Redrawing the whole thing on every poll would wipe out any text
+        // selection they had made — the defect that moved the log into a modal
+        // in the first place — so new lines are appended and the lines already
+        // on screen are left untouched.
+
+        const logTailIntervalMs = 3000;
+        const logBottomSlackPx = 40;
+
+        function jobLogUrl(jobId) {
+            let url = '/api/job/logs?job_id=' + encodeURIComponent(jobId);
+            const apiKey = localStorage.getItem('darkstreamAdminApiKey');
+            if (apiKey) { url += '&api_key=' + encodeURIComponent(apiKey); }
+            return url;
+        }
+
+        // A timestamp and message together identify a line well enough to tell
+        // whether what is on screen is still a prefix of what the server has.
+        function logLineKey(entry) {
+            return (entry.timestamp || '') + '\u0000' + (entry.message || '');
+        }
+
+        function buildLogLine(entry) {
+            const line = document.createElement('div');
+            line.className = 'log-line log-' + (entry.level || 'info');
+
+            const ts = document.createElement('span');
+            ts.className = 'log-ts';
+            ts.textContent = new Date(entry.timestamp).toLocaleTimeString();
+
+            const stage = document.createElement('span');
+            stage.className = 'log-stage';
+            stage.textContent = entry.stage || '';
+
+            const msg = document.createElement('span');
+            msg.className = 'log-msg';
+            msg.textContent = entry.message;
+
+            line.append(ts, stage, msg);
+            return line;
+        }
+
+        function renderLogInto(container, entries, options) {
+            options = options || {};
+            entries = entries || [];
+
+            if (!entries.length) {
+                container.__logKeys = [];
+                container.textContent = options.running
+                    ? 'Waiting for the worker to report the first lines\u2026'
+                    : 'No log recorded for this job. Logs are captured while a job runs, so jobs that ran before logging was added have none.';
+                return;
+            }
+
+            const keys = container.__logKeys || [];
+
+            // The worker's log drops its own middle once it outgrows its cap, so
+            // what arrives is not always an extension of what is displayed. Only
+            // then is a full redraw justified.
+            let appendOnly = entries.length >= keys.length;
+            if (appendOnly) {
+                for (let i = 0; i < keys.length; i++) {
+                    if (logLineKey(entries[i]) !== keys[i]) { appendOnly = false; break; }
+                }
+            }
+
+            // Follow the tail only when the reader is already at the bottom.
+            // Yanking the view down while they are reading further up would be
+            // hostile, and a live log would become unreadable.
+            const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= logBottomSlackPx;
+
+            let from = keys.length;
+            if (!appendOnly || !keys.length) {
+                container.textContent = ''; // also clears any placeholder text
+                keys.length = 0;
+                from = 0;
+            }
+
+            for (let i = from; i < entries.length; i++) {
+                container.appendChild(buildLogLine(entries[i]));
+                keys.push(logLineKey(entries[i]));
+            }
+            container.__logKeys = keys;
+
+            if (atBottom) { container.scrollTop = container.scrollHeight; }
+        }
+
+        // tailJobLog loads a job's log and, while that job is still running,
+        // keeps it current. It returns a function that stops the tail.
+        function tailJobLog(container, jobId, options) {
+            options = options || {};
+            let stopped = false;
+            let timer = null;
+
+            function stop() {
+                if (stopped) { return; }
+                stopped = true;
+                if (timer) { clearTimeout(timer); timer = null; }
+                if (options.onStop) { options.onStop(); }
+            }
+
+            async function poll(isFirst) {
+                if (stopped) { return; }
+                try {
+                    const res = await fetch(jobLogUrl(jobId));
+                    if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                    const data = await res.json();
+                    if (stopped) { return; }
+
+                    renderLogInto(container, data.entries, {running: data.running});
+                    if (options.onUpdate) { options.onUpdate(data); }
+
+                    // The job has finished and this render included its closing
+                    // lines, so there is nothing left to wait for.
+                    if (!data.running) { stop(); return; }
+                } catch (e) {
+                    if (stopped) { return; }
+                    // Only the first failure is worth showing: after that there
+                    // is a readable log on screen, and a dropped poll is simply
+                    // retried on the next tick.
+                    if (isFirst) { container.textContent = 'Failed to load log: ' + e.message; }
+                }
+                if (!stopped) { timer = setTimeout(function() { poll(false); }, logTailIntervalMs); }
+            }
+
+            poll(true);
+            return stop;
+        }
+`
+
 // webUITemplate is the HTML template for the web interface
 var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
@@ -79,6 +216,9 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }
         .fps-text, .eta-text { font-variant-numeric: tabular-nums; white-space: nowrap; }
         .stage-text { text-transform: capitalize; }
+        .live-badge { display: inline-flex; align-items: center; gap: 6px; background: #1b3a2a; border: 1px solid #2d6a4f; color: #95d5b2; border-radius: 10px; padding: 1px 9px; font-size: .75em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-left: 10px; vertical-align: middle; }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #52b788; animation: live-pulse 1.6s ease-in-out infinite; }
+        @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
         .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8em; line-height: 1.5; }
         .joblog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 1100; }
         .joblog-panel { background: #16213e; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); width: min(1100px, 92vw); max-height: 84vh; margin: 6vh auto 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -542,6 +682,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             <div class="joblog-panel">
                 <div class="joblog-header">
                     <strong id="jobLogModalTitle">Job Log</strong>
+                    <span id="jobLogLive" class="live-badge" style="display:none"><span class="live-dot"></span>live</span>
                     <span style="flex:1"></span>
                     <span id="jobLogCopyStatus" style="color:#95d5b2;font-size:.85em;margin-right:8px"></span>
                     <button class="btn btn-secondary btn-sm" onclick="copyJobLog()">Copy</button>
@@ -1067,6 +1208,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
         }
 
+` + jobLogTailScript + `
         // ---- Job log viewer ----
 
         // The log is shown in a modal rather than inline in the History table on
@@ -1075,8 +1217,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         // could leave the browser's selection anchors pointing at removed nodes).
         // The modal lives outside the table, so refreshes never touch it.
         let jobLogModalJobId = null;
+        let stopJobLogTail = null;
 
-        async function openJobLogModal(jobId) {
+        function openJobLogModal(jobId) {
+            // Stop tailing whatever was open before, or two tails would write
+            // into the same box.
+            stopJobLogTailIfRunning();
+
             jobLogModalJobId = jobId;
 
             document.getElementById('jobLogModalTitle').textContent = 'Job Log — ' + jobId;
@@ -1084,24 +1231,32 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             document.getElementById('jobLogModal').style.display = 'block';
 
             const box = document.getElementById('jobLogModalBody');
+            box.__logKeys = [];
             box.textContent = 'Loading log…';
 
-            try {
-                const res = await fetch(apiUrlWithKey('/api/job/logs', {job_id: jobId}));
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
+            const live = document.getElementById('jobLogLive');
+            stopJobLogTail = tailJobLog(box, jobId, {
+                onUpdate: function(data) {
+                    if (!live) { return; }
+                    // The badge is the only sign that the view is following a
+                    // job rather than showing a finished one.
+                    live.style.display = data.running ? 'inline-flex' : 'none';
+                },
+                onStop: function() {
+                    if (live) { live.style.display = 'none'; }
+                },
+            });
+        }
 
-                // Ignore a response for a log the user has already navigated away from.
-                if (jobLogModalJobId !== jobId) return;
-                renderLogInto(box, data.entries || []);
-            } catch (e) {
-                if (jobLogModalJobId === jobId) {
-                    box.textContent = 'Failed to load log: ' + e.message;
-                }
+        function stopJobLogTailIfRunning() {
+            if (stopJobLogTail) {
+                stopJobLogTail();
+                stopJobLogTail = null;
             }
         }
 
         function closeJobLogModal() {
+            stopJobLogTailIfRunning();
             jobLogModalJobId = null;
             document.getElementById('jobLogModal').style.display = 'none';
         }
@@ -1127,35 +1282,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 status.textContent = 'Copy failed — select the text manually';
             }
             setTimeout(function() { status.textContent = ''; }, 2000);
-        }
-
-        function renderLogInto(container, entries) {
-            container.textContent = '';
-
-            if (!entries.length) {
-                container.textContent = 'No log recorded for this job. Logs are captured while a job runs, so jobs that ran before logging was added have none.';
-                return;
-            }
-
-            entries.forEach(function(e) {
-                const line = document.createElement('div');
-                line.className = 'log-line log-' + (e.level || 'info');
-
-                const ts = document.createElement('span');
-                ts.className = 'log-ts';
-                ts.textContent = new Date(e.timestamp).toLocaleTimeString();
-
-                const stage = document.createElement('span');
-                stage.className = 'log-stage';
-                stage.textContent = e.stage || '';
-
-                const msg = document.createElement('span');
-                msg.className = 'log-msg';
-                msg.textContent = e.message;
-
-                line.append(ts, stage, msg);
-                container.appendChild(line);
-            });
         }
 
         // Close on Escape, and on a click of the backdrop itself (but not of the
@@ -2536,6 +2662,9 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }
         .fps-text, .eta-text { font-variant-numeric: tabular-nums; white-space: nowrap; }
         .stage-text { text-transform: capitalize; }
+        .live-badge { display: inline-flex; align-items: center; gap: 6px; background: #1b3a2a; border: 1px solid #2d6a4f; color: #95d5b2; border-radius: 10px; padding: 1px 9px; font-size: .75em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-left: 10px; vertical-align: middle; }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #52b788; animation: live-pulse 1.6s ease-in-out infinite; }
+        @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
         .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 460px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em; line-height: 1.5; }
         .log-line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-word; }
         .log-ts { color: #666; flex: 0 0 auto; }
@@ -2679,10 +2808,12 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         <div class="card">
             <h2>Job Log
                 <button class="btn btn-secondary" style="float:right;font-size:.8em;padding:4px 10px"
-                        onclick="loadJobLog()">Refresh</button>
+                        onclick="reloadJobLog()">Refresh</button>
+                <span id="job-log-live" class="live-badge" style="display:none"><span class="live-dot"></span>live</span>
             </h2>
             <p style="color:#aaa;font-size:.85em;margin-bottom:10px">
                 Recorded by the worker while running this job, including FFmpeg's own output.
+                While the job is running the log follows it on its own.
             </p>
             <div id="job-log" class="log-view">Loading&hellip;</div>
         </div>
@@ -2741,55 +2872,31 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
             btnContainer.appendChild(btnCancel);
         }
 
-        async function loadJobLog() {
+` + jobLogTailScript + `
+        // The log follows the job while it runs, so this page can be left open
+        // to watch a conversion rather than reloaded to see what happened.
+        let stopJobLogTail = null;
+
+        function reloadJobLog() {
+            if (stopJobLogTail) { stopJobLogTail(); }
+
             const container = document.getElementById('job-log');
-            let url = '/api/job/logs?job_id=' + encodeURIComponent(jobId);
-            const apiKey = localStorage.getItem('darkstreamAdminApiKey');
-            if (apiKey) url += '&api_key=' + encodeURIComponent(apiKey);
+            container.__logKeys = [];
+            container.textContent = 'Loading…';
 
-            try {
-                const res = await fetch(url);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
-                renderJobLog(data.entries || []);
-            } catch (e) {
-                container.textContent = 'Failed to load log: ' + e.message;
-            }
-        }
-
-        function renderJobLog(entries) {
-            const container = document.getElementById('job-log');
-            container.textContent = '';
-
-            if (!entries.length) {
-                container.textContent = 'No log recorded for this job. Logs are captured by the worker when a job runs; jobs that ran before logging was added have none.';
-                return;
-            }
-
-            entries.forEach(function(e) {
-                const line = document.createElement('div');
-                line.className = 'log-line log-' + (e.level || 'info');
-
-                const ts = document.createElement('span');
-                ts.className = 'log-ts';
-                ts.textContent = new Date(e.timestamp).toLocaleTimeString();
-
-                const stage = document.createElement('span');
-                stage.className = 'log-stage';
-                stage.textContent = e.stage || '';
-
-                const msg = document.createElement('span');
-                msg.className = 'log-msg';
-                msg.textContent = e.message;
-
-                line.append(ts, stage, msg);
-                container.appendChild(line);
+            stopJobLogTail = tailJobLog(container, jobId, {
+                onUpdate: function(data) {
+                    const live = document.getElementById('job-log-live');
+                    if (live) { live.style.display = data.running ? 'inline-flex' : 'none'; }
+                },
+                onStop: function() {
+                    const live = document.getElementById('job-log-live');
+                    if (live) { live.style.display = 'none'; }
+                },
             });
-
-            container.scrollTop = container.scrollHeight;
         }
 
-        loadJobLog();
+        reloadJobLog();
 
         // Progress polling for processing jobs
         if (jobStatus === 'processing') {

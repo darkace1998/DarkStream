@@ -32,6 +32,10 @@ type JobLog struct {
 	head    []models.JobLogEntry
 	tail    []models.JobLogEntry
 	dropped int
+	// revision counts the entries recorded so far. A running job's log is
+	// shipped to the master periodically, and comparing revisions is what lets
+	// a flush skip a log that has not changed since the last one.
+	revision uint64
 }
 
 // NewJobLog creates an empty log collector.
@@ -66,6 +70,8 @@ func (l *JobLog) Add(level, stage, message string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.revision++
+
 	// Keep the first half as context, then slide a window over the rest so the
 	// most recent lines — where the failure lands — are always retained.
 	halfCap := maxJobLogEntries / 2
@@ -79,6 +85,17 @@ func (l *JobLog) Add(level, stage, message string) {
 		l.tail = l.tail[1:]
 		l.dropped++
 	}
+}
+
+// Revision reports how many entries have been recorded, including ones since
+// dropped. It only ever increases, so an unchanged value means an unchanged log.
+func (l *JobLog) Revision() uint64 {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.revision
 }
 
 // AddDetected records a line whose severity is inferred from its content. FFmpeg

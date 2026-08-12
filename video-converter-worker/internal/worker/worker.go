@@ -345,6 +345,16 @@ func (w *Worker) effectiveThreads() int {
 // without restarting the process.
 const remoteConfigRefreshInterval = 30 * time.Second
 
+// jobLogFlushInterval is how often a running job's log is shipped to the master.
+// Short enough that the log view reads as live, long enough that a noisy FFmpeg
+// run does not spend the worker's request budget resending the same lines.
+const jobLogFlushInterval = 3 * time.Second
+
+// jobLogProgressInterval is how often encoding progress is written to the job
+// log. It is deliberately coarser than the flush interval: the log is capped,
+// and progress lines should not crowd out FFmpeg's own output.
+const jobLogProgressInterval = 10 * time.Second
+
 // refreshRemoteWorkerConfig periodically re-fetches the worker configuration
 // from the master and applies the settings that can be changed safely while the
 // worker is running. Settings that are bound at startup (concurrency, poll
@@ -555,9 +565,17 @@ func (w *Worker) processJob(job *models.Job) {
 	record := NewJobLog()
 	record.Info(models.JobStageDownload, "Job started: "+job.SourcePath+" -> "+job.OutputPath)
 
+	// Ship the log while the job is still running, so the dashboard can tail a
+	// conversion instead of only seeing it once the job has finished.
+	stopStreaming := w.streamJobLog(job.ID, record)
+
 	startedAt := time.Now()
 	err := w.executeJob(job, jobLog, record)
 	duration := time.Since(startedAt)
+
+	// Stop streaming before the final report below, so the two cannot race and
+	// leave the master holding a stale copy as the last word.
+	stopStreaming()
 	if err != nil {
 		w.markJobFinished(job.ID, false, err)
 		jobLog.Error("Job execution failed",
@@ -580,6 +598,62 @@ func (w *Worker) processJob(job *models.Job) {
 	// failure here must not change the job's result — it is diagnostics only.
 	if logErr := w.masterClient.ReportJobLog(job.ID, record.Entries()); logErr != nil {
 		jobLog.Warn("Failed to report job log to master", "error", logErr)
+	}
+}
+
+// streamJobLog periodically ships a running job's log to the master, returning a
+// function that stops the streaming and waits for it to finish.
+//
+// The log used to be sent once, after the job ended, so opening the log view for
+// a job that was still converting showed "no log recorded" — exactly the job
+// whose progress someone is most likely to want to watch.
+//
+// Each flush sends the whole capped log rather than a delta. The log elides its
+// own middle once it grows past the cap, so previously sent lines can be
+// replaced by an "earlier lines omitted" marker; appending deltas would leave
+// the master holding lines the worker has already discarded. Sending the whole
+// thing keeps the master's copy an exact mirror, and the revision check means an
+// idle log costs nothing.
+func (w *Worker) streamJobLog(jobID string, record *JobLog) func() {
+	if w.masterClient == nil || record == nil {
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+
+	go func() {
+		defer close(stopped)
+
+		ticker := time.NewTicker(jobLogFlushInterval)
+		defer ticker.Stop()
+
+		var sent uint64
+		for {
+			select {
+			case <-done:
+				return
+			case <-w.ctx.Done():
+				return
+			case <-ticker.C:
+				current := record.Revision()
+				if current == sent {
+					continue // nothing new; do not spend a request saying so
+				}
+				if err := w.masterClient.ReportJobLog(jobID, record.Entries()); err != nil {
+					// The final report after the job ends is the backstop, so a
+					// failed flush is not worth escalating.
+					slog.Debug("Failed to stream job log to master", "job_id", jobID, "error", err)
+					continue
+				}
+				sent = current
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-stopped
 	}
 }
 
@@ -718,9 +792,24 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger, record *JobLog) e
 		cfg.TargetResolution, cfg.Codec, cfg.Bitrate, cfg.Preset,
 		dynamicCfg.OutputFormat, cfg.HWAccel))
 
-	// Convert video with progress callback
+	// Convert video with progress callback.
+	//
+	// A line is also written to the job log every so often. FFmpeg's own
+	// per-frame progress arrives on a separate channel and is filtered out of
+	// the log, so without this the log of a running conversion would sit
+	// unchanged for the entire encode — live, but with nothing to show for it.
+	// The callback runs on the single goroutine draining FFmpeg's output, so
+	// the timestamp below needs no synchronisation.
+	var lastProgressLogged time.Time
 	progressCallback := func(progress float64, fps float64) {
 		w.reportProgress(job.ID, progress, fps, "convert")
+
+		if time.Since(lastProgressLogged) < jobLogProgressInterval {
+			return
+		}
+		lastProgressLogged = time.Now()
+		record.Info(models.JobStageConvert,
+			fmt.Sprintf("Encoding %.1f%% complete (%.0f fps)", progress, fps))
 	}
 	err = w.ffmpegConverter.ConvertVideoWithSink(job, cfg, progressCallback, log, func(line string) {
 		record.AddDetected(models.JobStageConvert, line)

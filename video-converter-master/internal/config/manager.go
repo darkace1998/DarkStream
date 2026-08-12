@@ -69,19 +69,19 @@ type ConversionOverride struct {
 
 // ScannerConfig holds scan settings shared by every library.
 type ScannerConfig struct {
-	VideoExtensions  []string `json:"video_extensions"`
-	RecursiveDepth   int      `json:"recursive_depth"`
-	ScanInterval     int      `json:"scan_interval"` // seconds, 0 disables periodic scanning
-	MinFileSize      int64    `json:"min_file_size"`
+	VideoExtensions []string `json:"video_extensions"`
+	RecursiveDepth  int      `json:"recursive_depth"`
+	ScanInterval    int      `json:"scan_interval"` // seconds, 0 disables periodic scanning
+	MinFileSize     int64    `json:"min_file_size"`
 	// MinFileAge is how many seconds a file must go unmodified before it is
 	// scanned, so files still being copied in are not hashed mid-write.
 	// 0 uses the built-in default; negative disables the check.
-	MinFileAge int `json:"min_file_age"`
-	MaxFileSize      int64    `json:"max_file_size"`
-	SkipHiddenFiles  bool     `json:"skip_hidden_files"`
-	SkipHiddenDirs   bool     `json:"skip_hidden_dirs"`
-	DetectDuplicates bool     `json:"detect_duplicates"`
-	EnableWatch      bool     `json:"enable_watch"`
+	MinFileAge       int   `json:"min_file_age"`
+	MaxFileSize      int64 `json:"max_file_size"`
+	SkipHiddenFiles  bool  `json:"skip_hidden_files"`
+	SkipHiddenDirs   bool  `json:"skip_hidden_dirs"`
+	DetectDuplicates bool  `json:"detect_duplicates"`
+	EnableWatch      bool  `json:"enable_watch"`
 }
 
 // NotifyConfig holds webhook notification settings.

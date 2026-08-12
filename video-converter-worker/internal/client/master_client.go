@@ -62,12 +62,12 @@ const (
 
 // MasterClient handles communication with the master coordinator
 type MasterClient struct {
-	baseURL              string
-	workerID             string
-	client               *http.Client
-	gpuAvailable         bool
-	downloadTimeout      time.Duration
-	uploadTimeout        time.Duration
+	baseURL         string
+	workerID        string
+	client          *http.Client
+	gpuAvailable    bool
+	downloadTimeout time.Duration
+	uploadTimeout   time.Duration
 	// bandwidthLimit is read by in-flight transfers while the config refresh
 	// loop may update it, so it must be accessed atomically.
 	bandwidthLimit       atomic.Int64 // bytes per second (0 = unlimited)

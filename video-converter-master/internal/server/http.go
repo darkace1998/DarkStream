@@ -2848,11 +2848,34 @@ func (s *Server) GetJobLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The job's status travels with the log so the viewer knows whether to keep
+	// tailing it. Without it a client would have to poll a running job forever,
+	// or stop early and miss the lines that explain how it ended.
+	status := ""
+	running := false
+	if job, jobErr := s.db.GetJobByID(jobID); jobErr == nil && job != nil {
+		status = job.Status
+		running = !isTerminalJobStatus(job.Status)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		fieldJobID: jobID,
 		"entries":  entries,
 		fieldCount: len(entries),
+		"status":   status,
+		"running":  running,
 	})
+}
+
+// isTerminalJobStatus reports whether a job has finished for good, so nothing
+// further will be appended to its log.
+func isTerminalJobStatus(status string) bool {
+	switch status {
+	case constants.JobStatusCompleted, constants.JobStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // refreshChecksumIfStale updates a job's stored source checksum when the file on

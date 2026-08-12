@@ -29,6 +29,16 @@ build() {
 }
 
 start() {
+  # Refuse to stack a second copy on top of a running one. Both processes would
+  # register under the same worker ID, so the dashboard shows one worker while
+  # two compete for jobs and for the machine's cores — which looks like a
+  # phantom extra worker and oversubscribes the box.
+  if running_pids | read -r _; then
+    echo "already running (use '''$0 restart''' or '''$0 stop''' first):"
+    running_pids | while read -r pid; do echo "  pid $pid"; done
+    exit 1
+  fi
+
   mkdir -p "$RUN/videos" "$RUN/converted" "$RUN/cache" "$RUN/db"
   # Seed sample videos on first run.
   if ! ls "$RUN/videos"/*.mp4 >/dev/null 2>&1; then
@@ -64,12 +74,40 @@ start() {
   echo "CLI       : $BIN/darkstream-cli status --watch"
 }
 
+# running_pids lists the PIDs of any master or worker started from this
+# directory, one per line. It matches on the binary path rather than a name, so
+# it never matches this script or an unrelated process.
+running_pids() {
+  # Matched on the "-config" argument as well as the binary name, so a copy
+  # started by hand with a relative path is found too, while this script (which
+  # takes no such argument) never matches itself.
+  pgrep -f "darkstream-(master|worker) -config" 2>/dev/null || true
+}
+
 stop() {
+  # The pid files are the fast path, but a process started by hand — or one
+  # whose pid file was lost — would otherwise survive and keep taking jobs, so
+  # sweep for strays afterwards.
   for p in master worker; do
     if [ -f "$RUN/$p.pid" ]; then
       kill "$(cat "$RUN/$p.pid")" 2>/dev/null && echo "stopped $p"
       rm -f "$RUN/$p.pid"
     fi
+  done
+
+  local strays
+  strays=$(running_pids)
+  if [ -n "$strays" ]; then
+    echo "$strays" | while read -r pid; do
+      kill "$pid" 2>/dev/null && echo "stopped stray pid $pid"
+    done
+  fi
+
+  # Give a conversion in flight a moment to be cancelled, so FFmpeg is not left
+  # holding the GPU.
+  for _ in $(seq 1 20); do
+    running_pids | read -r _ || break
+    sleep 0.5
   done
 }
 
