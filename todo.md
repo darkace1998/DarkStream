@@ -804,6 +804,56 @@ Verified live: toggling a library through the API moved `enabled` on the stream 
 bumped `config_version` 14 → 15, and the jsdom harness confirms library rows and their buttons are
 the same DOM nodes across refreshes.
 
+### 28. [x] The log view was empty for exactly the jobs worth watching — **FIXED**
+
+Asked for as "can u make it so that the logs are live in the log view of running jobs". They could
+not be, because there was nothing to show: the worker collected a job's log in memory and sent it to
+the master once, after the job ended. Open the log for a running conversion and the master had no
+log to serve, so the view said "no log recorded for this job" — for the one job someone actually
+wants to watch.
+
+The worker now flushes the log every three seconds while a job runs. Each flush sends the whole
+capped log rather than a delta, because the log elides its own middle once it outgrows its cap:
+lines already sent can be replaced by an "earlier lines omitted" marker, so appending deltas would
+leave the master holding lines the worker has discarded. A revision counter means an unchanged log
+costs nothing.
+
+That alone produced a log that was live but motionless: FFmpeg's per-frame progress goes to
+`-progress pipe:2` and is deliberately filtered out of the log, so between the input analysis and the
+final lines nothing was recorded for the entire encode. A progress line is now written every ten
+seconds — coarser than the flush interval, so it does not crowd FFmpeg's own output out of a capped
+log.
+
+The client tails a running job and stops on its own when the job finishes, which the log endpoint now
+reports (`running`/`status`) alongside the entries. New lines are appended rather than redrawn — a
+redraw would clear any text the reader had selected, the defect that moved the log into a modal in
+the first place — and the view follows the tail only when the reader is already at the bottom. The
+dashboard modal and the job detail page share one implementation rather than two copies of a rule
+that is easy to get subtly wrong in one of them.
+
+Verified on a real 10-minute 1080p conversion: the log grew through
+`Encoding 0.5% → 10.5% → 33.0% → 67.2% → 89.4%` with live fps while `running=true`, then finished at
+`Job completed successfully in 1m37.372s` with `running=false`, at which point the tail stopped.
+
+### 29. [x] The launcher stacked duplicate masters and workers — **FIXED**
+
+Found while testing #28: three workers were running at once, all registered under the same worker ID.
+The dashboard therefore showed **one** worker while three competed for jobs and for the machine's
+cores, and a job under test was picked up by a months-stale binary. This is what the earlier
+"i see 2 workers" report actually was.
+
+`start` now refuses when a master or worker is already running, and `stop` sweeps up strays instead
+of trusting the pid files alone — a process started by hand has no pid file and used to survive a
+stop, quietly taking jobs.
+
+Two traps worth recording, both of which cost time here:
+
+- `nohup cmd & echo $! > pid` is correct, but wrapping it in `setsid` is not: `$!` is then setsid's
+  pid, not the daemon's, so every later `kill` misses and copies accumulate.
+- `pgrep -f <pattern>` matches the shell command line that contains the pattern — including the one
+  running the `pgrep`. Killing that match kills your own shell (exit 144). Keep the pattern and the
+  `kill` in separate commands.
+
 ---
 
 ## Notes for anyone reproducing this
