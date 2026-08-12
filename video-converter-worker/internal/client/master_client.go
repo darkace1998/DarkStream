@@ -41,6 +41,10 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// WorkerIDHeader carries the worker's identity on every request so the master
+// can attribute and rate limit per worker.
+const WorkerIDHeader = "X-Worker-ID"
+
 // ErrNoJobsAvailable is returned when no jobs are available from the master
 var ErrNoJobsAvailable = errors.New("no jobs available")
 
@@ -203,6 +207,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	if mc.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
 	}
+	mc.addWorkerHeader(req)
 
 	resp, err := mc.client.Do(req)
 	if err != nil {
@@ -266,6 +271,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 	if mc.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
 	}
+	mc.addWorkerHeader(req)
 
 	resp, err := mc.client.Do(req)
 	if err != nil {
@@ -788,6 +794,18 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 func (mc *MasterClient) addAuthHeader(req *http.Request) {
 	if mc.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	}
+	mc.addWorkerHeader(req)
+}
+
+// addWorkerHeader identifies this worker on every request. The master rate
+// limits per worker rather than per address, so that several workers on one host
+// — or behind one NAT — get their own budget instead of sharing a single one.
+// Most endpoints carry the worker ID only in the request body, which the limiter
+// cannot see without consuming it.
+func (mc *MasterClient) addWorkerHeader(req *http.Request) {
+	if mc.workerID != "" {
+		req.Header.Set(WorkerIDHeader, mc.workerID)
 	}
 }
 

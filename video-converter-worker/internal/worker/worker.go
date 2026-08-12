@@ -33,6 +33,7 @@ type Worker struct {
 	metadataExtractor *converter.MetadataExtractor
 	vulkanDetector    *converter.VulkanDetector
 	capabilities      *models.WorkerCapabilities
+	progressThrottle  *progressThrottle
 	validator         *converter.Validator
 	cacheManager      *CacheManager
 	concurrency       int
@@ -152,6 +153,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 		validator:         validator,
 		cacheManager:      cacheManager,
 		concurrency:       cfg.Worker.Concurrency,
+		progressThrottle:  newProgressThrottle(),
 		activeJobs:        0,
 		activeJobIDs:      make(map[string]time.Time),
 		jobSemaphore:      jobSemaphore,
@@ -753,6 +755,12 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger, record *JobLog) e
 
 // reportProgress sends progress update to master
 func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) {
+	// FFmpeg reports progress many times a second; forwarding every one of them
+	// swamps the master's rate limit and starves heartbeats and job dispatch.
+	if !w.progressThrottle.allow(jobID, progress, stage) {
+		return
+	}
+
 	progressReport := &models.JobProgress{
 		JobID:     jobID,
 		WorkerID:  w.config.Worker.ID,

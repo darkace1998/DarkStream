@@ -77,23 +77,45 @@ early *regardless of file size*, which is the failure the size threshold was act
 64 KB of garbage with no video stream is now rejected where a size-only check would have passed it.
 Covered by 7 tests.
 
-### 4. [ ] Rate limiter starves the control plane — **HIGH**
-`video-converter-master/internal/server/http.go:2441`, `126`
+### 4. [x] Rate limiter starved the control plane — **FIXED**
+`video-converter-master/internal/server/http.go`, `video-converter-worker/internal/worker/progress_throttle.go`
 
-`rateLimitMiddleware` applies a **hardcoded 100 req/min per IP** across *all* endpoints, sharing one
-token bucket between high-frequency progress updates and critical control-plane calls.
+One hardcoded bucket of 100 requests per minute per IP covered every endpoint, so high-frequency
+telemetry competed with the calls that keep the system running. Measured on the running instance:
 
-Observed: progress updates burned the bucket, causing `429` on `upload-video` and `next-job`. One
-upload failed its first attempt purely from throttling, and even `darkstream-cli status` was rejected
-with `429` while the worker was busy. The failure surfaced as a confusing closed-pipe error (see #1).
+```
+143,214 rejections
+  134,426  /api/worker/job-progress
+      549  /api/worker/next-job
+      296  /api/worker/heartbeat     <- starved
+      220  /api/worker/config
+       59  /api/worker/download-video
+```
 
-- [ ] Separate buckets per endpoint class (progress/telemetry vs. job control vs. transfers), or exempt
-      transfers and job dispatch entirely.
-- [ ] Honour the configured `max_api_requests_per_min` — the server ignores it and hardcodes 100/min,
-      so the master/worker config keys are misleading.
-- [ ] Key the limiter on worker identity, not IP: every worker on one host (or behind NAT) shares a
-      single bucket today, so the limit tightens as workers are added — the opposite of what's wanted.
-- [ ] Throttle progress reporting client-side (the worker emitted many updates per second per job).
+The visible symptom was a worker shown as **offline while actively converting**, because its
+heartbeats were being rejected — and job dispatch and downloads were being turned away too.
+
+Four changes:
+- **The worker no longer reports every FFmpeg progress line.** It sends an update when the stage
+  changes, when progress advances a percent, on completion, or every two seconds — and drops the
+  redundant repeats that made up the flood.
+- **Separate budgets per class.** Telemetry, control and transfers no longer share one bucket, so
+  progress reporting cannot starve heartbeats. Telemetry gets a larger allowance since losing one
+  update costs nothing.
+- **Transfers are exempt entirely.** Throttling an upload only turns a conversion that has already
+  done all its work into a failed job.
+- **Keyed per worker rather than per address**, via a header, since most calls carry the worker ID
+  only in the request body. Several workers on one host previously shared a single budget, so the
+  effective limit tightened as workers were added.
+
+The configured `max_api_requests_per_min` is now honoured instead of being ignored in favour of a
+hardcoded 100.
+
+A latent crash was found and fixed while testing: a zero refill interval divided by zero and would
+have taken the master down, which a large enough configured limit produces.
+
+Result on the running instance: **0 rejections** where there had been 143,214, worker correctly
+reported online, and live progress still flowing (`stage=convert progress=12.6% fps=11.48`).
 
 ### 5. [ ] Aspect ratio is distorted — portrait sources are squashed to landscape — **MEDIUM**
 `video-converter-worker/internal/converter/ffmpeg.go:211`

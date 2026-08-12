@@ -141,7 +141,19 @@ func (rl *rateLimiter) allow(ip string, maxTokens int, refillRate time.Duration)
 		return true
 	}
 
-	// Refill tokens based on time elapsed
+	// Refill tokens based on time elapsed. A non-positive refill rate would
+	// divide by zero and take the whole master down, which a large enough
+	// configured request limit can produce, so treat it as "refill everything".
+	if refillRate <= 0 {
+		state.tokens = maxTokens
+		state.lastRefill = now
+		if state.tokens > 0 {
+			state.tokens--
+			return true
+		}
+		return false
+	}
+
 	elapsed := now.Sub(state.lastRefill)
 	tokensToAdd := int(elapsed / refillRate)
 
@@ -2553,13 +2565,87 @@ func validateConfigContent(configType string, content []byte) []string {
 }
 
 // rateLimitMiddleware applies rate limiting to endpoints
+// Rate-limit classes. A single shared bucket meant high-frequency telemetry
+// competed with the calls that keep the system running: progress updates would
+// exhaust it and then heartbeats, job dispatch and transfers were rejected, so a
+// busy worker was reported offline while its work stalled. Each class now has
+// its own budget.
+const (
+	rateClassTelemetry = "telemetry" // progress and other chatty reporting
+	rateClassTransfer  = "transfer"  // uploads and downloads
+	rateClassControl   = "control"   // everything else
+)
+
+// telemetryRateMultiplier gives progress reporting a larger allowance than the
+// control plane, since it is expected to be frequent and losing one update
+// costs nothing.
+const telemetryRateMultiplier = 4
+
+// rateLimitClass returns the class a request belongs to.
+func rateLimitClass(path string) string {
+	switch {
+	case strings.HasSuffix(path, "/job-progress"), strings.HasSuffix(path, "/job-log"):
+		return rateClassTelemetry
+	case strings.Contains(path, "-video"):
+		return rateClassTransfer
+	default:
+		return rateClassControl
+	}
+}
+
+// rateLimitKey identifies the caller. Worker identity is preferred over the
+// client address: several workers on one host, or behind NAT, otherwise share a
+// single budget, so the limit tightens as workers are added — the opposite of
+// what is wanted.
+func rateLimitKey(r *http.Request) string {
+	// Most worker calls carry their identity only in the request body, which the
+	// limiter cannot read without consuming it, so the client also sends a
+	// header. The query parameter is checked for older workers.
+	if workerID := r.Header.Get(workerIDHeader); workerID != "" {
+		return "worker:" + workerID
+	}
+	if workerID := r.URL.Query().Get(fieldWorkerID); workerID != "" {
+		return "worker:" + workerID
+	}
+	return "ip:" + clientIP(r)
+}
+
+// requestsPerMinute returns the configured allowance for a class.
+func (s *Server) requestsPerMinute(class string) int {
+	limit := defaultRequestsPerMinute
+	if configured := s.configMgr.GetWorkerConfig().MaxAPIRequestsPerMin; configured > 0 {
+		limit = configured
+	}
+
+	switch class {
+	case rateClassTelemetry:
+		return limit * telemetryRateMultiplier
+	case rateClassTransfer:
+		// Transfers are few but must never be turned away: a rejected upload
+		// fails a job that has already done all of its work.
+		return limit
+	default:
+		return limit
+	}
+}
+
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		class := rateLimitClass(r.URL.Path)
 
-		// Apply rate limit: 100 requests per minute per IP
-		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
-			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
+		// Transfers are exempt. They are inherently long and infrequent, and
+		// throttling one only turns a completed conversion into a failed job.
+		if class == rateClassTransfer {
+			next(w, r)
+			return
+		}
+
+		limit := s.requestsPerMinute(class)
+		key := rateLimitKey(r) + "|" + class
+
+		if !s.rateLimiter.allow(key, limit, time.Minute/time.Duration(limit)) {
+			slog.Warn("Rate limit exceeded",
+				"key", key, "class", class, "limit_per_min", limit, "path", r.URL.Path)
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -2688,6 +2774,13 @@ const (
 	converterBackendNone   = "none"
 	converterBackendVulkan = "vulkan"
 )
+
+// workerIDHeader carries a worker's identity on every request it makes.
+const workerIDHeader = "X-Worker-ID"
+
+// defaultRequestsPerMinute is the per-class allowance used when the worker
+// configuration does not set one.
+const defaultRequestsPerMinute = 100
 
 // maxJobLogBodySize bounds a submitted job log. Workers already cap what they
 // send; this protects the master from a misbehaving or hostile client.
