@@ -19,6 +19,12 @@ type ConversionSettings struct {
 	AudioCodec       string `json:"audio_codec"   yaml:"audio_codec"`
 	AudioBitrate     string `json:"audio_bitrate" yaml:"audio_bitrate"`
 	OutputFormat     string `json:"output_format" yaml:"output_format"` // mp4, mkv, webm, avi
+
+	// HWAccel selects the hardware-acceleration backend used for encoding:
+	// "" or "none" (CPU), or "vulkan" (Vulkan video encode). DarkStream supports
+	// only open, vendor-neutral acceleration — there is no vendor-specific path.
+	// It supersedes the legacy per-worker use_vulkan flag when set.
+	HWAccel string `json:"hwaccel" yaml:"hwaccel"`
 }
 
 // MasterConfig holds the configuration for the master coordinator service.

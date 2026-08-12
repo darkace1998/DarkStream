@@ -4,9 +4,11 @@ package converter
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,8 +22,20 @@ import (
 )
 
 const (
-	// MinOutputFileSize is the minimum acceptable size for output files (1MB)
-	MinOutputFileSize = 1024 * 1024
+	// MinOutputFileSize is a floor used only to catch empty or truncated output.
+	// It is deliberately tiny: a real validity check is done with ffprobe, since
+	// a legitimately short or low-bitrate clip can be far smaller than any size
+	// threshold worth setting.
+	MinOutputFileSize = 1024
+
+	// outputDurationTolerance is how far the output duration may differ from the
+	// source before the conversion is considered truncated. Container rounding
+	// and trailing partial frames account for well under a second.
+	outputDurationTolerance = 2 * time.Second
+
+	// outputDurationToleranceRatio allows longer files a proportional margin,
+	// which matters for variable-frame-rate sources.
+	outputDurationToleranceRatio = 0.02
 )
 
 // FFmpeg encoder and muxer names. These are FFmpeg's own identifiers and are
@@ -34,6 +48,29 @@ const (
 	muxerMP4          = "mp4"
 )
 
+// Hardware-acceleration backends selectable via ConversionConfig.HWAccel.
+// DarkStream deliberately supports only Vulkan and CPU encoding: Vulkan is an
+// open, vendor-neutral API, so there is no vendor-specific path to maintain.
+const (
+	HWAccelNone   = "none"
+	HWAccelVulkan = "vulkan"
+)
+
+// resolveHWAccel returns the effective backend, honouring the legacy UseVulkan
+// flag only when HWAccel is unset.
+func resolveHWAccel(cfg *models.ConversionConfig) string {
+	switch strings.ToLower(strings.TrimSpace(cfg.HWAccel)) {
+	case HWAccelVulkan:
+		return HWAccelVulkan
+	case HWAccelNone:
+		return HWAccelNone
+	}
+	if cfg.UseVulkan {
+		return HWAccelVulkan
+	}
+	return HWAccelNone
+}
+
 var (
 	// ffmpegTimePattern matches FFmpeg's out_time_ms field (in microseconds)
 	ffmpegTimePattern = regexp.MustCompile(`out_time_ms=(\d+)`)
@@ -43,6 +80,12 @@ var (
 
 // ProgressCallback is a function type for progress updates during conversion
 type ProgressCallback func(progress float64, fps float64)
+
+// LineSink receives FFmpeg's output lines as they are produced, so callers can
+// record them against the job. FFmpeg writes both progress data and its
+// diagnostics to stderr; the sink only receives the diagnostics, since progress
+// lines are high-frequency machine output with no diagnostic value.
+type LineSink func(line string)
 
 // FFmpegConverter handles video conversion using FFmpeg
 type FFmpegConverter struct {
@@ -88,6 +131,18 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	progressCallback ProgressCallback,
 	log *slog.Logger,
 ) error {
+	return fc.ConvertVideoWithSink(job, cfg, progressCallback, log, nil)
+}
+
+// ConvertVideoWithSink performs the conversion and additionally streams FFmpeg's
+// diagnostic output to sink, so the caller can attach it to the job's log.
+func (fc *FFmpegConverter) ConvertVideoWithSink(
+	job *models.Job,
+	cfg *models.ConversionConfig,
+	progressCallback ProgressCallback,
+	log *slog.Logger,
+	sink LineSink,
+) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -114,6 +169,10 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 
 	// Build FFmpeg command
 	args := fc.buildFFmpegCommand(job, cfg, log)
+
+	if sink != nil {
+		sink(fc.ffmpegPath + " " + strings.Join(args, " "))
+	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
@@ -142,9 +201,9 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	go func() {
 		defer close(readDone)
 		if progressCallback != nil && duration > 0 {
-			fc.trackProgress(stderr, duration, progressCallback, log)
+			fc.trackProgress(stderr, duration, progressCallback, log, sink)
 		} else {
-			_, _ = io.Copy(io.Discard, stderr)
+			fc.drainStderr(stderr, sink)
 		}
 	}()
 	<-readDone
@@ -161,6 +220,42 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	return nil
 }
 
+// drainStderr consumes FFmpeg's output when progress tracking is not in use,
+// forwarding diagnostics to the sink. The pipe must always be drained or FFmpeg
+// blocks once the buffer fills.
+func (fc *FFmpegConverter) drainStderr(stderr io.ReadCloser, sink LineSink) {
+	if sink == nil {
+		_, _ = io.Copy(io.Discard, stderr)
+		return
+	}
+
+	scanner := bufio.NewScanner(stderr)
+	for scanner.Scan() {
+		if line := scanner.Text(); !isProgressLine(line) {
+			sink(line)
+		}
+	}
+}
+
+// progressFields are the keys FFmpeg emits for "-progress"; they are machine
+// output repeated many times per second and would drown the job log.
+var progressFields = []string{
+	"frame=", "fps=", "stream_", "bitrate=", "total_size=", "out_time",
+	"dup_frames=", "drop_frames=", "speed=", "progress=",
+}
+
+// isProgressLine reports whether a line is FFmpeg progress data rather than a
+// diagnostic worth logging.
+func isProgressLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, field := range progressFields {
+		if strings.HasPrefix(trimmed, field) {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateOutput validates the converted output file
 func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
 	return fc.ValidateOutputWithLogger(outputPath, slog.Default())
@@ -168,23 +263,129 @@ func (fc *FFmpegConverter) ValidateOutput(outputPath string) error {
 
 // ValidateOutputWithLogger validates the converted output file using the provided logger.
 func (fc *FFmpegConverter) ValidateOutputWithLogger(outputPath string, log *slog.Logger) error {
+	return fc.ValidateOutputAgainstSource(outputPath, 0, log)
+}
+
+// ValidateOutputAgainstSource checks that a conversion actually produced usable
+// video. sourceDuration is the source length in seconds; pass 0 when it is
+// unknown, in which case the duration comparison is skipped.
+//
+// This deliberately does not judge the output by file size. A size threshold
+// rejects legitimately small results — short clips, trailers, quiet or
+// low-bitrate content — and rejecting them is permanent, because the job fails
+// rather than being retried. Instead the output is probed: it must be readable,
+// contain a video stream, and (when the source length is known) be about as long
+// as the source, which is what actually distinguishes a good conversion from a
+// truncated one.
+func (fc *FFmpegConverter) ValidateOutputAgainstSource(
+	outputPath string,
+	sourceDuration float64,
+	log *slog.Logger,
+) error {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	// Check if file exists
 	info, err := os.Stat(outputPath)
 	if err != nil {
 		return fmt.Errorf("output file not found: %w", err)
 	}
 
-	// Check minimum file size (1MB)
+	// Catch the degenerate cases (empty or a bare container header) before
+	// spending an ffprobe call on them.
 	if info.Size() < MinOutputFileSize {
-		return fmt.Errorf("output file too small: %d bytes", info.Size())
+		return fmt.Errorf("output file is empty or truncated: %d bytes", info.Size())
 	}
 
-	log.Info("Output validated", "path", outputPath, "size", info.Size())
+	probe, err := fc.probeOutput(outputPath)
+	if err != nil {
+		return fmt.Errorf("output file is not readable: %w", err)
+	}
+	if !probe.hasVideo {
+		return fmt.Errorf("output file contains no video stream")
+	}
+	if probe.duration <= 0 {
+		return fmt.Errorf("output file has no playable duration")
+	}
+
+	if sourceDuration > 0 {
+		tolerance := outputDurationTolerance.Seconds()
+		if scaled := sourceDuration * outputDurationToleranceRatio; scaled > tolerance {
+			tolerance = scaled
+		}
+		if diff := math.Abs(sourceDuration - probe.duration); diff > tolerance {
+			return fmt.Errorf(
+				"output duration %.2fs does not match source %.2fs (differs by %.2fs, tolerance %.2fs)",
+				probe.duration, sourceDuration, diff, tolerance)
+		}
+	}
+
+	log.Info("Output validated",
+		"path", outputPath,
+		"size", info.Size(),
+		"duration", probe.duration,
+		"codec", probe.videoCodec)
 	return nil
+}
+
+// outputProbe is the subset of ffprobe output used for validation.
+type outputProbe struct {
+	hasVideo   bool
+	videoCodec string
+	duration   float64
+}
+
+// probeOutput inspects a converted file with ffprobe.
+func (fc *FFmpegConverter) probeOutput(path string) (*outputProbe, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+
+	// #nosec G204 - ffprobe path is derived from the operator-configured ffmpeg
+	cmd := exec.CommandContext(ctx, fc.ffprobePath(),
+		"-v", "error",
+		"-show_entries", "format=duration:stream=codec_type,codec_name",
+		"-of", "json",
+		path,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var parsed struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, fmt.Errorf("could not parse ffprobe output: %w", err)
+	}
+
+	result := &outputProbe{}
+	for _, st := range parsed.Streams {
+		if st.CodecType == "video" {
+			result.hasVideo = true
+			result.videoCodec = st.CodecName
+			break
+		}
+	}
+	if parsed.Format.Duration != "" {
+		result.duration, _ = strconv.ParseFloat(parsed.Format.Duration, 64)
+	}
+
+	return result, nil
+}
+
+// ffprobePath derives the ffprobe binary sitting alongside the configured
+// ffmpeg, so a custom build is probed with its own matching tool.
+func (fc *FFmpegConverter) ffprobePath() string {
+	dir := filepath.Dir(fc.ffmpegPath)
+	base := strings.Replace(filepath.Base(fc.ffmpegPath), "ffmpeg", "ffprobe", 1)
+	return filepath.Join(dir, base)
 }
 
 // buildFFmpegCommand constructs the FFmpeg command arguments
@@ -196,28 +397,48 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	// Hardware-acceleration flags are per-input options and MUST precede the
 	// "-i" they apply to, otherwise ffmpeg rejects them as output options.
 	args := []string{"-progress", "pipe:2"} // Output progress to stderr
-	if cfg.UseVulkan {
-		// Use Vulkan for hardware decoding
+
+	backend := resolveHWAccel(cfg)
+	switch backend {
+	case HWAccelVulkan:
+		// Frame-threaded software decoding deadlocks against the Vulkan upload
+		// path: with an HEVC source, ffmpeg hangs within seconds and stops
+		// responding even to SIGTERM, with every thread parked in futex_do_wait
+		// and no GPU activity. Slice threading avoids the deadlock while keeping
+		// decoding multithreaded (single-threaded decode also works but is much
+		// slower). This must precede -i to apply to the input decoder.
+		args = append(args, "-thread_type", "slice")
+
+		// The Vulkan encoder takes frames from a Vulkan device, and the hwupload
+		// filter added below needs that device referenced explicitly — with only
+		// "-hwaccel vulkan" it fails with "A hardware device reference is
+		// required to upload frames to". Decoding deliberately stays in software
+		// so the scale filter still operates on ordinary frames and only the
+		// final upload crosses to the GPU.
 		args = append(args,
-			"-hwaccel", "vulkan",
-			"-hwaccel_device", "0", // Device index
+			"-init_hw_device", "vulkan=vk:0",
+			"-filter_hw_device", "vk",
 		)
 	}
 
 	args = append(args, "-i", job.SourcePath)
 
-	// Video filtering and encoding
-	args = append(args,
-		"-vf", fmt.Sprintf("scale=%s", cfg.TargetResolution),
-	)
+	// Video filtering and encoding. The Vulkan encoder consumes frames in a
+	// Vulkan hardware format, so scaling in software requires uploading the
+	// result back to the device before it reaches the encoder.
+	videoFilter := fmt.Sprintf("scale=%s", cfg.TargetResolution)
+	if backend == HWAccelVulkan {
+		videoFilter += ",format=nv12,hwupload"
+	}
+	args = append(args, "-vf", videoFilter)
 
-	// Video codec selection with Vulkan support
-	videoCodec := fc.getVideoCodecWithLogger(cfg.Codec, cfg.UseVulkan, log)
+	// Video codec selection for the chosen backend
+	videoCodec := fc.getVideoCodecForBackend(cfg.Codec, backend, log)
 	args = append(args, "-c:v", videoCodec)
 
 	// Add preset and bitrate for video
 	args = append(args,
-		"-preset", cfg.Preset,
+		"-preset", fc.getPresetForBackend(cfg.Preset, backend, log),
 		"-b:v", cfg.Bitrate,
 	)
 
@@ -245,11 +466,26 @@ func (fc *FFmpegConverter) getVideoCodec(codec string, useVulkan bool) string {
 }
 
 func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool, log *slog.Logger) string {
+	backend := HWAccelNone
+	if useVulkan {
+		backend = HWAccelVulkan
+	}
+	return fc.getVideoCodecForBackend(codec, backend, log)
+}
+
+// getPresetForBackend returns the preset to pass to the encoder. libx264 and the
+// Vulkan encoder both accept the configured names as-is.
+func (fc *FFmpegConverter) getPresetForBackend(preset, _ string, _ *slog.Logger) string {
+	return preset
+}
+
+func (fc *FFmpegConverter) getVideoCodecForBackend(codec, backend string, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	if useVulkan {
+	switch backend {
+	case HWAccelVulkan:
 		switch codec {
 		case constants.CodecH264, "avc":
 			return encoderH264Vulkan
@@ -368,6 +604,7 @@ func (fc *FFmpegConverter) trackProgress(
 	totalDuration float64,
 	callback ProgressCallback,
 	log *slog.Logger,
+	sink LineSink,
 ) {
 	if log == nil {
 		log = slog.Default()
@@ -380,6 +617,10 @@ func (fc *FFmpegConverter) trackProgress(
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		if sink != nil && !isProgressLine(line) {
+			sink(line)
+		}
 
 		// Extract current time from FFmpeg's out_time_ms field (in microseconds)
 		if matches := ffmpegTimePattern.FindStringSubmatch(line); len(matches) > 1 {

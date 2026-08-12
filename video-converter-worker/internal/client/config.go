@@ -233,6 +233,7 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 			Codec      string `json:"codec"`
 			Bitrate    string `json:"bitrate"`
 			Preset     string `json:"preset"`
+			HWAccel    string `json:"hwaccel"`
 		} `json:"video"`
 		Audio struct {
 			Codec   string `json:"codec"`
@@ -257,12 +258,14 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 		AudioCodec:       activeConfig.Audio.Codec,
 		AudioBitrate:     activeConfig.Audio.Bitrate,
 		OutputFormat:     activeConfig.Output.Format,
+		HWAccel:          activeConfig.Video.HWAccel,
 	}
 
 	slog.Debug("Config fetched from master",
 		"resolution", cfg.TargetResolution,
 		"codec", cfg.Codec,
 		"format", cfg.OutputFormat,
+		"hwaccel", cfg.HWAccel,
 	)
 
 	return cfg, nil

@@ -2,6 +2,7 @@ package converter
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -15,14 +16,86 @@ const (
 	testCodecUnknown = "unknown"
 )
 
-// TestBuildFFmpegCommandHwaccelOrder ensures Vulkan hardware-acceleration flags
-// are emitted as input options (before "-i <source>"). ffmpeg rejects them when
-// they appear after the input, so this ordering is load-bearing.
+// TestBuildFFmpegCommandHwaccelOrder ensures hardware-acceleration flags are
+// emitted as input options (before "-i <source>"). ffmpeg rejects them when they
+// appear after the input, so this ordering is load-bearing.
 func TestBuildFFmpegCommandHwaccelOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *models.ConversionConfig
+		wantFlag string
+	}{
+		{
+			name: "vulkan initialises a filter device",
+			cfg: &models.ConversionConfig{
+				HWAccel:          HWAccelVulkan,
+				TargetResolution: "1920:1080",
+				Codec:            constants.CodecH264,
+				Preset:           "fast",
+				Bitrate:          "5M",
+				AudioCodec:       constants.AudioCodecAAC,
+				AudioBitrate:     "128k",
+			},
+			// hwupload needs an explicit device reference; "-hwaccel vulkan"
+			// alone fails with "A hardware device reference is required".
+			wantFlag: "-init_hw_device",
+		},
+		{
+			name: "legacy use_vulkan flag still selects vulkan",
+			cfg: &models.ConversionConfig{
+				UseVulkan:        true,
+				TargetResolution: "1920:1080",
+				Codec:            constants.CodecH264,
+				Preset:           "fast",
+				Bitrate:          "5M",
+				AudioCodec:       constants.AudioCodecAAC,
+				AudioBitrate:     "128k",
+			},
+			wantFlag: "-init_hw_device",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &FFmpegConverter{ffmpegPath: testFFmpegPath}
+			job := &models.Job{SourcePath: "/in.mkv", OutputPath: "/out.mp4"}
+
+			args := fc.buildFFmpegCommand(job, tc.cfg, slog.Default())
+
+			flagIdx, inputIdx := -1, -1
+			for i, a := range args {
+				if a == tc.wantFlag && flagIdx == -1 {
+					flagIdx = i
+				}
+				if a == "-i" && inputIdx == -1 {
+					inputIdx = i
+				}
+			}
+
+			if flagIdx == -1 {
+				t.Fatalf("expected %s in args, got %v", tc.wantFlag, args)
+			}
+			if inputIdx == -1 {
+				t.Fatalf("expected -i in args, got %v", args)
+			}
+			if flagIdx > inputIdx {
+				t.Errorf("%s (index %d) must appear before -i (index %d): %v",
+					tc.wantFlag, flagIdx, inputIdx, args)
+			}
+			if inputIdx+1 >= len(args) || args[inputIdx+1] != job.SourcePath {
+				t.Errorf("expected input path %q immediately after -i, got %v", job.SourcePath, args)
+			}
+		})
+	}
+}
+
+// The Vulkan encoder consumes frames from a Vulkan device, so the filter chain
+// must upload them; without this the conversion fails at filter-graph init.
+func TestBuildFFmpegCommandVulkanUploadsFrames(t *testing.T) {
 	fc := &FFmpegConverter{ffmpegPath: testFFmpegPath}
 	job := &models.Job{SourcePath: "/in.mkv", OutputPath: "/out.mp4"}
 	cfg := &models.ConversionConfig{
-		UseVulkan:        true,
+		HWAccel:          HWAccelVulkan,
 		TargetResolution: "1920:1080",
 		Codec:            constants.CodecH264,
 		Preset:           "fast",
@@ -33,27 +106,25 @@ func TestBuildFFmpegCommandHwaccelOrder(t *testing.T) {
 
 	args := fc.buildFFmpegCommand(job, cfg, slog.Default())
 
-	hwaccelIdx, inputIdx := -1, -1
+	var filter string
 	for i, a := range args {
-		if a == "-hwaccel" && hwaccelIdx == -1 {
-			hwaccelIdx = i
-		}
-		if a == "-i" && inputIdx == -1 {
-			inputIdx = i
+		if a == "-vf" && i+1 < len(args) {
+			filter = args[i+1]
+			break
 		}
 	}
 
-	if hwaccelIdx == -1 {
-		t.Fatalf("expected -hwaccel in args, got %v", args)
+	if !strings.Contains(filter, "hwupload") {
+		t.Errorf("vulkan filter chain %q is missing hwupload", filter)
 	}
-	if inputIdx == -1 {
-		t.Fatalf("expected -i in args, got %v", args)
+	if !strings.Contains(filter, "format=nv12") {
+		t.Errorf("vulkan filter chain %q is missing an uploadable pixel format", filter)
 	}
-	if hwaccelIdx > inputIdx {
-		t.Errorf("-hwaccel (index %d) must appear before -i (index %d): %v", hwaccelIdx, inputIdx, args)
-	}
-	if inputIdx+1 >= len(args) || args[inputIdx+1] != job.SourcePath {
-		t.Errorf("expected input path %q immediately after -i, got %v", job.SourcePath, args)
+
+	// A filter device must accompany the upload.
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-filter_hw_device") {
+		t.Errorf("vulkan command is missing -filter_hw_device: %v", args)
 	}
 }
 

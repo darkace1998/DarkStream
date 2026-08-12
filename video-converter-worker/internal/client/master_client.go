@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -63,7 +64,9 @@ type MasterClient struct {
 	gpuAvailable         bool
 	downloadTimeout      time.Duration
 	uploadTimeout        time.Duration
-	bandwidthLimit       int64 // bytes per second (0 = unlimited)
+	// bandwidthLimit is read by in-flight transfers while the config refresh
+	// loop may update it, so it must be accessed atomically.
+	bandwidthLimit       atomic.Int64 // bytes per second (0 = unlimited)
 	enableResumeDownload bool
 	apiKey               string
 	ctx                  context.Context // optional; used to abort retry backoff on shutdown
@@ -94,7 +97,6 @@ func New(baseURL, workerID string, gpuAvailable bool) *MasterClient {
 		gpuAvailable:         gpuAvailable,
 		downloadTimeout:      30 * time.Minute,
 		uploadTimeout:        30 * time.Minute,
-		bandwidthLimit:       0,
 		enableResumeDownload: false,
 		apiKey:               "",
 	}
@@ -113,12 +115,69 @@ func (mc *MasterClient) SetTransferTimeouts(downloadTimeout, uploadTimeout time.
 
 // SetBandwidthLimit sets the bandwidth limit in bytes per second (0 = unlimited)
 func (mc *MasterClient) SetBandwidthLimit(bytesPerSecond int64) {
-	mc.bandwidthLimit = bytesPerSecond
+	mc.bandwidthLimit.Store(bytesPerSecond)
+}
+
+// BandwidthLimit returns the current bandwidth limit in bytes per second.
+func (mc *MasterClient) BandwidthLimit() int64 {
+	return mc.bandwidthLimit.Load()
 }
 
 // SetEnableResumeDownload enables or disables resume support for downloads
 func (mc *MasterClient) SetEnableResumeDownload(enable bool) {
 	mc.enableResumeDownload = enable
+}
+
+// ReportJobLog sends a job's execution log to the master. It is best-effort
+// diagnostics: callers should log a failure and carry on rather than treating
+// the job as failed.
+func (mc *MasterClient) ReportJobLog(jobID string, entries []models.JobLogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+		return err
+	}
+
+	payload := map[string]any{
+		paramJobID:    jobID,
+		paramWorkerID: mc.workerID,
+		"entries":     entries,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job log payload: %w", err)
+	}
+
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-log", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build job log URL: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create job log request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	resp, err := mc.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send job log: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("Failed to close response body", "error", cerr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(respBody)}
+	}
+
+	return nil
 }
 
 // GetNextJob requests the next available job from the master
@@ -848,8 +907,8 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 
 	// Create reader with optional bandwidth throttling and progress tracking
 	var reader io.Reader = resp.Body
-	if mc.bandwidthLimit > 0 {
-		reader = NewThrottledReader(reader, mc.bandwidthLimit)
+	if bw := mc.bandwidthLimit.Load(); bw > 0 {
+		reader = NewThrottledReader(reader, bw)
 	}
 	if progressCallback != nil {
 		// Wrap with progress reader
@@ -925,16 +984,18 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	// Start goroutine to write multipart data
 	errChan := make(chan error, 1)
 	go func() {
-		defer func() {
-			cerr := multipartWriter.Close()
-			if cerr != nil {
-				slog.Warn("Failed to close multipart writer", "error", cerr)
-			}
-		}()
+		// Defers run LIFO: the pipe writer must be closed last, after the
+		// multipart writer has emitted its closing boundary.
 		defer func() {
 			cerr := pipeWriter.Close()
 			if cerr != nil {
 				slog.Warn("Failed to close pipe writer", "error", cerr)
+			}
+		}()
+		defer func() {
+			cerr := multipartWriter.Close()
+			if cerr != nil {
+				slog.Warn("Failed to close multipart writer", "error", cerr)
 			}
 		}()
 
@@ -946,8 +1007,8 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 
 		// Wrap file reader with progress tracking
 		var reader io.Reader = file
-		if mc.bandwidthLimit > 0 {
-			reader = NewThrottledReader(reader, mc.bandwidthLimit)
+		if bw := mc.bandwidthLimit.Load(); bw > 0 {
+			reader = NewThrottledReader(reader, bw)
 		}
 		if progressCallback != nil {
 			reader = NewProgressReader(reader, fileSize, progressCallback)

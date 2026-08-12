@@ -31,6 +31,7 @@ type Worker struct {
 	ffmpegConverter   *converter.FFmpegConverter
 	metadataExtractor *converter.MetadataExtractor
 	vulkanDetector    *converter.VulkanDetector
+	capabilities      *models.WorkerCapabilities
 	validator         *converter.Validator
 	cacheManager      *CacheManager
 	concurrency       int
@@ -195,6 +196,20 @@ func (w *Worker) Start() (err error) {
 		slog.Info("Vulkan not available, using CPU encoding")
 	}
 
+	// Verify which encoding backends actually work on this host by running a
+	// real test encode for each. Driver-advertised support is not enough: a GPU
+	// can expose the Vulkan encode extensions and still fail to open the
+	// encoder, which would otherwise fail every job assigned to this worker.
+	w.capabilities = w.ffmpegConverter.DetectCapabilities()
+	for _, backend := range w.capabilities.Backends {
+		slog.Info("Encoder backend probed",
+			"backend", backend.Name,
+			"encoder", backend.Encoder,
+			"available", backend.Available,
+			"working", backend.Working,
+			"detail", backend.Detail)
+	}
+
 	// Fetch initial configuration from master
 	cfg, fetchErr := w.configFetcher.FetchConfig()
 	if fetchErr != nil {
@@ -233,6 +248,10 @@ func (w *Worker) Start() (err error) {
 	// Start heartbeat goroutine
 	w.wg.Add(1)
 	go w.sendHeartbeats()
+
+	// Start remote worker-settings refresh goroutine
+	w.wg.Add(1)
+	go w.refreshRemoteWorkerConfig()
 
 	// Start job processing goroutine pool
 	for i := 0; i < w.concurrency; i++ {
@@ -292,6 +311,56 @@ func (w *Worker) Shutdown() error {
 }
 
 // runCacheCleanup runs periodic cache cleanup
+// remoteConfigRefreshInterval controls how often the worker re-reads the
+// worker settings the master serves, so edits made in the Web UI take effect
+// without restarting the process.
+const remoteConfigRefreshInterval = 30 * time.Second
+
+// refreshRemoteWorkerConfig periodically re-fetches the worker configuration
+// from the master and applies the settings that can be changed safely while the
+// worker is running. Settings that are bound at startup (concurrency, poll
+// intervals, storage paths) are reported instead of silently ignored, so an
+// operator can see that a restart is required.
+func (w *Worker) refreshRemoteWorkerConfig() {
+	defer w.wg.Done()
+
+	ticker := time.NewTicker(remoteConfigRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-w.ctx.Done():
+			slog.Info("Remote config refresh goroutine stopping", "worker_id", w.config.Worker.ID)
+			return
+		case <-ticker.C:
+		}
+
+		remoteCfg, err := client.FetchRemoteWorkerConfig(w.config.Worker.MasterURL, w.config.Worker.ID)
+		if err != nil {
+			slog.Debug("Failed to refresh worker config from master", "error", err)
+			continue
+		}
+
+		// Hot-appliable: the bandwidth limit is read atomically by transfers.
+		if remoteCfg.BandwidthLimit != w.config.Storage.BandwidthLimit {
+			slog.Info("Applying updated bandwidth limit from master",
+				"old", w.config.Storage.BandwidthLimit,
+				"new", remoteCfg.BandwidthLimit)
+			w.config.Storage.BandwidthLimit = remoteCfg.BandwidthLimit
+			if w.masterClient != nil {
+				w.masterClient.SetBandwidthLimit(remoteCfg.BandwidthLimit)
+			}
+		}
+
+		// Restart-required: report rather than pretend these took effect.
+		if remoteCfg.Concurrency != 0 && remoteCfg.Concurrency != w.concurrency {
+			slog.Warn("Worker concurrency changed on master; restart required to apply",
+				"current", w.concurrency,
+				"configured", remoteCfg.Concurrency)
+		}
+	}
+}
+
 func (w *Worker) runCacheCleanup() {
 	defer w.wg.Done()
 
@@ -453,8 +522,12 @@ func (w *Worker) processJob(job *models.Job) {
 		"output_path", job.OutputPath,
 	)
 
+	// Per-job log shipped to the master so the history explains what happened.
+	record := NewJobLog()
+	record.Info(models.JobStageDownload, "Job started: "+job.SourcePath+" -> "+job.OutputPath)
+
 	startedAt := time.Now()
-	err := w.executeJob(job, jobLog)
+	err := w.executeJob(job, jobLog, record)
 	duration := time.Since(startedAt)
 	if err != nil {
 		w.markJobFinished(job.ID, false, err)
@@ -462,6 +535,7 @@ func (w *Worker) processJob(job *models.Job) {
 			"duration_seconds", duration.Seconds(),
 			"error", err,
 		)
+		record.Error(models.JobStageComplete, "Job failed after "+duration.Truncate(time.Millisecond).String()+": "+err.Error())
 		reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error())
 		if reportErr != nil {
 			jobLog.Error("Failed to report job failure to master", "error", reportErr)
@@ -469,7 +543,14 @@ func (w *Worker) processJob(job *models.Job) {
 	} else {
 		w.markJobFinished(job.ID, true, nil)
 		jobLog.Info("Job completed successfully", "duration_seconds", duration.Seconds())
+		record.Info(models.JobStageComplete, "Job completed successfully in "+duration.Truncate(time.Millisecond).String())
 		// Note: Job completion is already reported by the upload endpoint
+	}
+
+	// Send the log last, so it covers the whole run regardless of outcome. A
+	// failure here must not change the job's result — it is diagnostics only.
+	if logErr := w.masterClient.ReportJobLog(job.ID, record.Entries()); logErr != nil {
+		jobLog.Warn("Failed to report job log to master", "error", logErr)
 	}
 }
 
@@ -484,7 +565,7 @@ func (w *Worker) processJob(job *models.Job) {
 //
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
-func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
+func (w *Worker) executeJob(job *models.Job, log *slog.Logger, record *JobLog) error {
 	// Report progress: starting
 	w.reportProgress(job.ID, 0, 0, "download")
 
@@ -544,17 +625,28 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 
 	// Report progress: download complete, starting conversion
 	w.reportProgress(job.ID, 0, 0, "convert")
+	record.Info(models.JobStageDownload, "Source downloaded to "+sourceLocalPath)
 
 	// Update job to use local source path
 	originalSourcePath := job.SourcePath
 	job.SourcePath = sourceLocalPath
 
-	// Fetch dynamic configuration from master
-	dynamicCfg, err := w.configFetcher.FetchConfig()
-	if err != nil {
-		log.Warn("Failed to fetch config, using static fallback", "error", err)
-		// Use static config as fallback
-		dynamicCfg = &w.config.Conversion
+	// Settings resolved by the master for this job's library take precedence:
+	// they already combine the global configuration with any per-library
+	// overrides. Only fall back to the shared config when the master did not
+	// send them (older master, or a job dispatched before libraries existed).
+	var dynamicCfg *models.ConversionSettings
+	if job.Conversion != nil {
+		dynamicCfg = job.Conversion
+		log.Debug("Using per-job conversion settings from master", "library_id", job.LibraryID)
+	} else {
+		var err error
+		dynamicCfg, err = w.configFetcher.FetchConfig()
+		if err != nil {
+			log.Warn("Failed to fetch config, using static fallback", "error", err)
+			// Use static config as fallback
+			dynamicCfg = &w.config.Conversion
+		}
 	}
 
 	// Determine output extension based on output format
@@ -578,29 +670,44 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		Preset:           dynamicCfg.Preset,
 		AudioCodec:       dynamicCfg.AudioCodec,
 		AudioBitrate:     dynamicCfg.AudioBitrate,
-		UseVulkan:        w.config.FFmpeg.UseVulkan,
+		// The acceleration backend is taken from the master's live config so that
+		// changing it in the Web UI takes effect on the next job. The local
+		// use_vulkan flag remains the fallback when the master has no preference.
+		HWAccel:   dynamicCfg.HWAccel,
+		UseVulkan: w.config.FFmpeg.UseVulkan,
 	}
 
 	log.Info("Using conversion config",
 		"resolution", cfg.TargetResolution,
 		"codec", cfg.Codec,
 		"format", dynamicCfg.OutputFormat,
+		"hwaccel", cfg.HWAccel,
 	)
+	record.Info(models.JobStageConvert, fmt.Sprintf(
+		"Conversion settings: %s %s %s preset=%s format=%s hwaccel=%s",
+		cfg.TargetResolution, cfg.Codec, cfg.Bitrate, cfg.Preset,
+		dynamicCfg.OutputFormat, cfg.HWAccel))
 
 	// Convert video with progress callback
 	progressCallback := func(progress float64, fps float64) {
 		w.reportProgress(job.ID, progress, fps, "convert")
 	}
-	err = w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
+	err = w.ffmpegConverter.ConvertVideoWithSink(job, cfg, progressCallback, log, func(line string) {
+		record.AddDetected(models.JobStageConvert, line)
+	})
 	if err != nil {
 		return fmt.Errorf("conversion failed: %w", err)
 	}
+	record.Info(models.JobStageConvert, "Conversion finished")
 
-	// Validate output
-	err = w.ffmpegConverter.ValidateOutputWithLogger(job.OutputPath, log)
+	// Validate output against the source length, which catches a truncated
+	// conversion without penalising legitimately small files.
+	err = w.ffmpegConverter.ValidateOutputAgainstSource(job.OutputPath, job.SourceDuration, log)
 	if err != nil {
+		record.Error(models.JobStageConvert, "Output validation failed: "+err.Error())
 		return fmt.Errorf("validation failed: %w", err)
 	}
+	record.Info(models.JobStageConvert, "Output validated")
 
 	// Report progress: starting upload
 	w.reportProgress(job.ID, 100, 0, "upload")
@@ -662,6 +769,13 @@ func (w *Worker) sendHeartbeats() {
 				GPU:             gpuName,
 				CPUUsage:        getSystemCPUUsage(),
 				MemoryUsage:     getSystemMemoryUsage(),
+				Capabilities:    w.capabilities,
+			}
+
+			// Prefer the probed GPU name: it comes from the same detection that
+			// verified the encoders, so the two always agree.
+			if w.capabilities != nil && w.capabilities.GPU != "" {
+				hb.GPU = w.capabilities.GPU
 			}
 
 			w.recordHeartbeat(hb.Timestamp)

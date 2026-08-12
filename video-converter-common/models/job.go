@@ -5,6 +5,7 @@ import "time"
 // Job represents a video conversion job with its lifecycle state and metadata.
 type Job struct {
 	ID             string     `json:"id"`
+	LibraryID      string     `json:"library_id"` // owning library ("" for jobs created before libraries)
 	SourcePath     string     `json:"source_path"`
 	OutputPath     string     `json:"output_path"`
 	Status         string     `json:"status"`   // see constants.JobStatus* constants
@@ -27,7 +28,40 @@ type Job struct {
 	SourceAudioCodec string `json:"source_audio_codec,omitempty"` // e.g., aac, mp3
 	SourceBitrate    int64  `json:"source_bitrate,omitempty"`     // Total bitrate in bits/second
 	SourceFileSize   int64  `json:"source_file_size,omitempty"`   // Source file size in bytes
+
+	// Conversion carries the settings that apply to this specific job, resolved
+	// by the master from the global configuration plus the owning library's
+	// overrides. It is transient: it is sent to workers when a job is dispatched
+	// and is never stored in the database. Workers fall back to their fetched
+	// global configuration when it is absent.
+	Conversion *ConversionSettings `json:"conversion,omitempty"`
 }
+
+// JobLogEntry is a single line in a job's execution log. Workers collect these
+// while running a job — stage transitions, the FFmpeg command, and FFmpeg's own
+// output — and report them to the master so the history shows why a job behaved
+// the way it did, not just that it failed.
+type JobLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"` // info, warn, error
+	Stage     string    `json:"stage"` // download, convert, upload, complete
+	Message   string    `json:"message"`
+}
+
+// Job log levels.
+const (
+	JobLogInfo  = "info"
+	JobLogWarn  = "warn"
+	JobLogError = "error"
+)
+
+// Job log stages.
+const (
+	JobStageDownload = "download"
+	JobStageConvert  = "convert"
+	JobStageUpload   = "upload"
+	JobStageComplete = "complete"
+)
 
 // VideoMetadata contains extracted video information from FFprobe
 type VideoMetadata struct {
@@ -47,9 +81,12 @@ type ConversionConfig struct {
 	Bitrate          string `json:"bitrate"`           // 5M
 	Preset           string `json:"preset"`            // fast, medium, slow
 	UseVulkan        bool   `json:"use_vulkan"`
-	AudioCodec       string `json:"audio_codec"`   // aac
-	AudioBitrate     string `json:"audio_bitrate"` // 128k
-	OutputFormat     string `json:"output_format"` // mp4, mkv, webm, avi
+	// HWAccel selects the encoding backend: "", "none" (CPU) or "vulkan".
+	// When empty, UseVulkan is honoured for backward compatibility.
+	HWAccel      string `json:"hwaccel"`
+	AudioCodec   string `json:"audio_codec"`   // aac
+	AudioBitrate string `json:"audio_bitrate"` // 128k
+	OutputFormat string `json:"output_format"` // mp4, mkv, webm, avi
 }
 
 // WorkerHeartbeat contains status information sent periodically from workers to the master.
@@ -63,6 +100,61 @@ type WorkerHeartbeat struct {
 	GPU             string    `json:"gpu"` // GPU model/name
 	CPUUsage        float64   `json:"cpu_usage"`
 	MemoryUsage     float64   `json:"memory_usage"`
+	// Capabilities reports the encoding backends this worker actually verified
+	// at startup. Nil from workers that predate capability probing.
+	Capabilities *WorkerCapabilities `json:"capabilities,omitempty"`
+}
+
+// BackendCapability reports what a worker can actually do with one
+// hardware-acceleration backend. Available means the encoder is compiled into
+// FFmpeg; Working means a real test encode through the production command path
+// succeeded. The two differ in practice: a driver can advertise the encode
+// extensions while still failing to open the encoder.
+type BackendCapability struct {
+	Name      string `json:"name"`    // none, vulkan
+	Encoder   string `json:"encoder"` // libx264, h264_vulkan
+	Available bool   `json:"available"`
+	Working   bool   `json:"working"`
+	Detail    string `json:"detail,omitempty"` // why it is not working
+}
+
+// WorkerCapabilities is the set of backends a worker probed at startup, plus
+// the environment those results came from.
+type WorkerCapabilities struct {
+	Backends      []BackendCapability `json:"backends"`
+	FFmpegVersion string              `json:"ffmpeg_version,omitempty"`
+	GPU           string              `json:"gpu,omitempty"`
+	ProbedAt      time.Time           `json:"probed_at"`
+}
+
+// Supports reports whether the named backend was proven to work.
+func (c *WorkerCapabilities) Supports(backend string) bool {
+	if c == nil {
+		return false
+	}
+	if backend == "" {
+		backend = "none"
+	}
+	for _, b := range c.Backends {
+		if b.Name == backend {
+			return b.Working
+		}
+	}
+	return false
+}
+
+// WorkingBackends returns the names of every backend proven to work.
+func (c *WorkerCapabilities) WorkingBackends() []string {
+	if c == nil {
+		return nil
+	}
+	names := make([]string, 0, len(c.Backends))
+	for _, b := range c.Backends {
+		if b.Working {
+			names = append(names, b.Name)
+		}
+	}
+	return names
 }
 
 // VulkanDevice represents information about a Vulkan-capable GPU device.
