@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/constants"
@@ -36,6 +37,10 @@ const (
 	// outputDurationToleranceRatio allows longer files a proportional margin,
 	// which matters for variable-frame-rate sources.
 	outputDurationToleranceRatio = 0.02
+
+	// ffmpegShutdownGrace is how long FFmpeg gets to exit after being asked
+	// politely, before it is killed outright.
+	ffmpegShutdownGrace = 5 * time.Second
 )
 
 // FFmpeg encoder and muxer names. These are FFmpeg's own identifiers and are
@@ -92,6 +97,25 @@ type FFmpegConverter struct {
 	ffmpegPath     string
 	vulkanDetector *VulkanDetector
 	timeout        time.Duration
+	// baseCtx ties running conversions to the worker's lifetime. Without it a
+	// conversion outlives the worker that started it: FFmpeg keeps running, is
+	// reparented to init, holds its GPU memory, and the worker's own shutdown
+	// blocks waiting for a process nobody is going to stop.
+	baseCtx context.Context //nolint:containedctx // deliberately scopes child processes to the worker
+}
+
+// SetContext ties conversions started by this converter to ctx, so cancelling it
+// terminates any FFmpeg still running.
+func (fc *FFmpegConverter) SetContext(ctx context.Context) {
+	fc.baseCtx = ctx
+}
+
+// parentContext returns the context conversions descend from.
+func (fc *FFmpegConverter) parentContext() context.Context {
+	if fc.baseCtx != nil {
+		return fc.baseCtx
+	}
+	return context.Background()
 }
 
 // NewFFmpegConverter creates a new FFmpegConverter instance
@@ -174,12 +198,18 @@ func (fc *FFmpegConverter) ConvertVideoWithSink(
 		sink(fc.ffmpegPath + " " + strings.Join(args, " "))
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
+	// Create context with timeout, descending from the worker's context so that
+	// shutting the worker down also stops the conversion.
+	ctx, cancel := context.WithTimeout(fc.parentContext(), fc.timeout)
 	defer cancel()
 
 	// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
 	cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
+
+	// Ask FFmpeg to stop first so it can close its output file, then kill it if
+	// it will not. The default for CommandContext is an immediate kill.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = ffmpegShutdownGrace
 
 	// Setup stderr pipe for progress tracking
 	stderr, err := cmd.StderrPipe()

@@ -756,6 +756,29 @@ job claiming the machine. Verified in the live command line: `-threads 4` with 8
 - [ ] Consider running FFmpeg at a lower priority (`nice`) as a second line of defence.
 - [ ] Point the master at a disk-backed `TMPDIR` as belt-and-braces for any other temp-file use.
 
+### 26. [x] FFmpeg outlived its worker, orphaning processes that held the GPU — **FIXED**
+
+Reported as "the worker is not cleaning up the ffmpegs — there should only be 2 active at all times".
+Exactly right: with `concurrency: 2` there were **seven** FFmpeg processes and **six** holding GPU
+memory. Checking parentage showed two belonged to the running worker and four had `ppid=1` — orphans
+from earlier workers, each still holding 53 MiB of GPU memory and burning CPU.
+
+The cause was one call: conversions ran from `context.Background()` rather than the worker's context,
+so nothing connected a running FFmpeg to the worker that started it. Killing a worker left FFmpeg
+running, reparented to init, until its own thirty-minute timeout. It also explains the hung shutdowns
+seen all session — `graceful shutdown timed out, active_jobs=2` — because the worker was waiting on
+job goroutines blocked in `cmd.Wait()` for a process nobody was going to stop.
+
+Conversions now descend from the worker's context, so shutting down stops them. FFmpeg is sent
+SIGTERM first, with a five-second grace period before being killed, so it can close its output file
+rather than being terminated mid-write; Go's default for a cancelled command is an immediate kill.
+
+Verified on the running instance: with a conversion in flight, SIGTERM to the worker left **zero**
+FFmpeg processes and **zero** GPU compute apps, and the worker exited promptly instead of timing out.
+
+- [ ] Reap any FFmpeg left over from a previous run at worker startup, for the case where a worker is
+      SIGKILLed and never gets to cancel anything.
+
 ---
 
 ## Notes for anyone reproducing this
