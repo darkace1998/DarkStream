@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/darkace1998/video-converter-common v0.1.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/mattn/go-sqlite3 v1.14.48
+	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/prometheus/client_golang v1.24.1
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
