@@ -486,13 +486,14 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Worker</th>
                             <th>GPU</th>
                             <th>Backend</th>
+                            <th>Codec</th>
                             <th>Encoder</th>
                             <th>Result</th>
                             <th>Detail</th>
                         </tr>
                     </thead>
                     <tbody id="capabilities-tbody">
-                        <tr><td colspan="6">Loading&hellip;</td></tr>
+                        <tr><td colspan="7">Loading&hellip;</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1179,7 +1180,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 tbody.textContent = '';
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
-                td.colSpan = 6;
+                td.colSpan = 7;
                 td.textContent = 'Failed to load capabilities: ' + err.message;
                 tr.appendChild(td);
                 tbody.appendChild(tr);
@@ -1199,14 +1200,23 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     rows++;
                     const tr = document.createElement('tr');
 
-                    // Only label the first row of each worker, so the grouping reads clearly.
+                    // Every row repeats the worker. Leaving it blank on
+                    // continuation rows made a single worker's backends look like
+                    // several separate workers.
                     const tdWorker = document.createElement('td');
-                    tdWorker.textContent = idx === 0 ? wk.worker_id : '';
+                    tdWorker.textContent = wk.worker_id;
+                    if (idx > 0) { tdWorker.style.opacity = '.35'; }
+
                     const tdGpu = document.createElement('td');
-                    tdGpu.textContent = idx === 0 ? (caps.gpu || wk.gpu || '-') : '';
+                    tdGpu.textContent = caps.gpu || wk.gpu || '-';
+                    if (idx > 0) { tdGpu.style.opacity = '.35'; }
 
                     const tdBackend = document.createElement('td');
                     tdBackend.textContent = b.name === 'none' ? 'CPU' : b.name;
+
+                    const tdCodec = document.createElement('td');
+                    tdCodec.textContent = b.codec || '-';
+
                     const tdEncoder = document.createElement('td');
                     tdEncoder.textContent = b.encoder || '-';
 
@@ -1229,7 +1239,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     tdDetail.title = b.detail || '';
                     tdDetail.textContent = b.detail || '';
 
-                    tr.append(tdWorker, tdGpu, tdBackend, tdEncoder, tdResult, tdDetail);
+                    tr.append(tdWorker, tdGpu, tdBackend, tdCodec, tdEncoder, tdResult, tdDetail);
                     tbody.appendChild(tr);
                 });
             });
@@ -1237,7 +1247,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             if (rows === 0) {
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
-                td.colSpan = 6;
+                td.colSpan = 7;
                 td.textContent = 'No worker has reported capabilities yet. They are probed when a worker starts.';
                 tr.appendChild(td);
                 tbody.appendChild(tr);

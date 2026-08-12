@@ -492,7 +492,12 @@ agree (`Tesla P4` when built with `-tags vulkan`).
 - [ ] Use capabilities in scheduling: skip assigning a job to a worker whose required backend is
       unusable, instead of letting it fail. Needs per-worker filtering in the claim query.
 - [ ] Re-probe periodically (or on demand) so a driver upgrade is picked up without a worker restart.
-- [ ] Probe per codec (h264 vs h265) rather than assuming h264 support implies the rest.
+- [x] **Probe per codec.** The probe only ever tested h264, so the capabilities table showed
+      `libx264` and `h264_vulkan` and said nothing about the codec people were actually encoding
+      with. It now probes every codec the UI offers against every backend, and skips combinations
+      that do not exist rather than substituting h264 and calling it working. Vulkan has no VP9 or
+      AV1 encoder, so those pairs are omitted instead of misreported.
+      Result on this host: CPU h264/h265/vp9/av1 and Vulkan h264/h265, all verified by real encodes.
 
 ### 21. [x] Per-job logs in the job history — **DONE**
 
@@ -620,6 +625,16 @@ refresh agree.
 
 Verified against a running conversion: `stage=convert, progress=5.3%, fps=91.07, eta=437s`.
 
+### 25. [x] Capabilities table read as two workers and hid every codec but h264 — **FIXED**
+
+One worker with two backends rendered as two rows with the worker and GPU cells blanked on the
+second, which read as two separate workers. Every row now repeats the worker, dimmed on continuation
+rows, so the grouping is obvious.
+
+The table also showed only `libx264` and `h264_vulkan`, because the probe hardcoded h264 — unhelpful
+when the configured codec is h265. It now probes each backend against every codec the UI offers and
+shows a Codec column, so the table finally answers "can this worker encode what I have selected".
+
 ### 15. [x] The UI offers hardware backends that cannot work on the host — **RESOLVED by #17**
 
 Selecting **Vulkan** in the Configuration form is accepted silently and then fails every subsequent
@@ -688,8 +703,9 @@ driver 580.142 issue.
 
       All four output formats mux correctly too (mp4, mkv/matroska, webm, avi), and Vulkan encoding
       still works after the rebuild — checked for regression rather than assumed.
-- [ ] Have the capability probe test per codec rather than assuming h264 support implies the rest —
-      it reported the CPU backend as working while h265-on-CPU could not run at all.
+- [x] Done — see finding #17. The probe covers every offered codec per backend, which is exactly the
+      case that previously went unnoticed: the CPU backend reported "working" while h265-on-CPU could
+      not run at all.
 
 ### 24. [x] Container killed under load: uploads buffered into RAM, and FFmpeg used every core — **FIXED**
 

@@ -116,7 +116,8 @@ type WorkerHeartbeat struct {
 // extensions while still failing to open the encoder.
 type BackendCapability struct {
 	Name      string `json:"name"`    // none, vulkan
-	Encoder   string `json:"encoder"` // libx264, h264_vulkan
+	Codec     string `json:"codec"`   // h264, h265, vp9, av1
+	Encoder   string `json:"encoder"` // libx264, hevc_vulkan, libvpx-vp9 …
 	Available bool   `json:"available"`
 	Working   bool   `json:"working"`
 	Detail    string `json:"detail,omitempty"` // why it is not working
@@ -131,7 +132,8 @@ type WorkerCapabilities struct {
 	ProbedAt      time.Time           `json:"probed_at"`
 }
 
-// Supports reports whether the named backend was proven to work.
+// Supports reports whether the named backend was proven to work for at least one
+// codec. Use SupportsCodec when the specific codec matters.
 func (c *WorkerCapabilities) Supports(backend string) bool {
 	if c == nil {
 		return false
@@ -140,7 +142,25 @@ func (c *WorkerCapabilities) Supports(backend string) bool {
 		backend = "none"
 	}
 	for _, b := range c.Backends {
-		if b.Name == backend {
+		if b.Name == backend && b.Working {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportsCodec reports whether a specific backend and codec combination was
+// proven to work. A backend that encodes h264 does not necessarily encode h265,
+// so the two are probed separately.
+func (c *WorkerCapabilities) SupportsCodec(backend, codec string) bool {
+	if c == nil {
+		return false
+	}
+	if backend == "" {
+		backend = "none"
+	}
+	for _, b := range c.Backends {
+		if b.Name == backend && b.Codec == codec {
 			return b.Working
 		}
 	}
@@ -152,9 +172,11 @@ func (c *WorkerCapabilities) WorkingBackends() []string {
 	if c == nil {
 		return nil
 	}
+	seen := make(map[string]bool, len(c.Backends))
 	names := make([]string, 0, len(c.Backends))
 	for _, b := range c.Backends {
-		if b.Working {
+		if b.Working && !seen[b.Name] {
+			seen[b.Name] = true
 			names = append(names, b.Name)
 		}
 	}

@@ -27,6 +27,48 @@ const (
 // probeBackends is the set of backends worth probing, cheapest first.
 var probeBackends = []string{HWAccelNone, HWAccelVulkan}
 
+// probeCodecs are the video codecs the Web UI offers. Each is probed per backend
+// rather than assuming that support for one implies the rest: an FFmpeg build
+// can carry libx264 without libx265, and the Vulkan encoder covers only h264 and
+// h265, so a single h264 probe would have misrepresented every other choice.
+var probeCodecs = []string{
+	constants.CodecH264,
+	constants.CodecH265,
+	constants.CodecVP9,
+	constants.CodecAV1,
+}
+
+// encoderForProbe returns the encoder implementing codec on backend, and whether
+// the combination exists at all. Unlike the conversion path it does not fall
+// back to h264, since reporting a substituted encoder as "working" would be a
+// lie about the codec that was asked for.
+func encoderForProbe(codec, backend string) (string, bool) {
+	switch backend {
+	case HWAccelVulkan:
+		switch codec {
+		case constants.CodecH264:
+			return encoderH264Vulkan, true
+		case constants.CodecH265:
+			return "hevc_vulkan", true
+		default:
+			return "", false // Vulkan encodes only h264 and h265
+		}
+	default:
+		switch codec {
+		case constants.CodecH264:
+			return encoderLibx264, true
+		case constants.CodecH265:
+			return "libx265", true
+		case constants.CodecVP9:
+			return "libvpx-vp9", true
+		case constants.CodecAV1:
+			return "libaom-av1", true
+		default:
+			return "", false
+		}
+	}
+}
+
 // DetectCapabilities determines which encoding backends this host can actually
 // use. Rather than trusting driver-advertised extensions — which lie: a GPU can
 // expose the Vulkan video-encode extensions and still fail to open the encoder —
@@ -50,18 +92,31 @@ func (fc *FFmpegConverter) DetectCapabilities() *models.WorkerCapabilities {
 		// unknown-but-not-working rather than guessing.
 		slog.Warn("Could not create capability probe source", "error", err)
 		for _, backend := range probeBackends {
-			caps.Backends = append(caps.Backends, models.BackendCapability{
-				Name:    backend,
-				Encoder: fc.getVideoCodecForBackend(constants.CodecH264, backend, slog.Default()),
-				Detail:  "probe source could not be created: " + err.Error(),
-			})
+			for _, codec := range probeCodecs {
+				encoder, ok := encoderForProbe(codec, backend)
+				if !ok {
+					continue
+				}
+				caps.Backends = append(caps.Backends, models.BackendCapability{
+					Name:    backend,
+					Codec:   codec,
+					Encoder: encoder,
+					Detail:  "probe source could not be created: " + err.Error(),
+				})
+			}
 		}
 		return caps
 	}
 	defer cleanup()
 
 	for _, backend := range probeBackends {
-		caps.Backends = append(caps.Backends, fc.probeBackend(backend, sourcePath))
+		for _, codec := range probeCodecs {
+			encoder, ok := encoderForProbe(codec, backend)
+			if !ok {
+				continue // this backend has no encoder for that codec
+			}
+			caps.Backends = append(caps.Backends, fc.probeBackend(backend, codec, encoder, sourcePath))
+		}
 	}
 
 	slog.Info("Encoder capabilities detected",
@@ -71,11 +126,10 @@ func (fc *FFmpegConverter) DetectCapabilities() *models.WorkerCapabilities {
 	return caps
 }
 
-// probeBackend runs one real conversion with the given backend and reports the
-// outcome.
-func (fc *FFmpegConverter) probeBackend(backend, sourcePath string) models.BackendCapability {
-	encoder := fc.getVideoCodecForBackend(constants.CodecH264, backend, slog.Default())
-	result := models.BackendCapability{Name: backend, Encoder: encoder}
+// probeBackend runs one real conversion for a backend and codec pair and reports
+// the outcome.
+func (fc *FFmpegConverter) probeBackend(backend, codec, encoder, sourcePath string) models.BackendCapability {
+	result := models.BackendCapability{Name: backend, Codec: codec, Encoder: encoder}
 
 	available, err := fc.hasEncoder(encoder)
 	if err != nil {
@@ -88,7 +142,7 @@ func (fc *FFmpegConverter) probeBackend(backend, sourcePath string) models.Backe
 		return result
 	}
 
-	outputPath := filepath.Join(filepath.Dir(sourcePath), "probe-out-"+backend+".mp4")
+	outputPath := filepath.Join(filepath.Dir(sourcePath), "probe-out-"+backend+"-"+codec+".mkv")
 	defer func() { _ = os.Remove(outputPath) }()
 
 	// Build the command exactly as a real job would, so the probe exercises the
@@ -96,12 +150,12 @@ func (fc *FFmpegConverter) probeBackend(backend, sourcePath string) models.Backe
 	job := &models.Job{SourcePath: sourcePath, OutputPath: outputPath}
 	cfg := &models.ConversionConfig{
 		TargetResolution: probeSize,
-		Codec:            constants.CodecH264,
+		Codec:            codec,
 		Bitrate:          "1M",
 		Preset:           constants.PresetFast,
 		AudioCodec:       constants.AudioCodecAAC,
 		AudioBitrate:     "64k",
-		OutputFormat:     muxerMP4,
+		OutputFormat:     constants.FormatMKV,
 		HWAccel:          backend,
 	}
 
@@ -124,7 +178,7 @@ func (fc *FFmpegConverter) probeBackend(backend, sourcePath string) models.Backe
 	}
 
 	if !result.Working {
-		slog.Info("Encoder backend unavailable", "backend", backend,
+		slog.Info("Encoder unavailable", "backend", backend, "codec", codec,
 			"encoder", encoder, "detail", result.Detail)
 	}
 
