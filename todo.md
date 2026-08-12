@@ -779,6 +779,31 @@ FFmpeg processes and **zero** GPU compute apps, and the worker exited promptly i
 - [ ] Reap any FFmpeg left over from a previous run at worker startup, for the case where a worker is
       SIGKILLed and never gets to cancel anything.
 
+### 27. [x] Half the dashboard was a snapshot from page load — **FIXED**
+
+Reported as "multiple items are not updating when they should". The stats stream carried jobs,
+workers and counters every two seconds, but libraries, worker capabilities and the configuration
+were one-shot `fetch` calls made once when the page opened. So per-library job counts sat frozen at
+whatever they were at load time, a worker that reconnected or finished probing its encoders never
+showed up in the capabilities table, and a setting changed in another tab left the acceleration
+pickers offering backends that no longer existed. Nothing looked broken — the panels next to them
+kept ticking — so the only clue was that a manual reload changed the numbers.
+
+Libraries, capabilities and a `config_version` now ride on the same stream as everything else.
+
+Rendering libraries every two seconds required rewriting `renderLibraries` first: it cleared the
+tbody and rebuilt it, which at a 2 s cadence would have destroyed the Edit/Enable/Remove buttons
+under the pointer — the identical defect fixed for the job tables in #23. It now reuses rows through
+`syncRows`, updating only the volatile cells and rebuilding the action buttons solely when a
+library's enabled state flips.
+
+A configuration changed elsewhere raises a notice instead of refilling the form, because silently
+replacing fields under someone mid-edit would throw away what they had typed.
+
+Verified live: toggling a library through the API moved `enabled` on the stream within one tick and
+bumped `config_version` 14 → 15, and the jsdom harness confirms library rows and their buttons are
+the same DOM nodes across refreshes.
+
 ---
 
 ## Notes for anyone reproducing this
