@@ -407,7 +407,7 @@ tooltip, and job links are unchanged.
 
 Verified live across five libraries including a nested file and legacy jobs.
 
-- [ ] Apply the same treatment to the Pending and Processing tables (they still show full paths).
+- [x] Processing table now shows the library and library-relative file too.
 - [ ] Consider filtering history by library now that the column exists.
 
 ### 16. [x] Per-library conversion settings — **DONE**
@@ -589,6 +589,25 @@ that discovered IDs from that endpoint. Minor, but confusing when scripting agai
 
 - [ ] Make the jobs listing's scope explicit (or paginated), and have requeue distinguish
       "unknown job" from "job not in this view".
+
+### 23. [x] Processing tab shows live job detail — **DONE**
+
+The tab previously showed a job ID, a full path, a worker, an unlabelled progress bar and a start
+time — with no indication of how fast a job was going or how long it had left. `fps` and `stage` were
+already being read from the progress table on every stats tick and then thrown away before the
+payload was sent.
+
+The table now carries: a clearly-styled clickable **Job ID** (through to the job details page),
+**Library**, the library-relative **File**, the current **Stage** (download / convert / upload), a
+**Progress** bar with its percentage spelled out, **FPS**, an **ETA**, worker, start time, and both
+**Log** and Cancel actions.
+
+The ETA is deliberately withheld until a job is more than 1% in: extrapolating from the first few
+percent produces wildly wrong numbers, and no estimate is better than a misleading one. Server-side
+rendering and the live SSE renderer were both updated so the initial page load and the 2-second
+refresh agree.
+
+Verified against a running conversion: `stage=convert, progress=5.3%, fps=91.07, eta=437s`.
 
 ### 15. [x] The UI offers hardware backends that cannot work on the host — **RESOLVED by #17**
 

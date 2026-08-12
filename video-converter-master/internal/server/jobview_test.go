@@ -1,7 +1,9 @@
 package server
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
@@ -109,5 +111,40 @@ func TestNewJobViewStaleLibraryIDFallsBack(t *testing.T) {
 
 	if view.LibraryName != "Movies" {
 		t.Errorf("LibraryName = %q, want %q", view.LibraryName, "Movies")
+	}
+}
+
+func TestEstimateRemaining(t *testing.T) {
+	started := time.Now().Add(-60 * time.Second)
+
+	tests := []struct {
+		name      string
+		startedAt *time.Time
+		progress  float64
+		want      float64 // 0 means "no estimate"
+		tolerance float64
+	}{
+		{"halfway after 60s implies about 60s left", &started, 50, 60, 5},
+		{"three quarters after 60s implies about 20s left", &started, 75, 20, 5},
+		// Early percentages are far too noisy to extrapolate from, and a wildly
+		// wrong estimate is worse than showing none.
+		{"too early to estimate", &started, 0.4, 0, 0},
+		{"complete", &started, 100, 0, 0},
+		{"never started", nil, 50, 0, 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := estimateRemaining(tc.startedAt, tc.progress)
+			if tc.want == 0 {
+				if got != 0 {
+					t.Errorf("estimateRemaining() = %.1f, want 0 (no estimate)", got)
+				}
+				return
+			}
+			if diff := math.Abs(got - tc.want); diff > tc.tolerance {
+				t.Errorf("estimateRemaining() = %.1f, want about %.1f", got, tc.want)
+			}
+		})
 	}
 }

@@ -71,6 +71,12 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .tab.active { color: #00d9ff; border-bottom-color: #00d9ff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; }
+        .job-link:hover { color: #fff; border-bottom-color: #fff; }
+        .progress-row { display: flex; align-items: center; gap: 8px; }
+        .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }
+        .fps-text, .eta-text { font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .stage-text { text-transform: capitalize; }
         .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 380px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8em; line-height: 1.5; }
         .joblog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 1100; }
         .joblog-panel { background: #16213e; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); width: min(1100px, 92vw); max-height: 84vh; margin: 6vh auto 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -364,9 +370,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <thead>
                         <tr>
                             <th>Job ID</th>
-                            <th>Source</th>
-                            <th>Worker</th>
+                            <th>Library</th>
+                            <th>File</th>
+                            <th>Stage</th>
                             <th>Progress</th>
+                            <th>FPS</th>
+                            <th>ETA</th>
+                            <th>Worker</th>
                             <th>Started</th>
                             <th>Actions</th>
                         </tr>
@@ -374,16 +384,26 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <tbody id="processing-jobs">
                         {{range .ProcessingJobs}}
                         <tr>
-                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
-                            <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
-                            <td>{{.WorkerID}}</td>
+                            <td><a class="job-link" href="/ui/job?id={{.ID}}" title="Open job details"><code>{{.ID}}</code></a></td>
+                            <td><span class="badge badge-pending">{{.LibraryName}}</span></td>
+                            <td class="truncate" title="{{.SourcePath}}">{{.RelPath}}</td>
+                            <td><span class="stage-text">&mdash;</span></td>
                             <td>
-                                <div class="progress-bar" style="width: 100px;">
-                                    <div class="progress-fill" style="width: 0%;" id="progress-{{.ID}}"></div>
+                                <div class="progress-row">
+                                    <div class="progress-bar" style="width: 100px;">
+                                        <div class="progress-fill" style="width: 0%;" id="progress-{{.ID}}"></div>
+                                    </div>
+                                    <span class="progress-pct">0%</span>
                                 </div>
                             </td>
+                            <td class="fps-text">&mdash;</td>
+                            <td class="eta-text">&mdash;</td>
+                            <td>{{.WorkerID}}</td>
                             <td>{{if .StartedAt}}{{.StartedAt.Format "15:04:05"}}{{end}}</td>
-                            <td><button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button></td>
+                            <td>
+                                <button class="btn btn-secondary btn-sm" onclick="openJobLogModal('{{.ID}}')">Log</button>
+                                <button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button>
+                            </td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -1030,6 +1050,18 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         }
 
         // Connect to stats stream for real-time updates
+        // Renders a remaining-time estimate. The server sends 0 when a job has
+        // not run long enough to extrapolate from, in which case nothing is shown
+        // rather than a misleading number.
+        function formatEta(seconds) {
+            if (!seconds || seconds <= 0) { return '—'; }
+            const s = Math.round(seconds);
+            if (s < 60) { return s + 's'; }
+            const m = Math.floor(s / 60);
+            if (m < 60) { return m + 'm ' + (s % 60) + 's'; }
+            return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+        }
+
         // ---- Job log viewer ----
 
         // The log is shown in a modal rather than inline in the History table on
@@ -1589,28 +1621,72 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             }
 
                             const tdId = createElement('td');
-                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
+                            const aId = createElement('a', {
+                                href: '/ui/job?id=' + job.id,
+                                className: 'job-link',
+                                title: 'Open job details'
+                            });
                             const codeId = createElement('code', {text: job.id});
                             aId.appendChild(codeId);
                             tdId.appendChild(aId);
 
-                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
-                            const tdWorker = createElement('td', {text: job.worker_id || ''});
+                            const tdLibrary = createElement('td');
+                            const badgeLib = createElement('span', {
+                                text: job.library_name || 'Unknown',
+                                className: 'badge badge-pending'
+                            });
+                            tdLibrary.appendChild(badgeLib);
 
+                            const tdSource = createElement('td', {
+                                text: job.rel_path || job.source_path,
+                                className: 'truncate',
+                                title: job.source_path
+                            });
+
+                            // download / convert / upload — which phase the job is in
+                            // matters when a job looks stalled.
+                            const tdStage = createElement('td');
+                            const stageSpan = createElement('span', {
+                                text: job.stage || '—',
+                                className: 'stage-text'
+                            });
+                            tdStage.appendChild(stageSpan);
+
+                            const pct = job.progress || 0;
                             const tdProg = createElement('td');
+                            const progRow = createElement('div', {className: 'progress-row'});
                             const progBar = createElement('div', {className: 'progress-bar', style: {width: '100px'}});
-                            const progFill = createElement('div', {className: 'progress-fill', style: {width: (job.progress || 0) + '%'}});
+                            const progFill = createElement('div', {className: 'progress-fill', style: {width: pct + '%'}});
                             progBar.appendChild(progFill);
-                            tdProg.appendChild(progBar);
+                            progRow.appendChild(progBar);
+                            progRow.appendChild(createElement('span', {
+                                text: pct.toFixed(1) + '%',
+                                className: 'progress-pct'
+                            }));
+                            tdProg.appendChild(progRow);
 
+                            const tdFps = createElement('td', {
+                                text: job.fps ? job.fps.toFixed(1) : '—',
+                                className: 'fps-text'
+                            });
+                            const tdEta = createElement('td', {
+                                text: formatEta(job.eta_seconds),
+                                className: 'eta-text'
+                            });
+
+                            const tdWorker = createElement('td', {text: job.worker_id || ''});
                             const tdStarted = createElement('td', {text: startedAt});
 
                             const tdActions = createElement('td');
+                            const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
+                            btnLog.onclick = () => openJobLogModal(job.id);
+                            tdActions.appendChild(btnLog);
+                            tdActions.appendChild(document.createTextNode(' '));
                             const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
                             btnCancel.onclick = () => cancelJob(job.id);
                             tdActions.appendChild(btnCancel);
 
-                            tr.append(tdId, tdSource, tdWorker, tdProg, tdStarted, tdActions);
+                            tr.append(tdId, tdLibrary, tdSource, tdStage, tdProg, tdFps, tdEta, tdWorker, tdStarted, tdActions);
                             tbody.appendChild(tr);
                         });
                     }
@@ -2019,7 +2095,7 @@ type WebUIData struct {
 	Workers        []WorkerInfo
 	Stats          DashboardStats
 	PendingJobs    []*models.Job
-	ProcessingJobs []*models.Job
+	ProcessingJobs []JobView
 	RecentJobs     []JobView
 	MasterURL      string                     // URL for workers to connect
 	WorkerDefaults *models.RemoteWorkerConfig // Worker default settings
@@ -2115,7 +2191,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		Workers:        workerInfos,
 		Stats:          stats,
 		PendingJobs:    pendingJobs,
-		ProcessingJobs: processingJobs,
+		ProcessingJobs: s.toJobViews(processingJobs),
 		RecentJobs:     s.toJobViews(recentJobs),
 		MasterURL:      masterURL,
 		WorkerDefaults: workerDefaults,
@@ -2236,6 +2312,12 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         .btn-danger { background: #dc3545; color: #fff; }
         .btn-danger:hover { background: #c82333; }
         .progress-bar { background: #0f0f23; border-radius: 4px; height: 20px; overflow: hidden; margin-top: 10px; }
+        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; }
+        .job-link:hover { color: #fff; border-bottom-color: #fff; }
+        .progress-row { display: flex; align-items: center; gap: 8px; }
+        .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }
+        .fps-text, .eta-text { font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .stage-text { text-transform: capitalize; }
         .log-view { background: #0f0f23; border-radius: 4px; padding: 12px; max-height: 460px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em; line-height: 1.5; }
         .log-line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-word; }
         .log-ts { color: #666; flex: 0 0 auto; }

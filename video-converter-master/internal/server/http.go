@@ -884,19 +884,33 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 		processingJobs, _ := s.db.GetJobsByStatus(statusProcessing, 20)
 
 		// Include progress for processing jobs
+		// Decorate in-flight jobs with everything the dashboard shows live:
+		// which library they belong to, the encoding rate, the stage they are in
+		// and an estimated finish time. fps and stage were already being read
+		// from the progress table and then dropped.
+		processingViews := s.toJobViews(processingJobs)
 		processingJobsData := make([]map[string]any, 0, len(processingJobs))
-		for _, pj := range processingJobs {
+		for i, pj := range processingJobs {
 			pData := map[string]any{
-				"id":          pj.ID,
-				"source_path": pj.SourcePath,
-				fieldWorkerID: pj.WorkerID,
-				"started_at":  pj.StartedAt,
-				fieldProgress: 0.0,
+				"id":           pj.ID,
+				"source_path":  pj.SourcePath,
+				fieldWorkerID:  pj.WorkerID,
+				"started_at":   pj.StartedAt,
+				fieldProgress:  0.0,
+				"fps":          0.0,
+				"stage":        "",
+				"eta_seconds":  0.0,
+				"library_name": processingViews[i].LibraryName,
+				"rel_path":     processingViews[i].RelPath,
 			}
-			progress, progressErr := s.db.GetJobProgress(pj.ID)
-			if progressErr == nil {
+
+			if progress, progressErr := s.db.GetJobProgress(pj.ID); progressErr == nil {
 				pData[fieldProgress] = progress.Progress
+				pData["fps"] = progress.FPS
+				pData["stage"] = progress.Stage
+				pData["eta_seconds"] = estimateRemaining(pj.StartedAt, progress.Progress)
 			}
+
 			processingJobsData = append(processingJobsData, pData)
 		}
 
@@ -2844,6 +2858,25 @@ func (s *Server) recoverStaleChecksum(job *models.Job, errorMessage string) bool
 
 	s.updateQueueDepthMetric()
 	return true
+}
+
+// estimateRemaining projects how long a job still needs, from how long it has
+// already run and how far it has got. It returns 0 when there is not enough
+// signal yet — early percentages are too noisy to extrapolate from, and a wildly
+// wrong estimate is worse than none.
+func estimateRemaining(startedAt *time.Time, progress float64) float64 {
+	const minProgressForEstimate = 1.0
+
+	if startedAt == nil || progress < minProgressForEstimate || progress >= 100 {
+		return 0
+	}
+
+	elapsed := time.Since(*startedAt).Seconds()
+	if elapsed <= 0 {
+		return 0
+	}
+
+	return elapsed / progress * (100 - progress)
 }
 
 // writeJSON writes v as a JSON response with the given status code.
