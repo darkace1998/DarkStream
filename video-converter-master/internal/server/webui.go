@@ -71,7 +71,9 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         .tab.active { color: #00d9ff; border-bottom-color: #00d9ff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; }
+        a { color: #00d9ff; }
+        .table code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; cursor: pointer; }
         .job-link:hover { color: #fff; border-bottom-color: #fff; }
         .progress-row { display: flex; align-items: center; gap: 8px; }
         .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }
@@ -329,7 +331,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="queue" class="tab-content active">
             <div class="card">
                 <h2>Pending Jobs <button class="btn btn-danger btn-sm refresh-btn" onclick="cancelAllPending()">Cancel All Pending</button></h2>
-                {{if .PendingJobs}}
                 <table class="table">
                     <thead>
                         <tr>
@@ -340,10 +341,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="pending-jobs">
+                    <tbody id="pending-jobs" data-empty="No pending jobs in queue" data-cols="5">
+                        {{if not .PendingJobs}}
+                        <tr data-placeholder="1"><td colspan="5" class="no-data">No pending jobs in queue</td></tr>
+                        {{end}}
                         {{range .PendingJobs}}
                         <tr>
-                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
+                            <td><a class="job-link" href="/ui/job?id={{.ID}}" title="Open job details"><code>{{.ID}}</code></a></td>
                             <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
                             <td><span class="badge badge-pending">{{.Priority}}</span></td>
                             <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
@@ -355,9 +359,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No pending jobs in queue</div>
-                {{end}}
             </div>
         </div>
 
@@ -365,7 +366,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="processing" class="tab-content">
             <div class="card">
                 <h2>Currently Processing</h2>
-                {{if .ProcessingJobs}}
                 <table class="table">
                     <thead>
                         <tr>
@@ -381,7 +381,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="processing-jobs">
+                    <tbody id="processing-jobs" data-empty="No jobs currently processing" data-cols="10">
+                        {{if not .ProcessingJobs}}
+                        <tr data-placeholder="1"><td colspan="10" class="no-data">No jobs currently processing</td></tr>
+                        {{end}}
                         {{range .ProcessingJobs}}
                         <tr>
                             <td><a class="job-link" href="/ui/job?id={{.ID}}" title="Open job details"><code>{{.ID}}</code></a></td>
@@ -408,9 +411,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No jobs currently processing</div>
-                {{end}}
             </div>
         </div>
 
@@ -421,7 +421,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="pruneJobs('all')" style="margin-left: 10px;">Clear Completed & Failed</button>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button>
                 </h2>
-                {{if .RecentJobs}}
                 <table class="table">
                     <thead>
                         <tr>
@@ -435,10 +434,13 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="recent-jobs">
+                    <tbody id="recent-jobs" data-empty="No recent jobs" data-cols="8">
+                        {{if not .RecentJobs}}
+                        <tr data-placeholder="1"><td colspan="8" class="no-data">No recent jobs</td></tr>
+                        {{end}}
                         {{range .RecentJobs}}
                         <tr>
-                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
+                            <td><a class="job-link" href="/ui/job?id={{.ID}}" title="Open job details"><code>{{.ID}}</code></a></td>
                             <td><span class="badge badge-pending">{{.LibraryName}}</span></td>
                             <td class="truncate" title="{{.SourcePath}}">{{.RelPath}}</td>
                             <td><span class="badge {{if eq .Status "completed"}}badge-completed{{else if eq .Status "failed"}}badge-failed{{else}}badge-pending{{end}}">{{.Status}}</span></td>
@@ -456,9 +458,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No recent jobs</div>
-                {{end}}
             </div>
         </div>
 
@@ -500,7 +499,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
-                {{if .Workers}}
                 <table class="table">
                     <thead>
                         <tr>
@@ -515,7 +513,10 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="workers-list">
+                    <tbody id="workers-list" data-empty="No workers connected" data-cols="9">
+                        {{if not .Workers}}
+                        <tr data-placeholder="1"><td colspan="9" class="no-data">No workers connected</td></tr>
+                        {{end}}
                         {{range .Workers}}
                         <tr>
                             <td><code>{{.WorkerID}}</code></td>
@@ -531,9 +532,6 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No workers connected</div>
-                {{end}}
             </div>
         </div>
 
@@ -1560,6 +1558,11 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         if (opts.text) el.textContent = opts.text;
                         if (opts.className) el.className = opts.className;
                         if (opts.title) el.title = opts.title;
+                        // Without this, every anchor built here was rendered with no
+                        // href at all — a link that looked like one but could not be
+                        // clicked or opened in a new tab.
+                        if (opts.href) el.href = opts.href;
+                        if (opts.id) el.id = opts.id;
                         if (opts.onclick) el.onclick = opts.onclick;
                         if (opts.innerHTML) el.innerHTML = opts.innerHTML; // only for static UI bits, not data
                         if (opts.style) {
@@ -1570,244 +1573,363 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         return el;
                     }
 
+                    // Rows are keyed by job id and reused across refreshes. Wiping a
+                    // tbody and rebuilding it every two seconds destroys whatever the
+                    // user is interacting with: a browser only fires click when
+                    // mousedown and mouseup land on the same element, so links and
+                    // buttons in these tables silently did nothing whenever a refresh
+                    // landed mid-click. Reusing rows also preserves text selection.
+                    function buildWorkerActions(cell, worker) {
+                        cell.setAttribute('data-state', String(worker.status));
+
+                        const btnConfig = createElement('button', {text: '⚙️ Configure', className: 'btn btn-primary btn-sm'});
+                        btnConfig.onclick = () => openWorkerSettings(worker.worker_id);
+                        cell.appendChild(btnConfig);
+
+                        if (worker.status !== 'offline') {
+                            if (worker.status === 'paused') {
+                                const btnResume = createElement('button', {text: '▶️ Resume', className: 'btn btn-success btn-sm', style: {marginLeft: '5px'}});
+                                btnResume.onclick = () => resumeWorker(worker.worker_id);
+                                cell.appendChild(btnResume);
+                            } else {
+                                const btnPause = createElement('button', {text: '⏸️ Pause', className: 'btn btn-warning btn-sm', style: {marginLeft: '5px'}});
+                                btnPause.onclick = () => pauseWorker(worker.worker_id);
+                                cell.appendChild(btnPause);
+                            }
+                        }
+
+                        const btnRemove = createElement('button', {text: '🗑️ Remove', className: 'btn btn-danger btn-sm', style: {marginLeft: '5px'}});
+                        btnRemove.onclick = () => removeWorker(worker.worker_id);
+                        cell.appendChild(btnRemove);
+                    }
+
+                    function buildHistoryActions(cell, job) {
+                        const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
+                        btnLog.onclick = () => openJobLogModal(job.id);
+                        cell.appendChild(btnLog);
+                        cell.appendChild(document.createTextNode(' '));
+
+                        if (job.status === 'failed') {
+                            const btnRetry = createElement('button', {text: 'Retry', className: 'btn btn-primary btn-sm'});
+                            btnRetry.onclick = () => retryJob(job.id);
+                            cell.appendChild(btnRetry);
+                            cell.appendChild(document.createTextNode(' '));
+                        }
+                        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                            const btnRequeue = createElement('button', {text: 'Re-queue', className: 'btn btn-secondary btn-sm'});
+                            btnRequeue.onclick = () => requeueJob(job.id);
+                            cell.appendChild(btnRequeue);
+                        }
+                    }
+
+                    function syncRows(tbody, items, build, keyOf) {
+                        const getKey = keyOf || function(item) { return item.id; };
+
+                        // Drop any "nothing here" placeholder before syncing; it is
+                        // re-added below if the table really is empty.
+                        Array.from(tbody.querySelectorAll('tr[data-placeholder]')).forEach(function(tr) {
+                            tr.remove();
+                        });
+
+                        const existing = new Map();
+                        Array.from(tbody.children).forEach(function(tr) {
+                            const key = tr.getAttribute('data-key');
+                            if (key) { existing.set(key, tr); }
+                        });
+
+                        const seen = new Set();
+                        let previous = null;
+
+                        items.forEach(function(item) {
+                            const key = String(getKey(item));
+                            seen.add(key);
+
+                            let tr = existing.get(key);
+                            if (!tr) {
+                                tr = document.createElement('tr');
+                                tr.setAttribute('data-key', key);
+                                build(tr, item, true);
+                            } else {
+                                build(tr, item, false);
+                            }
+
+                            // Keep display order without detaching a row that is
+                            // already in the right place.
+                            const shouldFollow = previous ? previous.nextSibling : tbody.firstChild;
+                            if (tr !== shouldFollow) {
+                                tbody.insertBefore(tr, shouldFollow);
+                            }
+                            previous = tr;
+                        });
+
+                        existing.forEach(function(tr, key) {
+                            if (!seen.has(key)) { tr.remove(); }
+                        });
+
+                        if (!tbody.children.length) {
+                            const tr = document.createElement('tr');
+                            tr.setAttribute('data-placeholder', '1');
+                            const td = document.createElement('td');
+                            td.colSpan = parseInt(tbody.getAttribute('data-cols'), 10) || 1;
+                            td.className = 'no-data';
+                            td.textContent = tbody.getAttribute('data-empty') || '';
+                            tr.appendChild(td);
+                            tbody.appendChild(tr);
+                        }
+                    }
+
                     // Update pending jobs table
                     if (data.pending_jobs && document.getElementById('pending-jobs')) {
-                        const tbody = document.getElementById('pending-jobs');
-                        tbody.innerHTML = '';
-                        data.pending_jobs.forEach(job => {
-                            const tr = document.createElement('tr');
-                            const createdAt = new Date(job.created_at).toLocaleString();
+                        syncRows(document.getElementById('pending-jobs'), data.pending_jobs, function(tr, job, isNew) {
                             const prio = job.priority !== undefined ? job.priority : 5;
 
-                            const tdId = createElement('td');
-                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
-                            const codeId = createElement('code', {text: job.id});
-                            aId.appendChild(codeId);
-                            tdId.appendChild(aId);
+                            if (isNew) {
+                                const tdId = createElement('td');
+                                const aId = createElement('a', {
+                                    href: '/ui/job?id=' + job.id,
+                                    className: 'job-link',
+                                    title: 'Open job details'
+                                });
+                                aId.appendChild(createElement('code', {text: job.id}));
+                                tdId.appendChild(aId);
 
-                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+                                const tdSource = createElement('td', {
+                                    text: job.rel_path || job.source_path,
+                                    className: 'truncate',
+                                    title: job.source_path
+                                });
 
-                            const tdPrio = createElement('td');
-                            const badgePrio = createElement('span', {text: prio, className: 'badge badge-pending'});
-                            tdPrio.appendChild(badgePrio);
+                                const tdPrio = createElement('td');
+                                tdPrio.appendChild(createElement('span', {text: prio, className: 'badge badge-pending prio-badge'}));
 
-                            const tdCreated = createElement('td', {text: createdAt});
+                                const tdCreated = createElement('td', {text: new Date(job.created_at).toLocaleString()});
 
-                            const tdActions = createElement('td');
-                            const btnPrio = createElement('button', {text: 'Priority', className: 'btn btn-primary btn-sm'});
-                            btnPrio.onclick = () => updatePriority(job.id, prio);
+                                const tdActions = createElement('td');
+                                const btnPrio = createElement('button', {text: 'Priority', className: 'btn btn-primary btn-sm'});
+                                btnPrio.onclick = () => updatePriority(job.id, prio);
+                                const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                                btnCancel.onclick = () => cancelJob(job.id);
+                                tdActions.append(btnPrio, document.createTextNode(' '), btnCancel);
 
-                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
-                            btnCancel.onclick = () => cancelJob(job.id);
+                                tr.append(tdId, tdSource, tdPrio, tdCreated, tdActions);
+                                return;
+                            }
 
-                            tdActions.appendChild(btnPrio);
-                            tdActions.appendChild(document.createTextNode(' '));
-                            tdActions.appendChild(btnCancel);
-
-                            tr.append(tdId, tdSource, tdPrio, tdCreated, tdActions);
-                            tbody.appendChild(tr);
+                            // Only the priority can change while a job waits.
+                            const badge = tr.querySelector('.prio-badge');
+                            if (badge && badge.textContent !== String(prio)) { badge.textContent = prio; }
                         });
                     }
 
                     // Update processing jobs table
                     if (data.processing_jobs && document.getElementById('processing-jobs')) {
-                        const tbody = document.getElementById('processing-jobs');
-                        tbody.innerHTML = '';
-                        data.processing_jobs.forEach(job => {
-                            const tr = document.createElement('tr');
-                            let startedAt = '';
-                            if (job.started_at) {
-                                startedAt = new Date(job.started_at).toLocaleTimeString();
+                        syncRows(document.getElementById('processing-jobs'), data.processing_jobs, function(tr, job, isNew) {
+                            const pct = job.progress || 0;
+
+                            if (isNew) {
+                                const tdId = createElement('td');
+                                const aId = createElement('a', {
+                                    href: '/ui/job?id=' + job.id,
+                                    className: 'job-link',
+                                    title: 'Open job details'
+                                });
+                                aId.appendChild(createElement('code', {text: job.id}));
+                                tdId.appendChild(aId);
+
+                                const tdLibrary = createElement('td');
+                                tdLibrary.appendChild(createElement('span', {
+                                    text: job.library_name || 'Unknown',
+                                    className: 'badge badge-pending'
+                                }));
+
+                                const tdSource = createElement('td', {
+                                    text: job.rel_path || job.source_path,
+                                    className: 'truncate',
+                                    title: job.source_path
+                                });
+
+                                const tdStage = createElement('td');
+                                tdStage.appendChild(createElement('span', {text: job.stage || '—', className: 'stage-text'}));
+
+                                const tdProg = createElement('td');
+                                const progRow = createElement('div', {className: 'progress-row'});
+                                const progBar = createElement('div', {className: 'progress-bar', style: {width: '100px'}});
+                                progBar.appendChild(createElement('div', {className: 'progress-fill', style: {width: pct + '%'}}));
+                                progRow.appendChild(progBar);
+                                progRow.appendChild(createElement('span', {text: pct.toFixed(1) + '%', className: 'progress-pct'}));
+                                tdProg.appendChild(progRow);
+
+                                const tdFps = createElement('td', {
+                                    text: job.fps ? job.fps.toFixed(1) : '—',
+                                    className: 'fps-text'
+                                });
+                                const tdEta = createElement('td', {text: formatEta(job.eta_seconds), className: 'eta-text'});
+                                const tdWorker = createElement('td', {text: job.worker_id || '', className: 'worker-text'});
+                                const tdStarted = createElement('td', {
+                                    text: job.started_at ? new Date(job.started_at).toLocaleTimeString() : ''
+                                });
+
+                                const tdActions = createElement('td');
+                                const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
+                                btnLog.onclick = () => openJobLogModal(job.id);
+                                const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                                btnCancel.onclick = () => cancelJob(job.id);
+                                tdActions.append(btnLog, document.createTextNode(' '), btnCancel);
+
+                                tr.append(tdId, tdLibrary, tdSource, tdStage, tdProg, tdFps, tdEta, tdWorker, tdStarted, tdActions);
+                                return;
                             }
 
-                            const tdId = createElement('td');
-                            const aId = createElement('a', {
-                                href: '/ui/job?id=' + job.id,
-                                className: 'job-link',
-                                title: 'Open job details'
-                            });
-                            const codeId = createElement('code', {text: job.id});
-                            aId.appendChild(codeId);
-                            tdId.appendChild(aId);
+                            // Refresh only the values that move, leaving the link and
+                            // buttons — the things being clicked — untouched.
+                            const setText = function(sel, value) {
+                                const el = tr.querySelector(sel);
+                                if (el && el.textContent !== value) { el.textContent = value; }
+                            };
+                            setText('.stage-text', job.stage || '—');
+                            setText('.progress-pct', pct.toFixed(1) + '%');
+                            setText('.fps-text', job.fps ? job.fps.toFixed(1) : '—');
+                            setText('.eta-text', formatEta(job.eta_seconds));
+                            setText('.worker-text', job.worker_id || '');
 
-                            const tdLibrary = createElement('td');
-                            const badgeLib = createElement('span', {
-                                text: job.library_name || 'Unknown',
-                                className: 'badge badge-pending'
-                            });
-                            tdLibrary.appendChild(badgeLib);
-
-                            const tdSource = createElement('td', {
-                                text: job.rel_path || job.source_path,
-                                className: 'truncate',
-                                title: job.source_path
-                            });
-
-                            // download / convert / upload — which phase the job is in
-                            // matters when a job looks stalled.
-                            const tdStage = createElement('td');
-                            const stageSpan = createElement('span', {
-                                text: job.stage || '—',
-                                className: 'stage-text'
-                            });
-                            tdStage.appendChild(stageSpan);
-
-                            const pct = job.progress || 0;
-                            const tdProg = createElement('td');
-                            const progRow = createElement('div', {className: 'progress-row'});
-                            const progBar = createElement('div', {className: 'progress-bar', style: {width: '100px'}});
-                            const progFill = createElement('div', {className: 'progress-fill', style: {width: pct + '%'}});
-                            progBar.appendChild(progFill);
-                            progRow.appendChild(progBar);
-                            progRow.appendChild(createElement('span', {
-                                text: pct.toFixed(1) + '%',
-                                className: 'progress-pct'
-                            }));
-                            tdProg.appendChild(progRow);
-
-                            const tdFps = createElement('td', {
-                                text: job.fps ? job.fps.toFixed(1) : '—',
-                                className: 'fps-text'
-                            });
-                            const tdEta = createElement('td', {
-                                text: formatEta(job.eta_seconds),
-                                className: 'eta-text'
-                            });
-
-                            const tdWorker = createElement('td', {text: job.worker_id || ''});
-                            const tdStarted = createElement('td', {text: startedAt});
-
-                            const tdActions = createElement('td');
-                            const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
-                            btnLog.onclick = () => openJobLogModal(job.id);
-                            tdActions.appendChild(btnLog);
-                            tdActions.appendChild(document.createTextNode(' '));
-                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
-                            btnCancel.onclick = () => cancelJob(job.id);
-                            tdActions.appendChild(btnCancel);
-
-                            tr.append(tdId, tdLibrary, tdSource, tdStage, tdProg, tdFps, tdEta, tdWorker, tdStarted, tdActions);
-                            tbody.appendChild(tr);
+                            const fill = tr.querySelector('.progress-fill');
+                            if (fill) { fill.style.width = pct + '%'; }
                         });
                     }
 
                     // Update recent jobs table
                     if (data.recent_jobs && document.getElementById('recent-jobs')) {
-                        const tbody = document.getElementById('recent-jobs');
-                        tbody.innerHTML = '';
-                        data.recent_jobs.forEach(job => {
-                            const tr = document.createElement('tr');
+                        syncRows(document.getElementById('recent-jobs'), data.recent_jobs, function(tr, job, isNew) {
                             let statusClass = 'badge-pending';
                             if (job.status === 'completed') statusClass = 'badge-completed';
                             else if (job.status === 'failed') statusClass = 'badge-failed';
 
-                            let completedAt = '-';
-                            if (job.completed_at) {
-                                completedAt = new Date(job.completed_at).toLocaleString();
+                            const completedAt = job.completed_at ? new Date(job.completed_at).toLocaleString() : '-';
+
+                            if (isNew) {
+                                const tdId = createElement('td');
+                                const aId = createElement('a', {
+                                    href: '/ui/job?id=' + job.id,
+                                    className: 'job-link',
+                                    title: 'Open job details'
+                                });
+                                aId.appendChild(createElement('code', {text: job.id}));
+                                tdId.appendChild(aId);
+
+                                const tdLibrary = createElement('td');
+                                tdLibrary.appendChild(createElement('span', {
+                                    text: job.library_name || 'Unknown',
+                                    className: 'badge badge-pending'
+                                }));
+
+                                const tdSource = createElement('td', {
+                                    text: job.rel_path || job.source_path,
+                                    className: 'truncate',
+                                    title: job.source_path
+                                });
+
+                                const tdStatus = createElement('td');
+                                tdStatus.appendChild(createElement('span', {
+                                    text: job.status,
+                                    className: 'badge ' + statusClass + ' status-badge'
+                                }));
+
+                                const tdWorker = createElement('td', {text: job.worker_id || '', className: 'worker-text'});
+                                const tdDuration = createElement('td', {
+                                    text: job.source_duration ? Math.round(job.source_duration) + 's' : '-'
+                                });
+                                const tdCompleted = createElement('td', {text: completedAt, className: 'completed-text'});
+
+                                const tdActions = createElement('td', {className: 'actions-cell'});
+                                buildHistoryActions(tdActions, job);
+
+                                tr.append(tdId, tdLibrary, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
+                                return;
                             }
 
-                            const tdId = createElement('td');
-                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
-                            const codeId = createElement('code', {text: job.id});
-                            aId.appendChild(codeId);
-                            tdId.appendChild(aId);
+                            const badge = tr.querySelector('.status-badge');
+                            const statusChanged = badge && badge.textContent !== job.status;
+                            if (statusChanged) {
+                                badge.textContent = job.status;
+                                badge.className = 'badge ' + statusClass + ' status-badge';
 
-                            const tdLibrary = createElement('td');
-                            const badgeLibrary = createElement('span', {
-                                text: job.library_name || 'Unknown',
-                                className: 'badge badge-pending'
-                            });
-                            tdLibrary.appendChild(badgeLibrary);
-
-                            const tdSource = createElement('td', {
-                                text: job.rel_path || job.source_path,
-                                className: 'truncate',
-                                title: job.source_path
-                            });
-
-                            const tdStatus = createElement('td');
-                            const badgeStatus = createElement('span', {text: job.status, className: 'badge ' + statusClass});
-                            tdStatus.appendChild(badgeStatus);
-
-                            const tdWorker = createElement('td', {text: job.worker_id || ''});
-                            const tdDuration = createElement('td', {text: job.source_duration ? Math.round(job.source_duration) + 's' : '-'});
-                            const tdCompleted = createElement('td', {text: completedAt});
-
-                            const tdActions = createElement('td');
-                            const btnLog = createElement('button', {text: 'Log', className: 'btn btn-secondary btn-sm'});
-                            btnLog.onclick = () => openJobLogModal(job.id);
-                            tdActions.appendChild(btnLog);
-                            tdActions.appendChild(document.createTextNode(' '));
-                            if (job.status === 'failed') {
-                                const btnRetry = createElement('button', {text: 'Retry', className: 'btn btn-primary btn-sm'});
-                                btnRetry.onclick = () => retryJob(job.id);
-                                tdActions.appendChild(btnRetry);
-                                tdActions.appendChild(document.createTextNode(' '));
-                            }
-                            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-                                const btnRequeue = createElement('button', {text: 'Re-queue', className: 'btn btn-secondary btn-sm'});
-                                btnRequeue.onclick = () => requeueJob(job.id);
-                                tdActions.appendChild(btnRequeue);
+                                // Which actions apply depends on the status, so rebuild
+                                // just that cell when it changes.
+                                const cell = tr.querySelector('.actions-cell');
+                                if (cell) { cell.textContent = ''; buildHistoryActions(cell, job); }
                             }
 
-                            tr.append(tdId, tdLibrary, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
-                            tbody.appendChild(tr);
+                            const completedCell = tr.querySelector('.completed-text');
+                            if (completedCell && completedCell.textContent !== completedAt) {
+                                completedCell.textContent = completedAt;
+                            }
+
+                            const workerCell = tr.querySelector('.worker-text');
+                            if (workerCell && workerCell.textContent !== (job.worker_id || '')) {
+                                workerCell.textContent = job.worker_id || '';
+                            }
                         });
                     }
 
                     // Update workers table
                     if (data.workers && document.getElementById('workers-list')) {
-                        const tbody = document.getElementById('workers-list');
-                        tbody.innerHTML = '';
-                        data.workers.forEach(worker => {
-                            const tr = document.createElement('tr');
-                            const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
+                        syncRows(document.getElementById('workers-list'), data.workers, function(tr, worker, isNew) {
                             const statusText = worker.is_online ? 'Online' : 'Offline';
-                            let lastSeen = '-';
-                            if (worker.last_seen) {
-                                lastSeen = new Date(worker.last_seen).toLocaleTimeString();
+                            const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
+                            const lastSeen = worker.last_seen ? new Date(worker.last_seen).toLocaleTimeString() : '-';
+
+                            if (isNew) {
+                                const tdId = createElement('td');
+                                tdId.appendChild(createElement('code', {text: worker.worker_id}));
+
+                                const tdHost = createElement('td', {text: worker.hostname || ''});
+                                const tdGpu = createElement('td', {text: worker.gpu || '', className: 'gpu-text'});
+                                const tdJobs = createElement('td', {text: worker.active_jobs || 0, className: 'jobs-text'});
+                                const tdCpu = createElement('td', {
+                                    text: (worker.cpu_usage || 0).toFixed(1) + '%', className: 'cpu-text'
+                                });
+                                const tdMem = createElement('td', {
+                                    text: (worker.memory_usage || 0).toFixed(1) + '%', className: 'mem-text'
+                                });
+
+                                const tdStatus = createElement('td');
+                                tdStatus.appendChild(createElement('span', {
+                                    text: statusText, className: 'badge ' + statusBadge + ' wstatus-badge'
+                                }));
+
+                                const tdSeen = createElement('td', {text: lastSeen, className: 'seen-text'});
+
+                                const tdActions = createElement('td', {className: 'wactions-cell'});
+                                buildWorkerActions(tdActions, worker);
+
+                                tr.append(tdId, tdHost, tdGpu, tdJobs, tdCpu, tdMem, tdStatus, tdSeen, tdActions);
+                                return;
                             }
 
-                            const tdId = createElement('td');
-                            const codeId = createElement('code', {text: worker.worker_id});
-                            tdId.appendChild(codeId);
+                            const setText = function(sel, value) {
+                                const el = tr.querySelector(sel);
+                                if (el && el.textContent !== value) { el.textContent = value; }
+                            };
+                            setText('.gpu-text', worker.gpu || '');
+                            setText('.jobs-text', String(worker.active_jobs || 0));
+                            setText('.cpu-text', (worker.cpu_usage || 0).toFixed(1) + '%');
+                            setText('.mem-text', (worker.memory_usage || 0).toFixed(1) + '%');
+                            setText('.seen-text', lastSeen);
 
-                            const tdHost = createElement('td', {text: worker.hostname || ''});
-                            const tdGpu = createElement('td', {text: worker.gpu || ''});
-                            const tdJobs = createElement('td', {text: worker.active_jobs || 0});
-                            const tdCpu = createElement('td', {text: (worker.cpu_usage || 0).toFixed(1) + '%'});
-                            const tdMem = createElement('td', {text: (worker.memory_usage || 0).toFixed(1) + '%'});
-
-                            const tdStatus = createElement('td');
-                            const badgeStatus = createElement('span', {text: statusText, className: 'badge ' + statusBadge});
-                            tdStatus.appendChild(badgeStatus);
-
-                            const tdSeen = createElement('td', {text: lastSeen});
-
-                            const tdActions = createElement('td');
-                            const btnConfig = createElement('button', {text: '⚙️ Configure', className: 'btn btn-primary btn-sm'});
-                            btnConfig.onclick = () => openWorkerSettings(worker.worker_id);
-                            tdActions.appendChild(btnConfig);
-
-                            if (worker.status !== 'offline') {
-                                if (worker.status === 'paused') {
-                                    const btnResume = createElement('button', {text: '▶️ Resume', className: 'btn btn-success btn-sm', style: 'margin-left: 5px;'});
-                                    btnResume.onclick = () => resumeWorker(worker.worker_id);
-                                    tdActions.appendChild(btnResume);
-                                } else {
-                                    const btnPause = createElement('button', {text: '⏸️ Pause', className: 'btn btn-warning btn-sm', style: 'margin-left: 5px;'});
-                                    btnPause.onclick = () => pauseWorker(worker.worker_id);
-                                    tdActions.appendChild(btnPause);
-                                }
+                            const badge = tr.querySelector('.wstatus-badge');
+                            if (badge && badge.textContent !== statusText) {
+                                badge.textContent = statusText;
+                                badge.className = 'badge ' + statusBadge + ' wstatus-badge';
                             }
 
-                            const btnRemove = createElement('button', {text: '🗑️ Remove', className: 'btn btn-danger btn-sm', style: 'margin-left: 5px;'});
-                            btnRemove.onclick = () => removeWorker(worker.worker_id);
-                            tdActions.appendChild(btnRemove);
-
-                            tr.append(tdId, tdHost, tdGpu, tdJobs, tdCpu, tdMem, tdStatus, tdSeen, tdActions);
-                            tbody.appendChild(tr);
-                        });
+                            // Pause and Resume swap depending on state, so that cell is
+                            // rebuilt only when the state actually changes.
+                            const cell = tr.querySelector('.wactions-cell');
+                            if (cell && cell.getAttribute('data-state') !== String(worker.status)) {
+                                cell.textContent = '';
+                                buildWorkerActions(cell, worker);
+                            }
+                        }, function(worker) { return worker.worker_id; });
                     }
                 } catch (err) {
                     console.error('Failed to parse SSE data:', err);
@@ -2312,7 +2434,9 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
         .btn-danger { background: #dc3545; color: #fff; }
         .btn-danger:hover { background: #c82333; }
         .progress-bar { background: #0f0f23; border-radius: 4px; height: 20px; overflow: hidden; margin-top: 10px; }
-        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; }
+        a { color: #00d9ff; }
+        .table code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .job-link { color: #00d9ff; text-decoration: none; border-bottom: 1px dotted #00d9ff; cursor: pointer; }
         .job-link:hover { color: #fff; border-bottom-color: #fff; }
         .progress-row { display: flex; align-items: center; gap: 8px; }
         .progress-pct { font-variant-numeric: tabular-nums; min-width: 42px; }

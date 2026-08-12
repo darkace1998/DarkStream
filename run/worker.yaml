@@ -22,6 +22,7 @@ storage:
   enable_resume_download: true
 
 ffmpeg:
+  max_threads: 0   # 0 = cores / concurrency
   path: /opt/ffmpeg9/bin/ffmpeg
   use_vulkan: false
   timeout: 30m

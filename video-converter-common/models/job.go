@@ -87,6 +87,10 @@ type ConversionConfig struct {
 	AudioCodec   string `json:"audio_codec"`   // aac
 	AudioBitrate string `json:"audio_bitrate"` // 128k
 	OutputFormat string `json:"output_format"` // mp4, mkv, webm, avi
+	// Threads caps how many threads FFmpeg may use for this job. Zero lets
+	// FFmpeg decide, which means every available core — with more than one job
+	// running that oversubscribes the host badly.
+	Threads int `json:"threads"`
 }
 
 // WorkerHeartbeat contains status information sent periodically from workers to the master.

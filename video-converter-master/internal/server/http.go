@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -1460,16 +1461,25 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		job.OutputPath = outputPath
 	}
 
-	// Parse multipart form (32MB max memory)
-	err = r.ParseMultipartForm(32 << 20)
+	// Stream the upload rather than buffering it.
+	//
+	// ParseMultipartForm keeps maxMemory bytes in RAM and spills the rest to a
+	// temp file under os.TempDir(). On hosts where /tmp is a RAM-backed tmpfs —
+	// the default in an LXC container — that means a converted file is held in
+	// memory at its full size before being copied again to its destination. A
+	// couple of gigabyte-sized uploads were enough to exhaust the container and
+	// have it killed, and any upload interrupted mid-flight leaked its spill file
+	// until reboot. MultipartReader streams the part straight to disk instead, in
+	// constant memory and with no temporary copy.
+	reader, err := r.MultipartReader()
 	if err != nil {
-		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)
+		http.Error(w, "Failed to read multipart request", http.StatusBadRequest)
 		return
 	}
 
-	// Get the file from the form
-	file, _, err := r.FormFile("video")
+	file, err := findFormFile(reader, "video")
 	if err != nil {
+		slog.Warn("Upload did not contain a video part", fieldJobID, jobID, "error", err)
 		http.Error(w, "Failed to get video file from form", http.StatusBadRequest)
 		return
 	}
@@ -2877,6 +2887,29 @@ func estimateRemaining(startedAt *time.Time, progress float64) float64 {
 	}
 
 	return elapsed / progress * (100 - progress)
+}
+
+// findFormFile advances a multipart stream to the named file field and returns
+// it for streaming. Parts before the requested one are discarded, so the caller
+// never holds more than the current part in memory.
+func findFormFile(reader *multipart.Reader, field string) (*multipart.Part, error) {
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("no %q field in upload", field)
+			}
+			return nil, err
+		}
+
+		if part.FormName() == field && part.FileName() != "" {
+			return part, nil
+		}
+
+		if cerr := part.Close(); cerr != nil {
+			slog.Debug("Failed to close skipped multipart part", "error", cerr)
+		}
+	}
 }
 
 // writeJSON writes v as a JSON response with the given status code.

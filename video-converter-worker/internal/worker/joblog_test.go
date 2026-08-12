@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -126,5 +127,39 @@ func TestJobLogIsConcurrencySafe(t *testing.T) {
 
 	if got := len(l.Entries()); got == 0 {
 		t.Error("Entries() is empty after concurrent writes")
+	}
+}
+
+// FFmpeg uses every core unless told otherwise, so with more than one job at a
+// time the host is oversubscribed — on a container with a CPU limit that is
+// enough to get the whole container killed.
+func TestEffectiveThreadsDividesCoresByConcurrency(t *testing.T) {
+	cores := runtime.NumCPU()
+
+	tests := []struct {
+		name        string
+		configured  int
+		concurrency int
+		want        int
+	}{
+		{"explicit setting wins", 3, 4, 3},
+		{"auto splits cores across concurrent jobs", 0, 2, max(1, cores/2)},
+		{"single job may use the whole machine", 0, 1, cores},
+		{"never returns zero", 0, cores * 4, 1},
+		{"treats zero concurrency as one", 0, 0, cores},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &Worker{
+				config:      &models.WorkerConfig{},
+				concurrency: tc.concurrency,
+			}
+			w.config.FFmpeg.MaxThreads = tc.configured
+
+			if got := w.effectiveThreads(); got != tc.want {
+				t.Errorf("effectiveThreads() = %d, want %d (cores=%d)", got, tc.want, cores)
+			}
+		})
 	}
 }

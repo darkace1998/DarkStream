@@ -680,6 +680,33 @@ driver 580.142 issue.
 - [ ] Have the capability probe test per codec rather than assuming h264 support implies the rest —
       it reported the CPU backend as working while h265-on-CPU could not run at all.
 
+### 24. [x] Container killed under load: uploads buffered into RAM, and FFmpeg used every core — **FIXED**
+
+Reported as "the worker starts and uses too much CPU, then Proxmox kills the LXC". Two independent
+causes, both real.
+
+**1. Uploads were buffered through a RAM-backed tmpfs.** `UploadVideo` called
+`r.ParseMultipartForm(32 << 20)`, which keeps 32 MiB in memory and spills the remainder to a temp
+file under `os.TempDir()`. In an LXC `/tmp` is a **tmpfs**, so a converted file was held in RAM at its
+full size and then copied again to its destination. Found live: `/tmp` was holding **7.3 GB of an
+8 GB container**, of which ~3.7 GB was leaked `multipart-*` spill files — Go's server only removes
+them when a request finishes cleanly, so every interrupted upload leaked one until reboot. Available
+memory was down to **321 MB**.
+
+Replaced with `r.MultipartReader()`, streaming the part straight to disk in constant memory, with no
+temporary copy and nothing to leak. Verified: five consecutive uploads produced **zero** spill files
+and left tmpfs flat.
+
+**2. FFmpeg had no thread limit.** Left alone it uses every core, so a worker with `concurrency: 2` ran
+two encoders each claiming all 8 cores — 2× oversubscription, sustained. Added a `max_threads` setting
+(web-editable, also `ffmpeg.max_threads` in worker config). The default of 0 divides the host's cores
+by the worker's concurrency, so all jobs together ask for roughly one thread per core instead of each
+job claiming the machine. Verified in the live command line: `-threads 4` with 8 cores and concurrency
+2, load steady at ~2.2 instead of pinned.
+
+- [ ] Consider running FFmpeg at a lower priority (`nice`) as a second line of defence.
+- [ ] Point the master at a disk-backed `TMPDIR` as belt-and-braces for any other temp-file use.
+
 ---
 
 ## Notes for anyone reproducing this

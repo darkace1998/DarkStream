@@ -442,6 +442,13 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 		"-b:v", cfg.Bitrate,
 	)
 
+	// Cap encoder threads. Left to itself FFmpeg uses every core, so running
+	// more than one job at a time oversubscribes the machine — enough, on a
+	// container with a CPU limit, for the supervisor to kill it outright.
+	if cfg.Threads > 0 {
+		args = append(args, "-threads", strconv.Itoa(cfg.Threads))
+	}
+
 	// Audio codec selection
 	audioCodec := fc.getAudioCodecWithLogger(cfg.AudioCodec, log)
 	args = append(args,

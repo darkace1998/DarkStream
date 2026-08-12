@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -311,6 +312,29 @@ func (w *Worker) Shutdown() error {
 }
 
 // runCacheCleanup runs periodic cache cleanup
+// effectiveThreads decides how many threads a single FFmpeg run may use.
+//
+// An explicit setting wins. Otherwise the host's cores are divided by this
+// worker's concurrency, so all running jobs together ask for about one thread
+// per core instead of each job claiming the whole machine.
+func (w *Worker) effectiveThreads() int {
+	if configured := w.config.FFmpeg.MaxThreads; configured > 0 {
+		return configured
+	}
+
+	cores := runtime.NumCPU()
+	concurrency := w.concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	threads := cores / concurrency
+	if threads < 1 {
+		threads = 1
+	}
+	return threads
+}
+
 // remoteConfigRefreshInterval controls how often the worker re-reads the
 // worker settings the master serves, so edits made in the Web UI take effect
 // without restarting the process.
@@ -675,6 +699,7 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger, record *JobLog) e
 		// use_vulkan flag remains the fallback when the master has no preference.
 		HWAccel:   dynamicCfg.HWAccel,
 		UseVulkan: w.config.FFmpeg.UseVulkan,
+		Threads:   w.effectiveThreads(),
 	}
 
 	log.Info("Using conversion config",

@@ -125,7 +125,11 @@ type WorkerConfig struct {
 	} `yaml:"storage"`
 
 	FFmpeg struct {
-		Path      string        `yaml:"path"`
+		// MaxThreads caps FFmpeg threads per job (0 = derive from CPU count and
+		// concurrency). Without a cap FFmpeg uses every core, so concurrent jobs
+		// saturate the host and can get a container killed by its supervisor.
+		MaxThreads int           `yaml:"max_threads"`
+		Path       string        `yaml:"path"`
 		UseVulkan bool          `yaml:"use_vulkan"`
 		Timeout   time.Duration `yaml:"timeout"`
 	} `yaml:"ffmpeg"`
@@ -163,6 +167,9 @@ type RemoteWorkerConfig struct {
 	// FFmpeg settings
 	UseVulkan     bool  `json:"use_vulkan"`     // Whether to use Vulkan hardware acceleration
 	FFmpegTimeout int64 `json:"ffmpeg_timeout"` // Duration in seconds
+	// MaxThreads caps FFmpeg threads per job. 0 divides the host's cores by the
+	// worker's concurrency so the machine is not oversubscribed.
+	MaxThreads int `json:"max_threads"`
 
 	// Conversion settings (already fetched via /api/config, but included for completeness)
 	Conversion ConversionSettings `json:"conversion"`
