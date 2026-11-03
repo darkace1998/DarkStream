@@ -191,59 +191,81 @@ func (fc *FFmpegConverter) ConvertVideoWithSink(
 		duration = 0
 	}
 
-	// Build FFmpeg command
-	args := fc.buildFFmpegCommand(job, cfg, log)
+	// runOnce executes one ffmpeg pass with the given config.
+	runOnce := func(c *models.ConversionConfig) error {
+		args := fc.buildFFmpegCommand(job, c, log)
 
-	if sink != nil {
-		sink(fc.ffmpegPath + " " + strings.Join(args, " "))
-	}
-
-	// Create context with timeout, descending from the worker's context so that
-	// shutting the worker down also stops the conversion.
-	ctx, cancel := context.WithTimeout(fc.parentContext(), fc.timeout)
-	defer cancel()
-
-	// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
-	cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
-
-	// Ask FFmpeg to stop first so it can close its output file, then kill it if
-	// it will not. The default for CommandContext is an immediate kill.
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = ffmpegShutdownGrace
-
-	// Setup stderr pipe for progress tracking
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	log.Debug("Executing FFmpeg command", "args", args)
-
-	err = cmd.Start()
-	if err != nil {
-		return fmt.Errorf("failed to start ffmpeg: %w", err)
-	}
-
-	// Always consume stderr so FFmpeg never blocks when the pipe buffer fills.
-	// All reads MUST complete before cmd.Wait() is called, otherwise Wait may
-	// close the pipe while the reader is still running (see os/exec docs).
-	readDone := make(chan struct{})
-	go func() {
-		defer close(readDone)
-		if progressCallback != nil && duration > 0 {
-			fc.trackProgress(stderr, duration, progressCallback, log, sink)
-		} else {
-			fc.drainStderr(stderr, sink)
+		if sink != nil {
+			sink(fc.ffmpegPath + " " + strings.Join(args, " "))
 		}
-	}()
-	<-readDone
 
-	err = cmd.Wait()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("ffmpeg conversion timed out after %v: %w", fc.timeout, err)
+		// Create context with timeout, descending from the worker's context so that
+		// shutting the worker down also stops the conversion.
+		ctx, cancel := context.WithTimeout(fc.parentContext(), fc.timeout)
+		defer cancel()
+
+		// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
+		cmd := exec.CommandContext(ctx, fc.ffmpegPath, args...)
+
+		// Ask FFmpeg to stop first so it can close its output file, then kill it if
+		// it will not. The default for CommandContext is an immediate kill.
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = ffmpegShutdownGrace
+
+		// Setup stderr pipe for progress tracking
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return fmt.Errorf("failed to create stderr pipe: %w", err)
 		}
-		return fmt.Errorf("ffmpeg conversion failed: %w", err)
+
+		log.Debug("Executing FFmpeg command", "args", args)
+
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start ffmpeg: %w", err)
+		}
+
+		// Always consume stderr so FFmpeg never blocks when the pipe buffer fills.
+		// All reads MUST complete before cmd.Wait() is called, otherwise Wait may
+		// close the pipe while the reader is still running (see os/exec docs).
+		readDone := make(chan struct{})
+		go func() {
+			defer close(readDone)
+			if progressCallback != nil && duration > 0 {
+				fc.trackProgress(stderr, duration, progressCallback, log, sink)
+			} else {
+				fc.drainStderr(stderr, sink)
+			}
+		}()
+		<-readDone
+
+		if err := cmd.Wait(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("ffmpeg conversion timed out after %v: %w", fc.timeout, err)
+			}
+			return fmt.Errorf("ffmpeg conversion failed: %w", err)
+		}
+		return nil
+	}
+
+	err = runOnce(cfg)
+	if err != nil && resolveHWAccel(cfg) == HWAccelVulkan {
+		// The Vulkan encoder cannot handle some inputs (odd pix fmts, mjpeg,
+		// some hevc/av1 bitstreams). Retry once on the CPU instead of failing.
+		log.Warn("Vulkan conversion failed, retrying on CPU", "job_id", job.ID, "error", err)
+		if sink != nil {
+			sink("--- vulkan pass failed, retrying with hwaccel=none (CPU) ---")
+		}
+		_ = os.Remove(job.OutputPath) // drop the partial output of the failed pass
+		cpuCfg := *cfg
+		cpuCfg.HWAccel = HWAccelNone
+		if err2 := runOnce(&cpuCfg); err2 != nil {
+			return err // report the original vulkan error
+		}
+		log.Info("CPU fallback conversion completed", "job_id", job.ID)
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 
 	log.Info("Conversion completed", "job_id", job.ID)
