@@ -10,6 +10,7 @@ import (
 	"github.com/darkace1998/video-converter-common/utils"
 )
 
+// #nosec G101 - this is the name of an environment variable, not a credential
 const masterAPIKeyEnvVar = "DARKSTREAM_API_KEY"
 
 // errCommandFailed signals that a command should exit non-zero. The failure
