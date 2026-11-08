@@ -830,7 +830,7 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	if startOffset > 0 {
 		// Append mode for resume
 		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
-		outFile, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o644)
+		outFile, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o600)
 	} else {
 		// Create new file
 		// #nosec G304 - outputPath is derived from job metadata, not untrusted network input
