@@ -106,8 +106,12 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Compute image name (ghcr requires lowercase)
+      id: image
+      run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
     - name: Verify image exists
       run: |
-        docker pull ghcr.io/${{ github.repository }}-${{ matrix.target }}:latest
-        docker inspect ghcr.io/${{ github.repository }}-${{ matrix.target }}:latest
-        docker run --rm ghcr.io/${{ github.repository }}-${{ matrix.target }}:latest --help
+        docker pull ${{ steps.image.outputs.name }}:latest
+        docker inspect ${{ steps.image.outputs.name }}:latest
+        docker run --rm ${{ steps.image.outputs.name }}:latest --help
