@@ -1547,6 +1547,7 @@ func (t *Tracker) migrateVideoMetadataColumns() error {
 		args = append(args, col.name)
 	}
 
+	// #nosec G201 - placeholders are literal "?" markers; column names are bound as query args
 	query := fmt.Sprintf(`SELECT name FROM pragma_table_info('jobs') WHERE name IN (%s)`, strings.Join(placeholders, ","))
 	rows, err := t.db.Query(query, args...)
 	if err != nil {

@@ -297,6 +297,7 @@ func (s *Scanner) isDuplicate(fullPath string, opts ScanOptions) bool {
 
 // computeFileHash computes SHA256 hash of file for duplicate detection
 func computeFileHash(filePath string) (string, error) {
+	// #nosec G304 - filePath is discovered by walking the configured scan directories
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)

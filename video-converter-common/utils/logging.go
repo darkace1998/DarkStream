@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -37,9 +38,10 @@ func InitLogger(level, format, outputPath string, attrs ...any) {
 
 	writer := io.Writer(os.Stdout)
 	if outputPath != "" {
-		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 			fmt.Fprintf(os.Stderr, "darkstream: failed to create log directory %q: %v\n", filepath.Dir(outputPath), err)
-		} else if file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+			// #nosec G304 - outputPath is the operator-configured log destination, not request input
+		} else if file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "darkstream: failed to open log file %q: %v\n", outputPath, err)
 		} else {
 			writer = io.MultiWriter(os.Stdout, file)
@@ -96,12 +98,7 @@ func GenerateCorrelationID() string {
 		// Fallback to timestamp + pid based ID if random fails
 		now := time.Now().UnixNano()
 		pid := os.Getpid()
-		fallbackBytes := []byte{
-			byte(now >> 56), byte(now >> 48), byte(now >> 40), byte(now >> 32),
-			byte(now >> 24), byte(now >> 16), byte(now >> 8), byte(now),
-			byte(pid >> 8), byte(pid),
-		}
-		return "fb-" + hex.EncodeToString(fallbackBytes)
+		return "fb-" + strconv.FormatInt(now, 16) + "-" + strconv.Itoa(pid)
 	}
 	return hex.EncodeToString(bytes)
 }

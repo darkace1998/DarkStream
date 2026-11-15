@@ -40,7 +40,7 @@ func (w *Worker) startDiagnosticsServer() error {
 	mux.HandleFunc("/healthz", w.healthzHandler)
 	mux.HandleFunc("/metrics", w.metricsHandler)
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	w.diagMu.Lock()
 	w.diagnosticsServer = server
