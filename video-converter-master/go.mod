@@ -1,6 +1,6 @@
 module github.com/darkace1998/video-converter-master
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/darkace1998/video-converter-common v0.1.0
