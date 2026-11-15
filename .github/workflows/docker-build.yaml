@@ -114,4 +114,11 @@ jobs:
       run: |
         docker pull ${{ steps.image.outputs.name }}:latest
         docker inspect ${{ steps.image.outputs.name }}:latest
-        docker run --rm ${{ steps.image.outputs.name }}:latest --help
+        if [ "${{ matrix.target }}" = "all-in-one" ]; then
+          # the all-in-one image has no ENTRYPOINT (CMD-only, so users can
+          # pick which binary to run); passing only --help would replace the
+          # CMD and the container would try to exec "--help" (exit 127)
+          docker run --rm ${{ steps.image.outputs.name }}:latest ./video-converter-cli --help
+        else
+          docker run --rm ${{ steps.image.outputs.name }}:latest --help
+        fi
