@@ -132,7 +132,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"ok":       true,
 		"location": loc,
-		"message":  "Scan location saved. It is active now and persisted to the config file.",
+		fieldMessage: "Scan location saved. It is active now and persisted to the config file.",
 	}); err != nil {
 		slog.Error("Failed to encode scan location response", "error", err)
 	}

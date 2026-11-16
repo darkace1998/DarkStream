@@ -64,7 +64,7 @@ func (s *Server) GetServerSettings(w http.ResponseWriter, r *http.Request) {
 		"log_format":       cfg.Logging.Format,
 		"config_file":      configFile,
 		"restart_required": true,
-		"message":          "Changes to these settings are written to the config file and apply after the master restarts.",
+		fieldMessage:          "Changes to these settings are written to the config file and apply after the master restarts.",
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("Failed to encode server settings", "error", err)
@@ -133,7 +133,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 		"ok":               true,
 		"persisted_to":     s.persister.Path(),
 		"restart_required": true,
-		"message":          "Settings saved to the config file. Restart the master to apply them.",
+		fieldMessage:          "Settings saved to the config file. Restart the master to apply them.",
 	}); err != nil {
 		slog.Error("Failed to encode server settings response", "error", err)
 	}
