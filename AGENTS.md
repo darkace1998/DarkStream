@@ -118,7 +118,7 @@ Admin/CLI (auth): `/api/status`, `/api/stats` (+`/stream` SSE), `/api/jobs`,
 `/api/server-settings`, `/api/scan-locations`, `GET /api/audit-log`,
 `POST /api/stream-token` (short-lived HMAC token for SSE, keeps the master
 key out of URLs).
-Public: `/healthz`, `/healthz/ready`, `/api/health`, `/metrics`, Web UI at `/`
+Public: `/healthz`, `/readyz`, `/api/health`, `/metrics`, Web UI at `/`
 and `/ui/job?id=...` (job detail page).
 
 ## Docs map

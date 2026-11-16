@@ -175,14 +175,15 @@
             return el;
         }
 
-        async function doAction(action) {
+        function authHeaders() {
             const apiKey = localStorage.getItem('darkstreamAdminApiKey') || '';
-            let url = '/api/job/' + action + '?job_id=' + encodeURIComponent(jobId);
-            if (apiKey) {
-                url += '&api_key=' + encodeURIComponent(apiKey);
-            }
+            return apiKey ? { Authorization: 'Bearer ' + apiKey } : {};
+        }
+
+        async function doAction(action) {
+            const url = '/api/job/' + action + '?job_id=' + encodeURIComponent(jobId);
             try {
-                const response = await fetch(url, { method: 'POST' });
+                const response = await fetch(url, { method: 'POST', headers: authHeaders() });
                 if (!response.ok) {
                     const text = await response.text();
                     alert('Action failed: ' + text);
@@ -215,12 +216,10 @@
         // Progress polling for processing jobs
         if (jobStatus === 'processing') {
             setInterval(async () => {
-                let url = '/api/job/progress?job_id=' + encodeURIComponent(jobId);
-                const apiKey = localStorage.getItem('darkstreamAdminApiKey');
-                if (apiKey) url += '&api_key=' + encodeURIComponent(apiKey);
+                const url = '/api/job/progress?job_id=' + encodeURIComponent(jobId);
 
                 try {
-                    const res = await fetch(url);
+                    const res = await fetch(url, { headers: authHeaders() });
                     if (res.ok) {
                         const data = await res.json();
                         if (data.status && data.status !== 'processing') {

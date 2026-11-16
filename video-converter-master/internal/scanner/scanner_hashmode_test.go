@@ -103,3 +103,60 @@ func TestScanHashAlgoSHA1(t *testing.T) {
 		t.Errorf("expected algo sha1, got %q", jobs[0].SourceChecksumAlgo)
 	}
 }
+
+// TestScanSkipThenFullRehashes verifies the skip->full transition: a file first
+// scanned in skip mode (empty stored hash) must be re-hashed when the location
+// switches to full mode, not silently reused with an empty checksum.
+func TestScanSkipThenFullRehashes(t *testing.T) {
+	videosDir, outputDir := writeHashModeFixture(t)
+	store := newMemFileStore()
+
+	sc := New(videosDir, []string{extMP4}, outputDir)
+	sc.SetOptions(ScanOptions{HashMode: models.HashModeSkip, FileStore: store})
+	jobs, err := sc.ScanDirectory()
+	if err != nil {
+		t.Fatalf("skip scan: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].SourceChecksum != "" {
+		t.Fatalf("skip scan should produce empty checksum, got %+v", jobs)
+	}
+
+	// Same file, unchanged size+mtime, now in full mode: must re-hash.
+	sc2 := New(videosDir, []string{extMP4}, outputDir)
+	sc2.SetOptions(ScanOptions{HashMode: models.HashModeFull, FileStore: store})
+	jobs2, err := sc2.ScanDirectory()
+	if err != nil {
+		t.Fatalf("full scan: %v", err)
+	}
+	if len(jobs2) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs2))
+	}
+	if len(jobs2[0].SourceChecksum) != 64 || jobs2[0].SourceChecksumAlgo != "sha256" {
+		t.Fatalf("skip->full must re-hash (64-char sha256), got %q algo %q", jobs2[0].SourceChecksum, jobs2[0].SourceChecksumAlgo)
+	}
+}
+
+// TestScanFullThenSkipKeepsWorking verifies full->skip still skips reading.
+func TestScanFullThenSkipKeepsWorking(t *testing.T) {
+	videosDir, outputDir := writeHashModeFixture(t)
+	store := newMemFileStore()
+
+	sc := New(videosDir, []string{extMP4}, outputDir)
+	sc.SetOptions(ScanOptions{HashMode: models.HashModeFull, FileStore: store})
+	if _, err := sc.ScanDirectory(); err != nil {
+		t.Fatal(err)
+	}
+
+	sc2 := New(videosDir, []string{extMP4}, outputDir)
+	sc2.SetOptions(ScanOptions{HashMode: models.HashModeSkip, FileStore: store})
+	jobs, err := sc2.ScanDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].SourceChecksum != "" || jobs[0].SourceChecksumAlgo != models.HashModeSkip {
+		t.Fatalf("full->skip should produce skip algo, got %+v", jobs[0])
+	}
+	if stats := sc2.Stats(); stats.Hashed != 0 {
+		t.Fatalf("skip mode must not hash, Hashed=%d", stats.Hashed)
+	}
+}

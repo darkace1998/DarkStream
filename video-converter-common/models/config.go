@@ -262,6 +262,7 @@ type WorkerConfig struct {
 		Concurrency            int           `yaml:"concurrency"`
 		MasterURL              string        `yaml:"master_url"`
 		APIKey                 string        `yaml:"api_key"` // API key for authenticating with master
+		Token                  string        `yaml:"token"`   // per-worker bearer token (master server.worker_tokens); takes precedence over api_key when set
 		HeartbeatInterval      time.Duration `yaml:"heartbeat_interval"`
 		JobCheckInterval       time.Duration `yaml:"job_check_interval"`
 		JobTimeout             time.Duration `yaml:"job_timeout"`

@@ -47,7 +47,7 @@
       "id": 5,
       "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "pluginVersion": "10.0.0",
-      "targets": [{ "expr": "quantile(0.95, darkstream_jobs_duration_seconds_bucket{status=\"completed\"})", "legendFormat": "p95 duration", "refId": "A" }],
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(darkstream_jobs_duration_seconds_bucket{status=\"completed\"}[$__rate_interval])))", "legendFormat": "p95 duration", "refId": "A" }],
       "title": "Job duration p95 (completed)",
       "type": "stat"
     },

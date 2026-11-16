@@ -39,6 +39,9 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 
 	// Validate worker_id parameter
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -115,6 +118,9 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 
 	// Validate worker_id parameter
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -264,6 +270,10 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.WorkerID == "" {
+		if !s.checkWorkerBinding(w, r, req.WorkerID) {
+			return
+		}
+
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -319,6 +329,10 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.WorkerID == "" {
+		if !s.checkWorkerBinding(w, r, req.WorkerID) {
+			return
+		}
+
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -341,6 +355,7 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while reporting failure", http.StatusConflict)
 		return
 	}
+	s.cleanupChunkUpload(job.ID)
 
 	// Record metrics - classify error type
 	errorType := actorUnknown
@@ -387,6 +402,10 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if hb.WorkerID == "" {
+		if !s.checkWorkerBinding(w, r, hb.WorkerID) {
+			return
+		}
+
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -501,6 +520,9 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Check if worker_id is provided for per-worker config
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 
 	var response *models.RemoteWorkerConfig
 	if workerID != "" {
@@ -654,6 +676,9 @@ func (s *Server) buildRemoteWorkerConfigForWorker(workerID string) *models.Remot
 // HandleWorkerSettings handles GET/POST for per-worker settings
 func (s *Server) HandleWorkerSettings(w http.ResponseWriter, r *http.Request) {
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id is required", http.StatusBadRequest)
 		return
@@ -776,13 +801,16 @@ func (s *Server) deleteWorkerSettings(w http.ResponseWriter, workerID string) {
 
 // PauseWorker handles pausing a specific worker
 func (s *Server) PauseWorker(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "worker.pause", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "worker.pause")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -801,13 +829,16 @@ func (s *Server) PauseWorker(w http.ResponseWriter, r *http.Request) {
 
 // ResumeWorker handles resuming a specific worker
 func (s *Server) ResumeWorker(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "worker.resume", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "worker.resume")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return
@@ -826,13 +857,16 @@ func (s *Server) ResumeWorker(w http.ResponseWriter, r *http.Request) {
 
 // HandleWorkerAdmin handles other admin operations for a worker (e.g. DELETE)
 func (s *Server) HandleWorkerAdmin(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "worker.admin", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "worker.admin")
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	workerID := r.URL.Query().Get(fieldWorkerID)
+	if !s.checkWorkerBinding(w, r, workerID) {
+		return
+	}
 	if workerID == "" {
 		http.Error(w, "worker_id parameter is required", http.StatusBadRequest)
 		return

@@ -115,9 +115,11 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	}
 	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
 	masterClient.SetAPIKey(cfg.Worker.APIKey)
+	masterClient.SetToken(cfg.Worker.Token)
 	masterClient.SetMaxJobs(cfg.Worker.Concurrency)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
 	configFetcher.SetAPIKey(cfg.Worker.APIKey)
+	configFetcher.SetToken(cfg.Worker.Token)
 	validator := converter.NewValidator()
 
 	// Initialize cache manager

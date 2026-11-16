@@ -176,15 +176,15 @@ func TestUploadChunkRejectsNonProcessingJob(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, code)
 }
 
-func TestUploadChunkTotalSizeMismatch(t *testing.T) {
+func TestUploadChunkTotalSizeMismatch_Conflict(t *testing.T) {
 	srv, job, _ := newChunkTestServer(t, "job-chunk-4")
 
 	code, _ := postChunk(t, srv, job.ID, 0, 8, []byte("aaaa"))
 	require.Equal(t, http.StatusOK, code)
 
-	// Same job with a different total_size must be rejected.
+	// Same job with a different total_size must be rejected with 409 Conflict.
 	code, _ = postChunk(t, srv, job.ID, 4, 16, []byte("bbbb"))
-	require.Equal(t, http.StatusInternalServerError, code)
+	require.Equal(t, http.StatusConflict, code)
 }
 
 func TestUploadChunkOutputPathOutsideAllowedDirs(t *testing.T) {

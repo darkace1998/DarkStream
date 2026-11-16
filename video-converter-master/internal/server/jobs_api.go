@@ -40,6 +40,10 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if progress.WorkerID == "" {
+		if !s.checkWorkerBinding(w, r, progress.WorkerID) {
+			return
+		}
+
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -266,7 +270,7 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 
 // RetryFailedJobs handles retrying failed jobs via CLI
 func (s *Server) RetryFailedJobs(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "jobs.retry-all", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "jobs.retry-all")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -388,7 +392,7 @@ func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 // RetryJob handles retrying a specific failed job
 func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "job.retry", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "job.retry")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -433,7 +437,7 @@ func (s *Server) RetryJob(w http.ResponseWriter, r *http.Request) {
 
 // PauseQueue pauses job assignment to workers
 func (s *Server) PauseQueue(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "queue.pause", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "queue.pause")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -448,7 +452,7 @@ func (s *Server) PauseQueue(w http.ResponseWriter, r *http.Request) {
 
 // ResumeQueue resumes job assignment to workers
 func (s *Server) ResumeQueue(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "queue.resume", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "queue.resume")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -463,7 +467,7 @@ func (s *Server) ResumeQueue(w http.ResponseWriter, r *http.Request) {
 
 // UpdateJobPriority handles updating a job's priority
 func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "job.priority", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "job.priority")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -539,7 +543,7 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 
 // RequeueJob handles requeuing a specific job, regardless of its current status
 func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "job.requeue", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "job.requeue")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -573,6 +577,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while requeuing", http.StatusConflict)
 		return
 	}
+	s.cleanupChunkUpload(job.ID)
 
 	s.RecordJobRetry("ui_requeue")
 	slog.Info("Requeued specific job", fieldJobID, job.ID)
@@ -582,7 +587,7 @@ func (s *Server) RequeueJob(w http.ResponseWriter, r *http.Request) {
 
 // CancelJob handles cancelling a specific job
 func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "job.cancel", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "job.cancel")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -625,6 +630,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while cancelling", http.StatusConflict)
 		return
 	}
+	s.cleanupChunkUpload(job.ID)
 
 	slog.Info("Job cancelled via CLI", fieldJobID, jobID, "previous_status", previousStatus)
 
@@ -643,7 +649,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 
 // PruneJobs handles deleting jobs with specified status (completed, failed, cancelled, or all)
 func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "jobs.prune", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "jobs.prune")
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -679,7 +685,7 @@ func (s *Server) PruneJobs(w http.ResponseWriter, r *http.Request) {
 
 // CancelJobs handles batch cancellation of jobs by status
 func (s *Server) CancelJobs(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "jobs.cancel", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "jobs.cancel")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -789,6 +795,7 @@ func (s *Server) cancelJobBatch(jobs []*models.Job, limit int) (cancelledCount, 
 			failedCount++
 			continue
 		}
+		s.cleanupChunkUpload(job.ID)
 		cancelledCount++
 		cancelledIDs = append(cancelledIDs, job.ID)
 	}
@@ -798,7 +805,7 @@ func (s *Server) cancelJobBatch(jobs []*models.Job, limit int) (cancelledCount, 
 
 // HandleJob routes to the appropriate handler based on the HTTP method
 func (s *Server) HandleJob(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "job.submit", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "job.submit")
 	switch r.Method {
 	case http.MethodGet:
 		s.getJob(w, r)

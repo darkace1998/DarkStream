@@ -282,13 +282,12 @@ func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, o
 	// worker then skips download verification) and content-hash duplicate
 	// detection is disabled.
 	if opts.HashMode == models.HashModeSkip {
-		s.bump(func(st *ScanStats) { st.Hashed += 0 }) // no hashing
+		// Record size+mtime only; never read the file contents.
 		if opts.FileStore != nil {
 			if storeErr := opts.FileStore.UpsertFileScanState(fullPath, fileInfo.Size(), fileInfo.ModTime().UnixNano(), "", models.HashModeSkip); storeErr != nil {
 				slog.Warn("Failed to store file scan state", "path", fullPath, "error", storeErr)
 			}
 		}
-		s.bump(func(st *ScanStats) { st.SkippedUnchanged++ })
 		return "", models.HashModeSkip, false
 	}
 
@@ -298,7 +297,7 @@ func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, o
 		size, mtimeNs, storedHash, storedAlgo, ok, storeErr := opts.FileStore.GetFileScanState(fullPath)
 		if storeErr != nil {
 			slog.Warn("Failed to read file scan state", "path", fullPath, "error", storeErr)
-		} else if ok && (storedHash != "" || storedAlgo == models.HashModeSkip) && size == fileInfo.Size() && mtimeNs == fileInfo.ModTime().UnixNano() {
+		} else if ok && storedHash != "" && size == fileInfo.Size() && mtimeNs == fileInfo.ModTime().UnixNano() {
 			s.bump(func(st *ScanStats) { st.SkippedUnchanged++ })
 			checksum, algo = storedHash, storedAlgo
 			return s.dedupAndFinish(fullPath, checksum, algo, opts)

@@ -10,8 +10,12 @@ data:
   worker-config.yaml.tpl: |
     worker:
       id: "__WORKER_ID__"
-      master_url: "http://darkstream-master.darkstream.svc.cluster.local:8080"
+      master_url: "https://darkstream-master.darkstream.svc.cluster.local:8443"
       api_key: "__MASTER_API_KEY__"
+      # Per-worker token from the master's server.worker_tokens (optional;
+      # takes precedence over api_key on /api/worker/* and is bound to this
+      # worker's id server-side). Falls back to api_key when empty.
+      token: "__WORKER_TOKEN__"
       concurrency: 2
       heartbeat_interval: "30s"
       job_check_interval: "5s"

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
@@ -19,14 +21,28 @@ import (
 // maxChunkBodySize caps a single chunk upload body (256 MiB).
 const maxChunkBodySize = 256 << 20
 
+// chunkUploadIdleTTL is how long an untouched in-progress chunked upload is
+// kept before the janitor removes its state and .part file.
+const chunkUploadIdleTTL = 24 * time.Hour
+
+// errChunkTotalMismatch is returned when a chunk arrives with a different
+// total_size than the in-progress upload (client bug -> 409).
+var errChunkTotalMismatch = errors.New("total_size changed for in-progress upload")
+
+// errChunkOverlap is returned when a chunk overlaps an already-received range
+// at a different offset (client bug -> 400).
+var errChunkOverlap = errors.New("chunk overlaps an existing range")
+
 // chunkUploadState tracks one in-progress chunked upload.
 type chunkUploadState struct {
-	mu       sync.Mutex
-	jobID    string
-	partPath string
-	total    int64
-	received int64
-	offsets  map[int64]int64 // offset -> length
+	mu           sync.Mutex
+	jobID        string
+	partPath     string
+	total        int64
+	received     int64
+	offsets      map[int64]int64 // offset -> length
+	createdAt    time.Time
+	lastActivity time.Time
 }
 
 // UploadChunk handles POST /api/worker/upload-chunk?job_id=&worker_id=&offset=&total_size=
@@ -34,7 +50,7 @@ type chunkUploadState struct {
 // when the received byte count reaches total_size the file is renamed into
 // place and the job is completed exactly like a single-stream upload.
 func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "worker.upload-chunk", r.URL.RawQuery)
+	s.auditRequest(r, "worker.upload-chunk")
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -43,6 +59,10 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	jobID, offset, totalSize, ok := parseChunkParams(w, r)
 	if !ok {
+		return
+	}
+
+	if !s.checkWorkerBinding(w, r, r.URL.Query().Get(fieldWorkerID)) {
 		return
 	}
 
@@ -58,12 +78,21 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	st, err := s.getChunkState(job, validatedPath, totalSize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(err, errChunkTotalMismatch) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		slog.Error("Failed to open chunk upload state", fieldJobID, jobID, "error", err)
+		http.Error(w, "Failed to open chunk upload", http.StatusInternalServerError)
 		return
 	}
 
 	complete, err := st.writeChunk(offset, chunk)
 	if err != nil {
+		if errors.Is(err, errChunkOverlap) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		slog.Error("Failed to write chunk", fieldJobID, jobID, "offset", offset, "error", err)
 		http.Error(w, "Failed to write chunk", http.StatusInternalServerError)
 		return
@@ -128,7 +157,7 @@ func (s *Server) getChunkState(job *models.Job, outputPath string, totalSize int
 
 	if st, ok := s.chunkUploads[job.ID]; ok {
 		if st.total != totalSize {
-			return nil, fmt.Errorf("total_size changed for in-progress upload")
+			return nil, errChunkTotalMismatch
 		}
 		return st, nil
 	}
@@ -149,11 +178,14 @@ func (s *Server) getChunkState(job *models.Job, outputPath string, totalSize int
 		return nil, fmt.Errorf("failed to close part file: %w", err)
 	}
 
+	now := time.Now()
 	st := &chunkUploadState{
-		jobID:    job.ID,
-		partPath: partPath,
-		total:    totalSize,
-		offsets:  map[int64]int64{},
+		jobID:        job.ID,
+		partPath:     partPath,
+		total:        totalSize,
+		offsets:      map[int64]int64{},
+		createdAt:    now,
+		lastActivity: now,
 	}
 	s.chunkUploads[job.ID] = st
 	return st, nil
@@ -161,8 +193,65 @@ func (s *Server) getChunkState(job *models.Job, outputPath string, totalSize int
 
 func (s *Server) removeChunkState(jobID string) {
 	s.chunkMu.Lock()
-	defer s.chunkMu.Unlock()
-	delete(s.chunkUploads, jobID)
+	st, ok := s.chunkUploads[jobID]
+	if ok {
+		delete(s.chunkUploads, jobID)
+	}
+	s.chunkMu.Unlock()
+	// Best-effort removal of the .part file left behind on failure/cancel.
+	if ok && st.partPath != "" {
+		if err := os.Remove(st.partPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("Failed to remove stale .part file", fieldJobID, jobID, "path", st.partPath, "error", err)
+		}
+	}
+}
+
+// cleanupChunkUpload drops any in-progress chunked upload for a job (called
+// when the job is cancelled, requeued, or fails) so a later retry does not
+// collide with stale state or a stale .part file.
+func (s *Server) cleanupChunkUpload(jobID string) {
+	if jobID == "" {
+		return
+	}
+	s.removeChunkState(jobID)
+}
+
+// chunkUploadJanitor periodically removes chunked uploads that have been idle
+// for longer than chunkUploadIdleTTL.
+func (s *Server) chunkUploadJanitor() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			s.sweepIdleChunkUploads(time.Now())
+		}
+	}
+}
+
+func (s *Server) sweepIdleChunkUploads(now time.Time) {
+	s.chunkMu.Lock()
+	var stale []*chunkUploadState
+	for id, st := range s.chunkUploads {
+		st.mu.Lock()
+		idle := now.Sub(st.lastActivity) > chunkUploadIdleTTL
+		st.mu.Unlock()
+		if idle {
+			stale = append(stale, st)
+			delete(s.chunkUploads, id)
+		}
+	}
+	s.chunkMu.Unlock()
+	for _, st := range stale {
+		slog.Warn("Removing idle chunked upload", fieldJobID, st.jobID, "path", st.partPath)
+		if st.partPath != "" {
+			if err := os.Remove(st.partPath); err != nil && !os.IsNotExist(err) {
+				slog.Warn("Failed to remove idle .part file", fieldJobID, st.jobID, "path", st.partPath, "error", err)
+			}
+		}
+	}
 }
 
 // writeChunk writes one chunk at its offset and reports whether the upload is
@@ -180,6 +269,14 @@ func (st *chunkUploadState) writeChunk(offset int64, chunk []byte) (bool, error)
 	if _, err := f.WriteAt(chunk, offset); err != nil {
 		return false, err
 	}
+
+	end := offset + int64(len(chunk))
+	for off, length := range st.offsets {
+		if off != offset && offset < off+length && off < end {
+			return false, fmt.Errorf("%w: [%d,%d) intersects [%d,%d)", errChunkOverlap, offset, end, off, off+length)
+		}
+	}
+	st.lastActivity = time.Now()
 
 	if _, dup := st.offsets[offset]; !dup {
 		st.offsets[offset] = int64(len(chunk))

@@ -26,6 +26,10 @@ var ErrChunkedUploadUnsupported = errors.New("master does not support chunked up
 // explicit chunk size (32 MiB).
 const defaultChunkSize = 32 << 20
 
+// maxServerChunkBody mirrors the master's maxChunkBodySize (256 MiB): chunks
+// larger than this are rejected by the master with a permanent error.
+const maxServerChunkBody = 256 << 20
+
 // chunkUploadParallelism is the number of chunks uploaded concurrently.
 const chunkUploadParallelism = 4
 
@@ -57,11 +61,15 @@ func (mc *MasterClient) UploadConvertedVideoChunked(jobID, filePath string, prog
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkSize
 	}
+	if chunkSize > maxServerChunkBody {
+		return fmt.Errorf("chunk_size %d exceeds the master's per-chunk limit of %d bytes", chunkSize, int64(maxServerChunkBody))
+	}
 
 	var transferred atomic.Int64
 	reportProgress := func(n int64) {
 		if progressCallback != nil {
-			progressCallback(transferred.Add(n), totalSize)
+			// Clamp at totalSize: a retried chunk would otherwise count twice.
+			progressCallback(min(transferred.Add(n), totalSize), totalSize)
 		}
 	}
 

@@ -43,15 +43,18 @@ func (s *Server) HealthzReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// At least one scan location must be running for the master to be ready.
+	// When scan locations are configured, at least one must be running for the
+	// master to be ready. With zero locations configured (API/CLI-only use),
+	// the master is ready as long as the database answers.
 	if s.locMgr != nil {
+		locs := s.locMgr.List()
 		running := 0
-		for _, loc := range s.locMgr.List() {
+		for _, loc := range locs {
 			if loc.Running {
 				running++
 			}
 		}
-		if running == 0 {
+		if len(locs) > 0 && running == 0 {
 			slog.Warn("Readiness check failed: no scan location running")
 			s.writeReadyz(w, http.StatusServiceUnavailable, "no scan location running")
 			return

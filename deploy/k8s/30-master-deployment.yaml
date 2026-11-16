@@ -30,7 +30,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/darkstream/config.yaml"]
           ports:
-            - name: http
+            - name: https
               containerPort: 8080
           env:
             - name: DARKSTREAM_API_KEY
@@ -38,6 +38,12 @@ spec:
                 secretKeyRef:
                   name: darkstream-secrets
                   key: master-api-key
+            # The master refuses to start with an API key over plain HTTP,
+            # so TLS cert/key are required when the key is set.
+            - name: DARKSTREAM_TLS_CERT
+              value: /etc/darkstream/tls/tls.crt
+            - name: DARKSTREAM_TLS_KEY
+              value: /etc/darkstream/tls/tls.key
           volumeMounts:
             - name: config
               mountPath: /etc/darkstream/config.yaml
@@ -50,16 +56,21 @@ spec:
               readOnly: true
             - name: converted
               mountPath: /media/converted
+            - name: tls
+              mountPath: /etc/darkstream/tls
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 15
             periodSeconds: 20
           readinessProbe:
             httpGet:
-              path: /healthz/ready
-              port: http
+              path: /readyz
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -84,6 +95,9 @@ spec:
           hostPath:
             path: /srv/media/converted
             type: DirectoryOrCreate
+        - name: tls
+          secret:
+            secretName: darkstream-tls
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -109,6 +123,6 @@ spec:
     app.kubernetes.io/name: darkstream
     app.kubernetes.io/component: master
   ports:
-    - name: http
-      port: 8080
-      targetPort: http
+    - name: https
+      port: 8443
+      targetPort: https

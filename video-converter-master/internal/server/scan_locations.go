@@ -75,7 +75,7 @@ func (s *Server) listScanLocations(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "scan-location.upsert", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "scan-location.upsert")
 	const maxBodySize = 64 << 10
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var req scanLocationRequest
@@ -141,7 +141,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteScanLocation(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "scan-location.delete", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "scan-location.delete")
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		http.Error(w, "Missing id query parameter", http.StatusBadRequest)
@@ -267,5 +267,10 @@ func validateScanTuning(loc *models.ScanLocation, add func(field, msg string)) {
 	}
 	if loc.Name == "" {
 		loc.Name = loc.ID
+	}
+	// skip mode produces no output checksum, so replace_source would re-convert
+	// the file on every scan (nothing detects that the output is current).
+	if loc.HashMode == models.HashModeSkip && loc.ReplaceSource {
+		add("replace_source", "cannot be true when hash_mode=skip (no checksum to detect already-converted output)")
 	}
 }

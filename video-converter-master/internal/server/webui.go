@@ -159,10 +159,17 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	if s.persister != nil {
 		configFile = s.persister.Path()
 	}
+	// Never render the master API key into the page for unauthorised visitors:
+	// the dashboard HTML is served without auth (it is the login form), so the
+	// key must only be embedded when the request is already authenticated.
+	apiKeyView := ""
+	if authorized {
+		apiKeyView = s.masterCfg.Server.APIKey
+	}
 	serverSettings := ServerSettingsView{
 		Host:         s.masterCfg.Server.Host,
 		Port:         s.masterCfg.Server.Port,
-		APIKey:       s.masterCfg.Server.APIKey,
+		APIKey:       apiKeyView,
 		TLSCert:      s.masterCfg.Server.TLSCert,
 		TLSKey:       s.masterCfg.Server.TLSKey,
 		DatabasePath: s.masterCfg.Database.Path,
@@ -279,6 +286,7 @@ func (s *Server) GetConfig(w http.ResponseWriter, r *http.Request) {
 
 // UpdateConfig updates the conversion configuration
 func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
+	s.auditRequest(r, "config.update")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

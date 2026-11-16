@@ -40,7 +40,7 @@ WORKER1_TOKEN=$(openssl rand -hex 32)
 
 # 3. Adjust paths/locations in the two ConfigMaps, then apply in order
 kubectl apply -f deploy/k8s/00-namespace.yaml
-kubectl apply -f deploy/k8s/10-secret.yaml
+kubectl apply -f deploy/k8s/10-secret.yaml   # includes the darkstream-tls Secret (cert/key)
 kubectl apply -f deploy/k8s/20-configmap-master.yaml
 kubectl apply -f deploy/k8s/21-configmap-worker.yaml
 kubectl apply -f deploy/k8s/30-master-deployment.yaml
@@ -70,3 +70,9 @@ kubectl apply -f deploy/k8s/50-servicemonitor.yaml   # optional
   own credential on `/api/worker/*` and appear as `worker:<id>` in the audit
   log (`GET /api/audit-log`). SSE streams in the Web UI use short-lived signed
   tokens (`POST /api/stream-token`) so the master key never appears in URLs.
+
+- The worker entrypoint renders its config with `sed "s|...|...|g"` — if an
+  API key or token contains `|`, `&`, or `\`, switch the delimiter or use a
+  different rendering mechanism.
+- The master requires TLS when an API key is set, so `darkstream-tls` is
+  mandatory in the manifests as shipped; the Service exposes 8443 (https).

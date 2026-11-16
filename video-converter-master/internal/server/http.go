@@ -257,6 +257,8 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/audit-log", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleAuditLog))))
 	mux.HandleFunc("/api/worker/upload-chunk", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadChunk))))
 
+	go s.chunkUploadJanitor()
+
 	s.server = &http.Server{
 		Addr:              s.addr,
 		Handler:           s.metricsMiddleware(mux),

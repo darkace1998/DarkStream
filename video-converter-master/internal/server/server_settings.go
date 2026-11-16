@@ -72,7 +72,7 @@ func (s *Server) GetServerSettings(w http.ResponseWriter, r *http.Request) {
 // UpdateServerSettings validates and persists server settings to the config
 // file. The running process is not reconfigured; a restart is required.
 func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
-	s.audit(r, "server-settings.update", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
+	s.auditRequest(r, "server-settings.update")
 	if s.persister == nil {
 		http.Error(w, "Server settings persistence is not configured", http.StatusServiceUnavailable)
 		return

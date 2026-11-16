@@ -66,9 +66,11 @@ with an `api_key` over plain HTTP; set `tls_cert`/`tls_key` as well.
 
 ### Readiness probe semantics
 
-`GET /healthz/ready` returns 503 unless the SQLite database answers a ping
-**and** at least one scan location is running. This keeps a master with zero
-active locations out of Service endpoints in Kubernetes (see `deploy/k8s/`).
+`GET /readyz` returns 503 unless the SQLite database answers a ping **and**,
+when scan locations are configured, at least one of them is running. A master
+with zero locations configured (API/CLI-only use) is ready as soon as the DB
+answers. This keeps a master whose locations all failed out of Service
+endpoints in Kubernetes (see `deploy/k8s/`).
 
 ### `server` (Maps to `MasterConfig.Server`)
 *   `port`: Port to listen on (e.g., `8080`).
@@ -226,11 +228,12 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `upload_timeout`: Local override for upload timeout.
 *   `cache_path`: Local directory for caching source and converted videos during processing.
 *   `chunk_size`: Chunk size in bytes for parallel chunked uploads of converted
-    videos (default 32 MiB when 0 and the master supports it). The worker sends up
-    to 4 chunks in parallel to `POST /api/worker/upload-chunk`; the master writes
-    them at their offsets into a `.part` file and finalizes once complete. If the
-    master is older and lacks the endpoint, the worker automatically falls back to
-    the single-stream multipart upload. Set to `0` to always use single-stream.
+    videos. `0` (default) = single-stream multipart upload; any value > 0 enables
+    chunked upload with that chunk size (capped server-side at 256 MiB). The worker
+    sends up to 4 chunks in parallel to `POST /api/worker/upload-chunk`; the master
+    writes them at their offsets into a `.part` file and finalizes once complete. If
+    the master is older and lacks the endpoint, the worker automatically falls back
+    to the single-stream multipart upload.
 *   `max_cache_size`: Local override for maximum cache size.
 *   `cache_cleanup_age`: Age after which cached files are cleaned up (e.g., `24h`).
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).

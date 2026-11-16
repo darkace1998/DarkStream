@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +97,38 @@ func (s *Server) authenticateAPICall(r *http.Request) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// sanitizeAuditQuery strips credential-bearing query parameters (api_key,
+// token) so the long-lived master key never lands in the audit table.
+func sanitizeAuditQuery(rawQuery string) string {
+	vals, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return ""
+	}
+	vals.Del("api_key")
+	vals.Del("token")
+	return vals.Encode()
+}
+
+// auditRequest records an audit entry for a state-changing request with a
+// sanitized "METHOD path?query" detail string.
+func (s *Server) auditRequest(r *http.Request, action string) {
+	s.audit(r, action, r.Method+" "+r.URL.Path+" "+sanitizeAuditQuery(r.URL.RawQuery))
+}
+
+// checkWorkerBinding rejects requests that present a per-worker token for a
+// different worker_id than the token was issued for, so one worker cannot
+// impersonate another on /api/worker/* routes. Master-key requests are
+// unaffected.
+func (s *Server) checkWorkerBinding(w http.ResponseWriter, r *http.Request, workerID string) bool {
+	actor, _ := r.Context().Value(actorContextKey{}).(string)
+	if strings.HasPrefix(actor, "worker:") && workerID != "" && actor != "worker:"+workerID {
+		slog.Warn("Worker token presented for mismatched worker_id", "actor", actor, fieldWorkerID, workerID, "path", r.URL.Path, "ip", r.RemoteAddr)
+		http.Error(w, "Forbidden: token does not belong to this worker_id", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // audit records an audit-log entry for a state-changing request.

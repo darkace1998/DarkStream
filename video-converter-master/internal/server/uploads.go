@@ -38,6 +38,9 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
+	if !s.checkWorkerBinding(w, r, job.WorkerID) {
+		return
+	}
 
 	// Validate job is in processing status
 	if job.Status != statusProcessing {
