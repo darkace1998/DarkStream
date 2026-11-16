@@ -219,6 +219,11 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		}
 	}()
 
+	// The master answers 204 when the queue is paused, exactly as for next-job.
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, ErrNoJobsAvailable
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s",
@@ -925,41 +930,38 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	// Start goroutine to write multipart data
 	errChan := make(chan error, 1)
 	go func() {
-		defer func() {
-			cerr := multipartWriter.Close()
-			if cerr != nil {
-				slog.Warn("Failed to close multipart writer", "error", cerr)
+		writeErr := func() error {
+			part, partErr := multipartWriter.CreateFormFile("video", filepath.Base(filePath))
+			if partErr != nil {
+				return fmt.Errorf("failed to create form file: %w", partErr)
 			}
-		}()
-		defer func() {
-			cerr := pipeWriter.Close()
-			if cerr != nil {
-				slog.Warn("Failed to close pipe writer", "error", cerr)
+
+			// Wrap file reader with progress tracking
+			var reader io.Reader = file
+			if mc.bandwidthLimit > 0 {
+				reader = NewThrottledReader(reader, mc.bandwidthLimit)
 			}
+			if progressCallback != nil {
+				reader = NewProgressReader(reader, fileSize, progressCallback)
+			}
+
+			if _, copyErr := io.Copy(part, reader); copyErr != nil {
+				return fmt.Errorf("failed to copy file to multipart: %w", copyErr)
+			}
+
+			// The multipart writer must be closed BEFORE the pipe: closing it
+			// emits the terminating boundary, and without that the server sees a
+			// truncated body and rejects the upload.
+			if closeErr := multipartWriter.Close(); closeErr != nil {
+				return fmt.Errorf("failed to finish multipart body: %w", closeErr)
+			}
+			return nil
 		}()
 
-		part, partErr := multipartWriter.CreateFormFile("video", filepath.Base(filePath))
-		if partErr != nil {
-			errChan <- fmt.Errorf("failed to create form file: %w", partErr)
-			return
-		}
-
-		// Wrap file reader with progress tracking
-		var reader io.Reader = file
-		if mc.bandwidthLimit > 0 {
-			reader = NewThrottledReader(reader, mc.bandwidthLimit)
-		}
-		if progressCallback != nil {
-			reader = NewProgressReader(reader, fileSize, progressCallback)
-		}
-
-		_, copyErr := io.Copy(part, reader)
-		if copyErr != nil {
-			errChan <- fmt.Errorf("failed to copy file to multipart: %w", copyErr)
-			return
-		}
-
-		errChan <- nil
+		// Closing with an error makes the HTTP client abort the request instead
+		// of sending a body that merely looks complete.
+		_ = pipeWriter.CloseWithError(writeErr)
+		errChan <- writeErr
 	}()
 
 	// Create HTTP request
@@ -983,6 +985,9 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	// Send request
 	resp, err := client.Do(req)
 	if err != nil {
+		// Unblock the writer goroutine if the request failed before the body
+		// was fully consumed.
+		_ = pipeReader.CloseWithError(err)
 		return fmt.Errorf("failed to upload video: %w", err)
 	}
 	defer func() {
@@ -992,15 +997,18 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 		}
 	}()
 
-	// Check for errors from multipart writer goroutine
+	// The server may answer (e.g. 401/400) without reading the whole body; make
+	// sure the writer goroutine cannot stay blocked on the pipe, then prefer the
+	// server's status over the resulting local write error.
+	_ = pipeReader.Close()
 	chanErr := <-errChan
-	if chanErr != nil {
-		return chanErr
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
+	}
+	if chanErr != nil {
+		return chanErr
 	}
 
 	// Parse response

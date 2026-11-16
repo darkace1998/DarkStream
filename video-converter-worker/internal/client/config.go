@@ -37,6 +37,16 @@ type ConfigFetcher struct {
 	retryBaseDelay  time.Duration
 	fetching        bool            // Prevents concurrent fetch operations
 	ctx             context.Context // optional; aborts retry backoff on shutdown
+	apiKey          string          // optional; sent as a Bearer token when set
+}
+
+// SetAPIKey sets the API key sent with config requests. The master protects
+// /api/config with the same key as the worker endpoints, so without it every
+// fetch is rejected with 401 and the worker silently runs on stale settings.
+func (cf *ConfigFetcher) SetAPIKey(apiKey string) {
+	cf.mu.Lock()
+	defer cf.mu.Unlock()
+	cf.apiKey = apiKey
 }
 
 // SetContext wires a context whose cancellation aborts inter-attempt retry
@@ -194,17 +204,27 @@ func (cf *ConfigFetcher) fetchFromMaster() (*models.ConversionSettings, error) {
 
 // fetchConfigAttempt performs a single config fetch attempt
 func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error) {
-	url := fmt.Sprintf("%s/api/config", cf.baseURL)
-
 	cf.mu.RLock()
 	ctx := cf.ctx
+	apiKey := cf.apiKey
 	cf.mu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+
+	if err := utils.ValidateSecureTransport(cf.baseURL, apiKey != ""); err != nil {
+		return nil, err
+	}
+	requestURL, err := utils.BuildURL(cf.baseURL, "/api/config", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config URL: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := cf.client.Do(req)
 	if err != nil {

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Worker**: Conversions no longer fail on machines without a usable GPU. `use_vulkan: true`
+  (the default) is now only honoured when a Vulkan device was actually detected, and a failed
+  Vulkan encode is retried once with CPU encoding.
+- **Worker**: Uploads are sent as a complete multipart body. The terminating boundary was never
+  written (the pipe was closed before the multipart writer), so the master rejected every upload.
+- **Worker**: Conversion progress is reported once per FFmpeg progress block and at most every
+  3 seconds, instead of once per stderr line. The previous flood exhausted the master's rate
+  limit, causing `429` responses for heartbeats, job polls and uploads.
+- **Worker**: Output validation no longer rejects valid files smaller than 1 MB.
+- **Worker**: Cache cleanup never deletes the files of jobs that are still running.
+- **Worker**: Dynamic configuration fetches send the API key, so workers keep following the
+  master's conversion settings when authentication is enabled.
+- **Worker**: FFmpeg failures include the tail of FFmpeg's own log; FFmpeg is stopped on worker
+  shutdown; the first heartbeat is sent immediately; `204` from `next-jobs` means "no jobs".
+- **Master**: Worker liveness and stale-job checks are correct in any time zone (timestamps were
+  compared as raw strings), and heartbeats are stamped with the master's clock.
+- **Master**: `next-jobs` returns the `{jobs, count}` envelope for paused workers; `Range`
+  requests whose end exceeds the file size are served instead of rejected with `416`.
+- **Master**: Uploads are streamed straight to the output directory (no full copy in the system
+  temp directory), empty uploads are rejected, output files are created world-readable (`0644`),
+  and completed uploads now record job metrics and fire the `completed` webhook.
+- **Master**: A paused worker stays paused across an outage; heartbeats refresh a worker's
+  hostname/GPU details; pruned and requeued jobs no longer keep stale progress rows.
+- **Master**: API request metrics are labelled by route instead of raw path (unbounded label
+  cardinality), and the in-progress gauge is re-synced from the database.
+- **Master**: Progress streams end for cancelled jobs and SSE streams no longer hold up graceful
+  shutdown; offline workers are logged once per outage rather than on every health check.
+- **Scanner**: An output directory nested inside the scan root is no longer rescanned (converted
+  files were queued for conversion again), and each file is hashed once instead of twice.
+- **Web UI**: The dashboard's live updates work (the page listened for unnamed SSE messages but
+  the server sends `stats` events); live-rendered rows keep their job links and zero values,
+  tables appear/disappear with their data, cancelled jobs show in history, and the job page
+  reloads when a job finishes.
+- **Docker**: The master health check targets `/healthz` (it probed a non-existent `/health`
+  with a `curl` binary the image did not ship, so dependent workers never started). Compose
+  workers connect to `http://master:8080` instead of `localhost`, the job database lives on the
+  `master_db` volume, and converted output has its own volume.
+
+### Changed
+- **Master**: The per-IP API rate limit is now 600 requests/minute (was 100) to accommodate
+  workers running several concurrent jobs or sharing an address.
+
 ## [0.5.0] - 2026-08-04
 
 ### Added

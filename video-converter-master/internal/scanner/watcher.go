@@ -137,6 +137,11 @@ func (w *Watcher) addDirRecursive(dir string, currentDepth int, processFiles boo
 		}
 	}
 
+	// Converted output nested inside the root is not a source of new jobs.
+	if w.scanner.IsOutputPath(dir) {
+		return nil
+	}
+
 	// Add the current directory
 	err := w.watcher.Add(dir)
 	if err != nil {

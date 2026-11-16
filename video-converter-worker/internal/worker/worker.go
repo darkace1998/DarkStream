@@ -21,6 +21,10 @@ import (
 	"github.com/darkace1998/video-converter-worker/internal/converter"
 )
 
+// progressReportInterval is the minimum time between conversion progress
+// reports sent to the master for a single job.
+const progressReportInterval = 3 * time.Second
+
 // Worker manages job processing and communication with the master
 //
 //nolint:containedctx // Context stored in struct for long-running worker lifecycle management
@@ -105,6 +109,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
 	masterClient.SetAPIKey(cfg.Worker.APIKey)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
+	configFetcher.SetAPIKey(cfg.Worker.APIKey)
 	validator := converter.NewValidator()
 
 	// Initialize cache manager
@@ -120,6 +125,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	// promptly on shutdown instead of sleeping out its full delay.
 	masterClient.SetContext(ctx)
 	configFetcher.SetContext(ctx)
+	ffmpegConverter.SetContext(ctx)
 
 	// Initialize job semaphore for concurrency control
 	jobSemaphore := make(chan struct{}, cfg.Worker.Concurrency)
@@ -496,6 +502,12 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	}
 	defer w.cleanupJobCache(jobCacheDir)
 
+	// Keep the cache cleaner away from this job's files while it is running.
+	if w.cacheManager != nil {
+		w.cacheManager.Protect(jobCacheDir)
+		defer w.cacheManager.Unprotect(jobCacheDir)
+	}
+
 	// Download source video from master
 	// Preserve original file extension
 	sourceExt := filepath.Ext(job.SourcePath)
@@ -578,7 +590,10 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		Preset:           dynamicCfg.Preset,
 		AudioCodec:       dynamicCfg.AudioCodec,
 		AudioBitrate:     dynamicCfg.AudioBitrate,
-		UseVulkan:        w.config.FFmpeg.UseVulkan,
+		// Only ask FFmpeg for Vulkan when a usable device was actually detected;
+		// the config flag alone ("use_vulkan: true" is the default) would make
+		// every job fail on machines without a suitable GPU.
+		UseVulkan: w.config.FFmpeg.UseVulkan && w.vulkanCaps != nil && w.vulkanCaps.Supported,
 	}
 
 	log.Info("Using conversion config",
@@ -587,11 +602,7 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		"format", dynamicCfg.OutputFormat,
 	)
 
-	// Convert video with progress callback
-	progressCallback := func(progress float64, fps float64) {
-		w.reportProgress(job.ID, progress, fps, "convert")
-	}
-	err = w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
+	err = w.convertWithFallback(job, cfg, log)
 	if err != nil {
 		return fmt.Errorf("conversion failed: %w", err)
 	}
@@ -619,6 +630,37 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	return nil
 }
 
+// convertWithFallback runs the conversion, reporting throttled progress to the
+// master, and retries once with software encoding if a Vulkan attempt fails.
+func (w *Worker) convertWithFallback(job *models.Job, cfg *models.ConversionConfig, log *slog.Logger) error {
+	// FFmpeg emits progress about twice a second; forwarding each update as an
+	// HTTP request would exhaust the master's per-IP rate limit (starving
+	// heartbeats and job polls), so throttle.
+	var lastProgressReport time.Time
+	progressCallback := func(progress float64, fps float64) {
+		if time.Since(lastProgressReport) < progressReportInterval {
+			return
+		}
+		lastProgressReport = time.Now()
+		w.reportProgress(job.ID, progress, fps, "convert")
+	}
+
+	err := w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
+	if err == nil || !cfg.UseVulkan || w.ctx.Err() != nil || errors.Is(err, converter.ErrConversionTimeout) {
+		return err
+	}
+
+	// Detecting a Vulkan device does not guarantee that this FFmpeg build and
+	// driver can actually encode with it; fall back to software encoding rather
+	// than failing the job.
+	log.Warn("Vulkan conversion failed, retrying with CPU encoding", "error", err)
+	cfg.UseVulkan = false
+	if rmErr := os.Remove(job.OutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
+		log.Warn("Failed to remove partial output before CPU retry", "error", rmErr)
+	}
+	return w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
+}
+
 // reportProgress sends progress update to master
 func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) {
 	progressReport := &models.JobProgress{
@@ -639,35 +681,44 @@ func (w *Worker) sendHeartbeats() {
 	ticker := time.NewTicker(w.config.Worker.HeartbeatInterval)
 	defer ticker.Stop()
 
+	// Register with the master right away instead of after the first interval,
+	// so the worker is visible (and pause/capacity rules apply) from the start.
+	w.sendHeartbeat()
+
 	for {
 		select {
 		case <-w.ctx.Done():
 			slog.Info("Heartbeat goroutine stopping")
 			return
 		case <-ticker.C:
-			vulkanAvailable := false
-			gpuName := "CPU"
-			if w.vulkanCaps != nil && w.vulkanCaps.Supported {
-				vulkanAvailable = true
-				gpuName = w.vulkanCaps.Device.Name
-			}
-
-			hb := &models.WorkerHeartbeat{
-				WorkerID:        w.config.Worker.ID,
-				Hostname:        getHostname(),
-				VulkanAvailable: vulkanAvailable,
-				ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
-				Status:          constants.WorkerStatusOnline,
-				Timestamp:       time.Now(),
-				GPU:             gpuName,
-				CPUUsage:        getSystemCPUUsage(),
-				MemoryUsage:     getSystemMemoryUsage(),
-			}
-
-			w.recordHeartbeat(hb.Timestamp)
-			w.masterClient.SendHeartbeat(hb)
+			w.sendHeartbeat()
 		}
 	}
+}
+
+// sendHeartbeat sends a single heartbeat to the master.
+func (w *Worker) sendHeartbeat() {
+	vulkanAvailable := false
+	gpuName := "CPU"
+	if w.vulkanCaps != nil && w.vulkanCaps.Supported {
+		vulkanAvailable = true
+		gpuName = w.vulkanCaps.Device.Name
+	}
+
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        w.config.Worker.ID,
+		Hostname:        getHostname(),
+		VulkanAvailable: vulkanAvailable,
+		ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
+		Status:          constants.WorkerStatusOnline,
+		Timestamp:       time.Now(),
+		GPU:             gpuName,
+		CPUUsage:        getSystemCPUUsage(),
+		MemoryUsage:     getSystemMemoryUsage(),
+	}
+
+	w.recordHeartbeat(hb.Timestamp)
+	w.masterClient.SendHeartbeat(hb)
 }
 
 func (w *Worker) markJobStarted(jobID string) {

@@ -462,7 +462,10 @@ func (t *Tracker) UpdateWorkerHeartbeat(hb *models.WorkerHeartbeat) error {
 			active_jobs, gpu_name, cpu_usage, memory_usage, status
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			hostname = excluded.hostname,
 			last_heartbeat = excluded.last_heartbeat,
+			vulkan_available = excluded.vulkan_available,
+			gpu_name = excluded.gpu_name,
 			active_jobs = excluded.active_jobs,
 			cpu_usage = excluded.cpu_usage,
 			memory_usage = excluded.memory_usage,
@@ -833,14 +836,19 @@ func (t *Tracker) GetJobMetrics() (map[string]any, error) {
 	return metrics, nil
 }
 
-// GetActiveWorkers returns workers that have sent a heartbeat within the threshold
+// GetActiveWorkers returns workers that have sent a heartbeat within the threshold.
+//
+// Timestamps are stored as text including their UTC offset, so they are compared
+// via julianday() (which normalizes to UTC) rather than as raw strings; a plain
+// string comparison against datetime('now') is wrong whenever the stored value
+// was written in a non-UTC time zone.
 func (t *Tracker) GetActiveWorkers(heartbeatThresholdSeconds int) ([]*models.WorkerHeartbeat, error) {
 	query := `
 		SELECT id, hostname, last_heartbeat, vulkan_available,
 			active_jobs, gpu_name, cpu_usage, memory_usage,
 			COALESCE(status, 'online') as status
 		FROM workers
-		WHERE last_heartbeat >= datetime('now', '-' || ? || ' seconds')
+		WHERE julianday(last_heartbeat) >= julianday('now', '-' || ? || ' seconds')
 		ORDER BY last_heartbeat DESC
 	`
 
@@ -908,15 +916,24 @@ func (t *Tracker) PruneJobs(status string) (int, error) {
 		return 0, fmt.Errorf("failed to get deleted row count: %w", err)
 	}
 
+	// SQLite does not enforce the ON DELETE CASCADE on job_progress unless foreign
+	// keys are switched on per connection, so remove orphaned progress rows
+	// explicitly. Job IDs are derived from the source path, so a stale row would
+	// otherwise resurface as bogus progress if the same file is queued again.
+	if _, err := t.db.Exec(`DELETE FROM job_progress WHERE job_id NOT IN (SELECT id FROM jobs)`); err != nil {
+		slog.Warn("Failed to remove orphaned job progress rows", "error", err)
+	}
+
 	return int(rowsAffected), nil
 }
 
-// MarkWorkerOffline marks a worker as offline in the database
+// MarkWorkerOffline marks a worker as offline in the database. A paused worker
+// keeps its paused status so the operator's pause survives a restart/outage.
 func (t *Tracker) MarkWorkerOffline(workerID string) error {
 	_, err := t.db.Exec(`
 		UPDATE workers
 		SET status = 'offline'
-		WHERE id = ?
+		WHERE id = ? AND COALESCE(status, '') != 'paused'
 	`, workerID)
 	if err != nil {
 		return fmt.Errorf("failed to mark worker offline: %w", err)
@@ -1002,7 +1019,7 @@ func (t *Tracker) GetStaleProcessingJobs(timeoutSeconds int) ([]*models.Job, err
 		FROM jobs
 		WHERE status = 'processing'
 		AND started_at IS NOT NULL
-		AND started_at <= datetime('now', '-' || ? || ' seconds')
+		AND julianday(started_at) <= julianday('now', '-' || ? || ' seconds')
 		ORDER BY started_at ASC
 	`
 
@@ -1092,6 +1109,13 @@ func (t *Tracker) ResetJobToPending(jobID string, incrementRetry bool, expectedS
 	matched, err := t.execJobTransition(query, args...)
 	if err != nil {
 		return false, fmt.Errorf("failed to reset job to pending: %w", err)
+	}
+	if matched {
+		// Drop the previous attempt's progress so the requeued job does not
+		// report a stale percentage until a worker picks it up again.
+		if delErr := t.DeleteJobProgress(jobID); delErr != nil {
+			slog.Warn("Failed to clear progress for requeued job", "job_id", jobID, "error", delErr)
+		}
 	}
 	return matched, nil
 }

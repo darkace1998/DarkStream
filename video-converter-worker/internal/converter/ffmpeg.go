@@ -4,6 +4,7 @@ package converter
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,8 +21,13 @@ import (
 )
 
 const (
-	// MinOutputFileSize is the minimum acceptable size for output files (1MB)
-	MinOutputFileSize = 1024 * 1024
+	// MinOutputFileSize is the minimum acceptable size for output files. It only
+	// guards against empty/header-only output; a higher bar (it used to be 1MB)
+	// rejects perfectly valid conversions of short or low-bitrate clips.
+	MinOutputFileSize = 1024
+
+	// stderrTailLines is how many trailing FFmpeg log lines are kept to explain a failure.
+	stderrTailLines = 12
 )
 
 // FFmpeg encoder and muxer names. These are FFmpeg's own identifiers and are
@@ -38,8 +44,14 @@ var (
 	// ffmpegTimePattern matches FFmpeg's out_time_ms field (in microseconds)
 	ffmpegTimePattern = regexp.MustCompile(`out_time_ms=(\d+)`)
 	// ffmpegFPSPattern matches FFmpeg's fps field
-	ffmpegFPSPattern = regexp.MustCompile(`fps=([\d.]+)`)
+	ffmpegFPSPattern = regexp.MustCompile(`^fps=([\d.]+)`)
+	// ffmpegProgressLinePattern matches the key=value lines of a -progress block,
+	// as opposed to FFmpeg's ordinary log output.
+	ffmpegProgressLinePattern = regexp.MustCompile(`^(frame|fps|stream_\d+_\d+_\w+|bitrate|total_size|out_time_us|out_time_ms|out_time|dup_frames|drop_frames|speed|progress)=`)
 )
+
+// ErrConversionTimeout is returned (wrapped) when FFmpeg exceeds the configured timeout.
+var ErrConversionTimeout = errors.New("ffmpeg conversion timed out")
 
 // ProgressCallback is a function type for progress updates during conversion
 type ProgressCallback func(progress float64, fps float64)
@@ -49,6 +61,13 @@ type FFmpegConverter struct {
 	ffmpegPath     string
 	vulkanDetector *VulkanDetector
 	timeout        time.Duration
+	ctx            context.Context //nolint:containedctx // optional parent; cancels running conversions on shutdown
+}
+
+// SetContext wires a parent context whose cancellation stops in-flight FFmpeg
+// processes, so a shutting-down worker does not leave orphaned encoders behind.
+func (fc *FFmpegConverter) SetContext(ctx context.Context) {
+	fc.ctx = ctx
 }
 
 // NewFFmpegConverter creates a new FFmpegConverter instance
@@ -116,7 +135,11 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	args := fc.buildFFmpegCommand(job, cfg, log)
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), fc.timeout)
+	parent := fc.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, fc.timeout)
 	defer cancel()
 
 	// #nosec G204 - fc.ffmpegPath is validated/controlled, not user input from network
@@ -138,21 +161,28 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	// Always consume stderr so FFmpeg never blocks when the pipe buffer fills.
 	// All reads MUST complete before cmd.Wait() is called, otherwise Wait may
 	// close the pipe while the reader is still running (see os/exec docs).
+	var stderrTail []string
 	readDone := make(chan struct{})
 	go func() {
 		defer close(readDone)
-		if progressCallback != nil && duration > 0 {
-			fc.trackProgress(stderr, duration, progressCallback, log)
-		} else {
-			_, _ = io.Copy(io.Discard, stderr)
-		}
+		stderrTail = fc.trackProgress(stderr, duration, progressCallback, log)
+		// Keep draining even if line scanning stopped early (e.g. an over-long
+		// line), otherwise FFmpeg blocks on a full pipe until the timeout.
+		_, _ = io.Copy(io.Discard, stderr)
 	}()
 	<-readDone
 
 	err = cmd.Wait()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("ffmpeg conversion timed out after %v: %w", fc.timeout, err)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("%w after %v: %w", ErrConversionTimeout, fc.timeout, err)
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("ffmpeg conversion cancelled: %w", ctx.Err())
+		}
+		// "exit status 1" alone says nothing; include FFmpeg's own explanation.
+		if len(stderrTail) > 0 {
+			return fmt.Errorf("ffmpeg conversion failed: %w: %s", err, strings.Join(stderrTail, " | "))
 		}
 		return fmt.Errorf("ffmpeg conversion failed: %w", err)
 	}
@@ -195,7 +225,10 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 ) []string {
 	// Hardware-acceleration flags are per-input options and MUST precede the
 	// "-i" they apply to, otherwise ffmpeg rejects them as output options.
-	args := []string{"-progress", "pipe:2"} // Output progress to stderr
+	// -progress writes machine-readable key=value blocks to stderr; -nostats
+	// suppresses the human-oriented status line, which is redrawn with bare
+	// carriage returns and would otherwise run together into one endless line.
+	args := []string{"-nostdin", "-nostats", "-progress", "pipe:2"}
 	if cfg.UseVulkan {
 		// Use Vulkan for hardware decoding
 		args = append(args,
@@ -362,24 +395,38 @@ func (fc *FFmpegConverter) getVideoDuration(sourcePath string) (float64, error) 
 	return duration, nil
 }
 
-// trackProgress monitors FFmpeg's progress output
+// trackProgress consumes FFmpeg's stderr. It reports progress through callback
+// once per "-progress" block (not once per line) and returns the last few
+// ordinary log lines so a failure can be explained.
 func (fc *FFmpegConverter) trackProgress(
-	stderr io.ReadCloser,
+	stderr io.Reader,
 	totalDuration float64,
 	callback ProgressCallback,
 	log *slog.Logger,
-) {
+) []string {
 	if log == nil {
 		log = slog.Default()
 	}
 
 	scanner := bufio.NewScanner(stderr)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var currentTime float64
 	var fps float64
+	var tail []string
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		if !ffmpegProgressLinePattern.MatchString(line) {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				tail = append(tail, trimmed)
+				if len(tail) > stderrTailLines {
+					tail = tail[1:]
+				}
+			}
+			continue
+		}
 
 		// Extract current time from FFmpeg's out_time_ms field (in microseconds)
 		if matches := ffmpegTimePattern.FindStringSubmatch(line); len(matches) > 1 {
@@ -397,8 +444,13 @@ func (fc *FFmpegConverter) trackProgress(
 			}
 		}
 
-		// Calculate and report progress
-		if totalDuration > 0 && currentTime > 0 {
+		// Each block ends with a "progress=continue|end" line; report once per
+		// block. Reporting on every line multiplied the callback (and the HTTP
+		// request behind it) roughly twelvefold.
+		if !strings.HasPrefix(line, "progress=") {
+			continue
+		}
+		if callback != nil && totalDuration > 0 && currentTime > 0 {
 			progress := (currentTime / totalDuration) * 100.0
 			if progress > 100 {
 				progress = 100
@@ -411,4 +463,6 @@ func (fc *FFmpegConverter) trackProgress(
 			)
 		}
 	}
+
+	return tail
 }

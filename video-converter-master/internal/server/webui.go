@@ -26,6 +26,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DarkStream - Video Converter Dashboard</title>
     <style>
+        a { color: #4fc3f7; }
+        a:hover { color: #81d4fa; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; line-height: 1.6; }
         .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
@@ -152,8 +154,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="queue" class="tab-content active">
             <div class="card">
                 <h2>Pending Jobs <button class="btn btn-danger btn-sm refresh-btn" onclick="cancelAllPending()">Cancel All Pending</button></h2>
-                {{if .PendingJobs}}
-                <table class="table">
+                <table class="table"{{if not .PendingJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -178,9 +179,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No pending jobs in queue</div>
-                {{end}}
+                <div class="no-data"{{if .PendingJobs}} style="display: none;"{{end}}>No pending jobs in queue</div>
             </div>
         </div>
 
@@ -188,8 +187,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="processing" class="tab-content">
             <div class="card">
                 <h2>Currently Processing</h2>
-                {{if .ProcessingJobs}}
-                <table class="table">
+                <table class="table"{{if not .ProcessingJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -217,9 +215,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No jobs currently processing</div>
-                {{end}}
+                <div class="no-data"{{if .ProcessingJobs}} style="display: none;"{{end}}>No jobs currently processing</div>
             </div>
         </div>
 
@@ -230,8 +226,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="pruneJobs('all')" style="margin-left: 10px;">Clear Completed & Failed</button>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button>
                 </h2>
-                {{if .RecentJobs}}
-                <table class="table">
+                <table class="table"{{if not .RecentJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -262,9 +257,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No recent jobs</div>
-                {{end}}
+                <div class="no-data"{{if .RecentJobs}} style="display: none;"{{end}}>No recent jobs</div>
             </div>
         </div>
 
@@ -280,8 +273,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             </div>
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
-                {{if .Workers}}
-                <table class="table">
+                <table class="table"{{if not .Workers}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Worker ID</th>
@@ -311,9 +303,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No workers connected</div>
-                {{end}}
+                <div class="no-data"{{if .Workers}} style="display: none;"{{end}}>No workers connected</div>
             </div>
         </div>
 
@@ -816,7 +806,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
             const evtSource = new EventSource(url);
 
-            evtSource.onmessage = function(event) {
+            // The server emits named "stats" events; onmessage only receives unnamed ones.
+            evtSource.addEventListener('stats', function(event) {
                 try {
                     const data = JSON.parse(event.data);
 
@@ -848,12 +839,16 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
                     function createElement(tag, opts = {}) {
                         const el = document.createElement(tag);
-                        if (opts.text) el.textContent = opts.text;
+                        // Compare against undefined/null so legitimate falsy values (0) still render
+                        if (opts.text !== undefined && opts.text !== null) el.textContent = String(opts.text);
                         if (opts.className) el.className = opts.className;
                         if (opts.title) el.title = opts.title;
+                        if (opts.href) el.setAttribute('href', opts.href);
                         if (opts.onclick) el.onclick = opts.onclick;
                         if (opts.innerHTML) el.innerHTML = opts.innerHTML; // only for static UI bits, not data
-                        if (opts.style) {
+                        if (typeof opts.style === 'string') {
+                            el.style.cssText = opts.style;
+                        } else if (opts.style) {
                             for (let key in opts.style) {
                                 el.style[key] = opts.style[key];
                             }
@@ -861,10 +856,22 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         return el;
                     }
 
+                    // Show the table when it has rows, otherwise the "no data" note next to it
+                    function toggleEmptyState(tbody, rowCount) {
+                        const table = tbody.closest('table');
+                        if (!table) return;
+                        table.style.display = rowCount > 0 ? '' : 'none';
+                        const note = table.nextElementSibling;
+                        if (note && note.classList.contains('no-data')) {
+                            note.style.display = rowCount > 0 ? 'none' : '';
+                        }
+                    }
+
                     // Update pending jobs table
                     if (data.pending_jobs && document.getElementById('pending-jobs')) {
                         const tbody = document.getElementById('pending-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.pending_jobs.length);
                         data.pending_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             const createdAt = new Date(job.created_at).toLocaleString();
@@ -904,6 +911,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.processing_jobs && document.getElementById('processing-jobs')) {
                         const tbody = document.getElementById('processing-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.processing_jobs.length);
                         data.processing_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             let startedAt = '';
@@ -942,6 +950,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.recent_jobs && document.getElementById('recent-jobs')) {
                         const tbody = document.getElementById('recent-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.recent_jobs.length);
                         data.recent_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             let statusClass = 'badge-pending';
@@ -991,6 +1000,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.workers && document.getElementById('workers-list')) {
                         const tbody = document.getElementById('workers-list');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.workers.length);
                         data.workers.forEach(worker => {
                             const tr = document.createElement('tr');
                             const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
@@ -1044,7 +1054,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 } catch (err) {
                     console.error('Failed to parse SSE data:', err);
                 }
-            };
+            });
 
             evtSource.onerror = function() {
                 const indicator = document.getElementById('live-indicator');
@@ -1334,6 +1344,10 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	failed, err := s.db.GetJobsByStatus("failed", 25)
 	if err == nil {
 		recentJobs = append(recentJobs, failed...)
+	}
+	cancelled, err := s.db.GetJobsByStatus("cancelled", 25)
+	if err == nil {
+		recentJobs = append(recentJobs, cancelled...)
 	}
 
 	// Build master URL for display
@@ -1661,6 +1675,11 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
+                        if (data.status && data.status !== 'processing') {
+                            // Job finished (or was cancelled/requeued): show its final state
+                            location.reload();
+                            return;
+                        }
                         const progress = data.progress || 0;
                         document.getElementById('progress-fill').style.width = progress + '%';
                         document.getElementById('progress-text').textContent = progress.toFixed(1) + '%';

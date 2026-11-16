@@ -82,8 +82,8 @@ docker run -d \
   --name darkstream-master \
   -p 8080:8080 \
   -v videos:/mnt/storage/videos \
+  -v converted:/mnt/storage/converted \
   -v master_db:/app/db \
-  -e LOG_LEVEL=info \
   darkstream:master
 ```
 
@@ -91,12 +91,9 @@ docker run -d \
 ```bash
 docker run -d \
   --name darkstream-worker-1 \
-  -v videos:/mnt/storage/videos \
-  -v worker_tmp:/tmp/worker \
-  -e MASTER_HOST=master \
-  -e MASTER_PORT=8080 \
+  -v worker_tmp:/tmp/converter-cache \
   --link darkstream-master:master \
-  darkstream:worker
+  darkstream:worker -url http://master:8080 -id worker-1
 ```
 
 ### Run CLI Tool
@@ -209,10 +206,12 @@ sudo systemctl restart docker
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
-| `LOG_FORMAT` | `json` | Log format (json, text) |
-| `MASTER_HOST` | `master` | Master service hostname (for workers) |
-| `MASTER_PORT` | `8080` | Master service port |
+| `DARKSTREAM_API_KEY` | _(unset)_ | API key used by workers started with `-url` and by the CLI when the master has `server.api_key` set |
+
+Logging and connection settings are **not** read from environment variables:
+set `logging.level` / `logging.format` in the config files, and point workers
+at the master with `-url http://master:8080` (remote configuration mode) or
+`worker.master_url` in a mounted worker config.
 
 ### Config Files
 

@@ -244,6 +244,11 @@ func (m *Metrics) RecordJobsStarted(count int) {
 	m.JobsInProgress.Add(float64(count))
 }
 
+// SetJobsInProgress sets the in-progress gauge to an absolute value.
+func (m *Metrics) SetJobsInProgress(count int) {
+	m.JobsInProgress.Set(float64(count))
+}
+
 // RecordJobFinished decrements in-progress counter
 func (m *Metrics) RecordJobFinished() {
 	m.JobsInProgress.Dec()
