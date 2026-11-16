@@ -53,3 +53,17 @@ cd video-converter-master && go test -race -run TestX ./internal/server/   # one
   after changing its API, vet all modules, not just common.
 - `go.work` targets Go 1.26; module `go.mod` files say 1.24 (worker pins
   `toolchain go1.24.9`). CI tests 1.25 and 1.26 — avoid version-specific stdlib APIs.
+
+## Subagent models (repo convention)
+
+When delegating to subagents, spawn the named agent configs from
+`~/.vibe/agents/` — they pin the model aliases below:
+
+| Role | `config_name` at spawn | model alias (`active_model`) | backend model |
+|---|---|---|---|
+| Building / implementing | `mistral-large-4-high` | `mistral-large-4` | `mistral-large-4` (Mistral API) |
+| Review / testing | `glm-5-3-high` | `glm-5-3` | `zai-glm-5-3` (Mistral API) |
+
+Everything else runs on the session's default model. Note: named configs only
+resolve after a `/reload` (or a fresh session) if `~/.vibe/agents/*.toml` was
+created after this session started.

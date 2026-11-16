@@ -140,6 +140,10 @@ and `/ui/job?id=...` (job detail page).
 
 - Project-local Vibe skills live in `.vibe/skills/` — load them for build/test,
   API, worker-pipeline, and deployment workflows instead of rediscovering commands.
+- Subagent model aliases (set in `~/.vibe/agents/*.toml`, named in each skill):
+  `mistral-large-4-high` → model alias `mistral-large-4` for building/implementing,
+  `glm-5-3-high` → model alias `glm-5-3` (backend `zai-glm-5-3`) for review/testing.
+  Spawn them by `config_name`; if the name is unknown, `/reload` or restart the session.
 - Don't commit `bin/`, `coverage-*.out`, `jobs.db`, or built binaries
   (`.gitignore` covers them).
 - Test fixtures `testvideo1.mp4` / `testvideo2.mp4` at the root are for manual

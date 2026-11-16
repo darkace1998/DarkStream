@@ -62,3 +62,17 @@ Go-runtime fallback off-Linux). First heartbeat is sent immediately on start.
 `client_regression_test.go`, etc. — run `./scripts/run-race-tests.sh
 video-converter-worker`. Note: todo.md flags low coverage in `internal/client/`
 (only `progress_test.go`) — add tests when touching it.
+
+## Subagent models (repo convention)
+
+When delegating to subagents, spawn the named agent configs from
+`~/.vibe/agents/` — they pin the model aliases below:
+
+| Role | `config_name` at spawn | model alias (`active_model`) | backend model |
+|---|---|---|---|
+| Building / implementing | `mistral-large-4-high` | `mistral-large-4` | `mistral-large-4` (Mistral API) |
+| Review / testing | `glm-5-3-high` | `glm-5-3` | `zai-glm-5-3` (Mistral API) |
+
+Everything else runs on the session's default model. Note: named configs only
+resolve after a `/reload` (or a fresh session) if `~/.vibe/agents/*.toml` was
+created after this session started.
