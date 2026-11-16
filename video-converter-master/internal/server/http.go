@@ -65,6 +65,7 @@ const (
 	fieldProgress  = "progress"
 	fieldTimestamp = "timestamp"
 	fieldMessage   = "message"
+	fieldErrors    = "errors"
 )
 
 // isTerminalJobStatus reports whether a job in this status will not change
@@ -186,17 +187,20 @@ func (rl *rateLimiter) stop() {
 
 // Server handles HTTP API requests
 type Server struct {
-	db          *db.Tracker
-	addr        string
-	server      *http.Server
-	configMgr   *config.Manager
-	masterCfg   *models.MasterConfig // Master configuration for worker defaults
-	rateLimiter *rateLimiter
-	apiKey      string
-	allowedDirs []string // Allowed directories for file operations (source and output)
-	metrics     *metrics.Metrics
-	notifier    *notifier.WebhookNotifier
-	queuePaused atomic.Bool // New field to pause/resume queue
+	db            *db.Tracker
+	addr          string
+	server        *http.Server
+	configMgr     *config.Manager
+	masterCfg     *models.MasterConfig // Master configuration for worker defaults
+	rateLimiter   *rateLimiter
+	apiKey        string
+	allowedDirsMu sync.RWMutex
+	allowedDirs   []string // Allowed directories for file operations (source and output)
+	metrics       *metrics.Metrics
+	notifier      *notifier.WebhookNotifier
+	persister     *config.Persister // writes server settings back to the config file
+	locMgr        LocationManager   // scan location runtime manager (hot add/remove)
+	queuePaused   atomic.Bool       // New field to pause/resume queue
 
 	// done is closed on Shutdown so long-lived SSE handlers return promptly
 	// instead of holding the graceful shutdown open until its deadline.
@@ -204,14 +208,57 @@ type Server struct {
 	doneOnce sync.Once
 }
 
+// LocationManager is the runtime view of scan locations the server drives via
+// /api/scan-locations. Implemented by coordinator.LocationManager.
+type LocationManager interface {
+	List() []models.LocationStatus
+	Add(loc models.ScanLocation) error
+	Update(loc models.ScanLocation) error
+	Remove(id string) error
+	ScanNow(id string) error
+}
+
+// SetLocationManager attaches the scan location manager used by the
+// /api/scan-locations endpoint.
+func (s *Server) SetLocationManager(lm LocationManager) {
+	s.locMgr = lm
+}
+
+// AddAllowedDirs registers additional directories for path validation (called
+// when a scan location is added at runtime).
+func (s *Server) AddAllowedDirs(dirs ...string) {
+	s.allowedDirsMu.Lock()
+	defer s.allowedDirsMu.Unlock()
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		found := slices.Contains(s.allowedDirs, d)
+		if !found {
+			s.allowedDirs = append(s.allowedDirs, d)
+		}
+	}
+}
+
+// getAllowedDirs returns a snapshot of the allowed directories.
+func (s *Server) getAllowedDirs() []string {
+	s.allowedDirsMu.RLock()
+	defer s.allowedDirsMu.RUnlock()
+	return append([]string(nil), s.allowedDirs...)
+}
+
 // New creates a new HTTP server instance
 func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *models.MasterConfig) *Server {
 	apiKey := cfg.Server.APIKey
 
-	// Configure allowed directories for path validation
-	allowedDirs := []string{
-		cfg.Scanner.RootPath,   // Source videos directory
-		cfg.Scanner.OutputBase, // Output/converted videos directory
+	// Configure allowed directories for path validation: every scan location's
+	// source root and output base (legacy single-root config is migrated into
+	// a default location by NormalizeScanLocations).
+	cfg.NormalizeScanLocations()
+	allowedDirs := make([]string, 0, 2*len(cfg.Scanner.Locations)+2)
+	allowedDirs = append(allowedDirs, cfg.Scanner.RootPath, cfg.Scanner.OutputBase)
+	for _, loc := range cfg.Scanner.Locations {
+		allowedDirs = append(allowedDirs, loc.RootPath, loc.OutputBase)
 	}
 
 	return &Server{
@@ -289,6 +336,8 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/jobs/prune", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PruneJobs))))
 	mux.HandleFunc("/api/workers", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ListWorkers))))
 	mux.HandleFunc("/api/validate-config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.ValidateConfig))))
+	mux.HandleFunc("/api/server-settings", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleServerSettings))))
+	mux.HandleFunc("/api/scan-locations", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleScanLocations))))
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -1346,7 +1395,7 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// Validate source path to prevent path traversal attacks
 	// This is defense-in-depth: paths are validated during job creation,
 	// but we re-validate here to protect against database tampering
-	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath)
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), job.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file",
 			fieldJobID, jobID,
@@ -1450,7 +1499,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// Validate output path to prevent path traversal attacks
 	// This is defense-in-depth: paths are validated during job creation,
 	// but we re-validate here to protect against database tampering
-	validatedPath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.OutputPath)
+	validatedPath, err := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), job.OutputPath)
 	if err != nil {
 		slog.Error("Path validation failed for output file",
 			fieldJobID, jobID,
@@ -1498,7 +1547,7 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	// may not match the extension chosen when the job was created. Store it
 	// under the extension it actually has.
 	if adjusted := outputPathForUpload(outputPath, file.FileName()); adjusted != outputPath {
-		validatedAdjusted, validateErr := utils.ValidatePathInAllowedDirs(s.allowedDirs, adjusted)
+		validatedAdjusted, validateErr := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), adjusted)
 		if validateErr != nil {
 			slog.Error("Path validation failed for adjusted output file", fieldJobID, jobID, "path", adjusted, "error", validateErr)
 			http.Error(w, "Invalid file path", http.StatusForbidden)
@@ -1650,7 +1699,7 @@ func (s *Server) finalizeUploadedJob(job *models.Job, outputPath, outputChecksum
 		// landed next to the original under a new extension, so remove the
 		// original to complete the replacement.
 		if job.OutputPath == job.SourcePath {
-			if sourcePath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath); err == nil {
+			if sourcePath, err := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), job.SourcePath); err == nil {
 				// #nosec G703 - sourcePath was validated against the allowed directories
 				if rmErr := os.Remove(sourcePath); rmErr != nil && !os.IsNotExist(rmErr) {
 					slog.Warn("Failed to remove replaced source file", fieldJobID, job.ID, "path", sourcePath, "error", rmErr)
@@ -2576,9 +2625,9 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
-		"valid":  len(errors) == 0,
-		"errors": errors,
-		"type":   configType,
+		"valid":     len(errors) == 0,
+		fieldErrors: errors,
+		"type":      configType,
 	}
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
@@ -3278,7 +3327,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate paths
-	validatedSource, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.SourcePath)
+	validatedSource, err := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), req.SourcePath)
 	if err != nil {
 		slog.Error("Path validation failed for source file", "path", req.SourcePath, "error", err)
 		http.Error(w, "Invalid source path", http.StatusForbidden)
@@ -3293,7 +3342,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 
 	var outputPath string
 	if req.OutputPath != "" {
-		validatedOutput, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, req.OutputPath)
+		validatedOutput, err := utils.ValidatePathInAllowedDirs(s.getAllowedDirs(), req.OutputPath)
 		if err != nil {
 			slog.Error("Path validation failed for output file", "path", req.OutputPath, "error", err)
 			http.Error(w, "Invalid output path", http.StatusForbidden)

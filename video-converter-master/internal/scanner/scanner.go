@@ -4,9 +4,6 @@ package scanner
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,6 +15,16 @@ import (
 	"github.com/darkace1998/video-converter-common/utils"
 )
 
+// FileStore abstracts persistence of per-file scan state, so repeat scans can
+// skip re-hashing files whose size and mtime are unchanged.
+type FileStore interface {
+	// GetFileScanState returns size, mtime (ns), stored hash, its algorithm,
+	// and ok=false when the file was never scanned.
+	GetFileScanState(path string) (size int64, mtimeNs int64, hash string, algo string, ok bool, err error)
+	// UpsertFileScanState records the scan state of a file.
+	UpsertFileScanState(path string, size int64, mtimeNs int64, hash, algo string) error
+}
+
 // ScanOptions configures scanner behavior
 type ScanOptions struct {
 	MaxDepth         int                                 // -1 for unlimited, 0 for root only, >0 for specific depth
@@ -27,10 +34,26 @@ type ScanOptions struct {
 	SkipHiddenDirs   bool                                // Skip directories starting with '.'
 	ReplaceSource    bool                                // Replace source file with output (output path = source path)
 	DetectDuplicates bool                                // Track file hashes to detect duplicates
+	HashAlgo         string                              // sha256 (default) or sha1 — sha1 is faster and less CPU-intensive
+	Priority         int                                 // Default priority for jobs created by this scanner (0-10; negative = normal (5))
+	FileStore        FileStore                           // Optional store enabling unchanged-file skip
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
 	// KnownOutputChecker optionally reports whether a file with this checksum was
 	// produced by an earlier conversion, in which case it is not a new source.
 	KnownOutputChecker func(checksum string) (bool, error)
+}
+
+// ScanStats reports what a scan did, for logging, metrics, and tests.
+type ScanStats struct {
+	Dirs             int           `json:"dirs"`
+	Files            int           `json:"files"`             // non-video files skipped by extension filter
+	Videos           int           `json:"videos"`            // video files considered
+	Hashed           int           `json:"hashed"`            // files read and hashed
+	SkippedUnchanged int           `json:"skipped_unchanged"` // files skipped via stored size+mtime
+	SkippedOutput    int           `json:"skipped_output"`    // already-converted files
+	Duplicates       int           `json:"duplicates"`
+	Jobs             int           `json:"jobs"` // new jobs produced
+	Duration         time.Duration `json:"duration_ns"`
 }
 
 // convertedExtensions are the container extensions a conversion may produce.
@@ -51,6 +74,7 @@ type Scanner struct {
 	OutputBase      string
 	Options         ScanOptions
 	seenHashes      map[string]string // hash -> first file path (for duplicate detection)
+	stats           ScanStats         // accumulator for the current/last parallel scan
 	mu              sync.RWMutex
 }
 
@@ -73,6 +97,7 @@ func New(rootPath string, extensions []string, outputBase string) *Scanner {
 			SkipHiddenDirs:   true, // Skip hidden directories by default
 			ReplaceSource:    false,
 			DetectDuplicates: false,
+			Priority:         -1, // negative = normal (5); lets 0 be a valid low priority
 		},
 		seenHashes: make(map[string]string),
 	}
@@ -96,79 +121,34 @@ func (s *Scanner) GetOptions() ScanOptions {
 	return s.Options
 }
 
-// ScanDirectory walks the directory tree and finds all video files
+// ScanDirectory walks the directory tree and finds all video files (single engine)
 func (s *Scanner) ScanDirectory() ([]*models.Job, error) {
-	var jobs []*models.Job
+	jobs, _, err := s.ScanDirectoryParallel(1)
+	return jobs, err
+}
 
-	// Reset duplicate detection map if enabled
+// bump applies a stats update under the scanner lock.
+func (s *Scanner) bump(f func(*ScanStats)) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	f(&s.stats)
+}
+
+// resetStats clears the stats accumulator and the duplicate map for a new scan.
+func (s *Scanner) resetStats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats = ScanStats{}
 	if s.Options.DetectDuplicates {
 		s.seenHashes = make(map[string]string)
 	}
-	s.mu.Unlock()
-
-	err := s.scanWithDepth(s.RootPath, 0, &jobs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan directory: %w", err)
-	}
-
-	return jobs, nil
 }
 
-// scanWithDepth recursively scans directories with depth control
-//
-//nolint:unparam // Error return retained for future-proofing the directory-scanning API
-func (s *Scanner) scanWithDepth(currentPath string, currentDepth int, jobs *[]*models.Job) error {
-	// Check depth limit
-	if s.Options.MaxDepth >= 0 && currentDepth > s.Options.MaxDepth {
-		return nil
-	}
-
-	entries, err := os.ReadDir(currentPath)
-	if err != nil {
-		slog.Warn("Error reading directory", "path", currentPath, "error", err)
-		return nil // Continue scanning despite errors
-	}
-
-	for _, entry := range entries {
-		fullPath := filepath.Join(currentPath, entry.Name())
-
-		// Skip hidden files/directories if configured
-		if strings.HasPrefix(entry.Name(), ".") {
-			if entry.IsDir() && s.Options.SkipHiddenDirs {
-				slog.Debug("Skipping hidden directory", "path", fullPath)
-				continue
-			}
-			if !entry.IsDir() && s.Options.SkipHiddenFiles {
-				slog.Debug("Skipping hidden file", "path", fullPath)
-				continue
-			}
-		}
-
-		if entry.IsDir() {
-			if s.IsOutputPath(fullPath) {
-				slog.Debug("Skipping output directory", "path", fullPath)
-				continue
-			}
-			// Recursively scan subdirectory
-			err := s.scanWithDepth(fullPath, currentDepth+1, jobs)
-			if err != nil {
-				slog.Warn("Error scanning subdirectory", "path", fullPath, "error", err)
-			}
-			continue
-		}
-
-		job, err := s.ProcessFile(fullPath)
-		if err != nil {
-			// Specific errors can be logged or ignored depending on verbosity desired.
-			continue
-		}
-		if job != nil {
-			*jobs = append(*jobs, job)
-		}
-	}
-
-	return nil
+// Stats returns a snapshot of the current/last scan statistics.
+func (s *Scanner) Stats() ScanStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stats
 }
 
 // ProcessFile validates a single file and creates a Job if it matches criteria.
@@ -220,7 +200,7 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		return nil, nil
 	}
 
-	sourceChecksum, skip := s.checksumUnlessHandled(fullPath, fileInfo, opts)
+	sourceChecksum, sourceAlgo, skip := s.checksumUnlessHandled(fullPath, fileInfo, opts)
 	if skip {
 		return nil, nil
 	}
@@ -256,16 +236,22 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		}
 	}
 
+	priority := opts.Priority
+	if priority < 0 {
+		priority = 5 // Default priority (normal) when the scanner has none set
+	}
+
 	job := &models.Job{
-		ID:             generateJobID(fullPath),
-		SourcePath:     fullPath,
-		OutputPath:     outputPath,
-		Status:         "pending",
-		Priority:       5, // Default priority (normal)
-		CreatedAt:      time.Now(),
-		RetryCount:     0,
-		MaxRetries:     3,
-		SourceChecksum: sourceChecksum,
+		ID:                 generateJobID(fullPath),
+		SourcePath:         fullPath,
+		OutputPath:         outputPath,
+		Status:             "pending",
+		Priority:           priority,
+		CreatedAt:          time.Now(),
+		RetryCount:         0,
+		MaxRetries:         3,
+		SourceChecksum:     sourceChecksum,
+		SourceChecksumAlgo: sourceAlgo,
 	}
 
 	slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
@@ -275,25 +261,57 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 // checksumUnlessHandled decides whether fullPath still needs converting. It
 // returns skip=true when the file is already converted, is itself the product
 // of a conversion, or is a duplicate; otherwise it returns the file's checksum
-// (empty if it could not be computed).
-func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, opts ScanOptions) (checksum string, skip bool) {
+// (empty if it could not be computed) and the algorithm used to produce it.
+func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, opts ScanOptions) (checksum, algo string, skip bool) {
 	// Skip sources that already have an up-to-date converted file. Without this,
 	// pruning finished jobs (or losing the database) makes the next scan queue
 	// every already-converted video again.
 	if !opts.ReplaceSource && s.hasCurrentOutput(fullPath, fileInfo) {
 		slog.Debug("Skipping file (already converted)", "path", fullPath)
-		return "", true
+		s.bump(func(st *ScanStats) { st.SkippedOutput++ })
+		return "", "", true
+	}
+
+	algo = opts.HashAlgo
+	if algo == "" {
+		algo = utils.HashAlgoSHA256
+	}
+
+	// Change detection: if size and mtime match the stored record, reuse the
+	// stored hash instead of reading the whole file again.
+	if opts.FileStore != nil {
+		size, mtimeNs, storedHash, storedAlgo, ok, storeErr := opts.FileStore.GetFileScanState(fullPath)
+		if storeErr != nil {
+			slog.Warn("Failed to read file scan state", "path", fullPath, "error", storeErr)
+		} else if ok && storedHash != "" && size == fileInfo.Size() && mtimeNs == fileInfo.ModTime().UnixNano() {
+			s.bump(func(st *ScanStats) { st.SkippedUnchanged++ })
+			checksum, algo = storedHash, storedAlgo
+			return s.dedupAndFinish(fullPath, checksum, algo, opts)
+		}
 	}
 
 	// Hash the file once; the result serves both duplicate detection and the
 	// job's source checksum (hashing a large video twice doubles the scan I/O).
-	checksum, hashErr := computeFileHash(fullPath)
+	checksum, hashErr := utils.CalculateFileHash(fullPath, algo)
 	if hashErr != nil {
 		slog.Warn("Failed to compute source checksum", "path", fullPath, "error", hashErr)
 		// Continue without checksum - it will be empty string
-		return "", false
+		return "", algo, false
+	}
+	s.bump(func(st *ScanStats) { st.Hashed++ })
+
+	if opts.FileStore != nil {
+		if storeErr := opts.FileStore.UpsertFileScanState(fullPath, fileInfo.Size(), fileInfo.ModTime().UnixNano(), checksum, algo); storeErr != nil {
+			slog.Warn("Failed to store file scan state", "path", fullPath, "error", storeErr)
+		}
 	}
 
+	return s.dedupAndFinish(fullPath, checksum, algo, opts)
+}
+
+// dedupAndFinish runs the known-output and duplicate checks for a hashed file
+// and reports whether it should be skipped.
+func (s *Scanner) dedupAndFinish(fullPath, checksum, algo string, opts ScanOptions) (string, string, bool) {
 	// A file this system produced itself (e.g. the result of a replace-source
 	// conversion) is not a new source.
 	if opts.KnownOutputChecker != nil {
@@ -302,16 +320,17 @@ func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, o
 			slog.Warn("Failed to check known outputs", "path", fullPath, "error", checkErr)
 		} else if known {
 			slog.Debug("Skipping file (output of an earlier conversion)", "path", fullPath)
-			return "", true
+			return "", algo, true
 		}
 	}
 
 	// Detect duplicates if enabled
 	if opts.DetectDuplicates && s.isDuplicate(fullPath, checksum, opts) {
-		return "", true
+		s.bump(func(st *ScanStats) { st.Duplicates++ })
+		return "", algo, true
 	}
 
-	return checksum, false
+	return checksum, algo, false
 }
 
 // hasCurrentOutput reports whether a converted file for the source already
@@ -407,43 +426,6 @@ func (s *Scanner) isDuplicate(fullPath, fileHash string, opts ScanOptions) bool 
 	}
 
 	return false
-}
-
-// computeFileHash computes SHA256 hash of file for duplicate detection
-func computeFileHash(filePath string) (string, error) {
-	// #nosec G304 - filePath is discovered by walking the configured scan directories
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to open file: %w", err)
-	}
-	defer func() {
-		cerr := file.Close()
-		if cerr != nil {
-			slog.Warn("Failed to close file during hash computation", "path", filePath, "error", cerr)
-		}
-	}()
-
-	hash := sha256.New()
-
-	// Read file in chunks to avoid loading entire file into memory
-	buf := make([]byte, 8192)
-	for {
-		n, readErr := file.Read(buf)
-		if n > 0 {
-			_, writeErr := hash.Write(buf[:n])
-			if writeErr != nil {
-				return "", fmt.Errorf("failed to write to hash: %w", writeErr)
-			}
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return "", fmt.Errorf("failed to read file: %w", readErr)
-		}
-	}
-
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // generateJobID creates a unique ID for a job based on the source path

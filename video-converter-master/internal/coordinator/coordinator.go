@@ -18,7 +18,6 @@ import (
 	"github.com/darkace1998/video-converter-master/internal/config"
 	"github.com/darkace1998/video-converter-master/internal/db"
 	"github.com/darkace1998/video-converter-master/internal/notifier"
-	"github.com/darkace1998/video-converter-master/internal/scanner"
 	"github.com/darkace1998/video-converter-master/internal/server"
 )
 
@@ -26,7 +25,7 @@ import (
 type Coordinator struct {
 	config   *models.MasterConfig
 	db       *db.Tracker
-	scanner  *scanner.Scanner
+	locs     *LocationManager
 	server   *server.Server
 	notifier *notifier.WebhookNotifier
 	ctx      context.Context //nolint:containedctx
@@ -87,35 +86,18 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		return nil, fmt.Errorf("failed to create config manager: %w", err)
 	}
 
-	scn := scanner.New(
-		cfg.Scanner.RootPath,
-		cfg.Scanner.VideoExtensions,
-		cfg.Scanner.OutputBase,
-	)
-
-	// Configure scanner options from config
-	scn.SetOptions(scanner.ScanOptions{
-		MaxDepth:         cfg.Scanner.RecursiveDepth,
-		MinFileSize:      cfg.Scanner.MinFileSize,
-		MaxFileSize:      cfg.Scanner.MaxFileSize,
-		SkipHiddenFiles:  cfg.Scanner.SkipHiddenFiles,
-		SkipHiddenDirs:   cfg.Scanner.SkipHiddenDirs,
-		ReplaceSource:    cfg.Scanner.ReplaceSource,
-		DetectDuplicates: cfg.Scanner.DetectDuplicates,
-		DuplicateChecker: tracker.HasJobWithSourceChecksum,
-
-		KnownOutputChecker: tracker.HasKnownOutputChecksum,
-	})
-
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := server.New(tracker, addr, configMgr, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	locs := NewLocationManager(tracker, srv, ctx)
+	srv.SetLocationManager(locs)
+
 	return &Coordinator{
 		config:   cfg,
 		db:       tracker,
-		scanner:  scn,
+		locs:     locs,
 		server:   srv,
 		notifier: notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
 		ctx:      ctx,
@@ -123,34 +105,17 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	}, nil
 }
 
+// SetPersister attaches the config-file persister to the HTTP server, enabling
+// the /api/server-settings endpoint to persist server settings to disk.
+func (c *Coordinator) SetPersister(p *config.Persister) {
+	c.server.SetPersister(p)
+}
+
 // Start starts the coordinator and all its components
 func (c *Coordinator) Start() error {
-	// Scan for all video files
-	slog.Info("Scanning for video files", "path", c.config.Scanner.RootPath)
-	jobs, err := c.scanner.ScanDirectory()
-	if err != nil {
-		return fmt.Errorf("failed to scan directory: %w", err)
-	}
-
-	slog.Info("Found video files", "count", len(jobs))
-
-	// Insert jobs into database
-	failedInsertions := 0
-	for _, job := range jobs {
-		err := c.db.CreateJob(job)
-		if err != nil {
-			if errors.Is(err, db.ErrJobAlreadyExists) {
-				// Job already exists, skip silently
-				continue
-			}
-			slog.Error("Failed to create job", "job_id", job.ID, "error", err)
-			failedInsertions++
-		}
-	}
-	c.server.RefreshQueueDepth()
-	if failedInsertions > 0 {
-		slog.Warn("Some jobs failed to be inserted", "failed_count", failedInsertions, "total_jobs", len(jobs))
-	}
+	// Start all configured scan locations (initial scan runs in the background
+	// of each location's runtime).
+	c.locs.StartAll(c.config)
 
 	// Start monitoring worker health
 	c.wg.Add(1)
@@ -159,29 +124,6 @@ func (c *Coordinator) Start() error {
 	// Start monitoring failed jobs
 	c.wg.Add(1)
 	go c.monitorFailedJobs()
-
-	// Start periodic scanning for new files if scan_interval is configured
-	if c.config.Scanner.ScanInterval > 0 {
-		c.wg.Add(1)
-		go c.periodicScan()
-	} else {
-		slog.Info("Periodic scanning disabled (scan_interval not set)")
-	}
-
-	// Start file system watcher if enabled
-	if c.config.Scanner.EnableWatch {
-		watcher, err := scanner.NewWatcher(c.scanner)
-		if err != nil {
-			slog.Error("Failed to initialize file system watcher", "error", err)
-		} else {
-			if err := watcher.Start(); err != nil {
-				slog.Error("Failed to start file system watcher", "error", err)
-			} else {
-				c.wg.Add(1)
-				go c.listenWatcherEvents(watcher)
-			}
-		}
-	}
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -210,7 +152,7 @@ func (c *Coordinator) Start() error {
 	}()
 
 	// Wait for HTTP server to exit
-	err = <-serverErrChan
+	err := <-serverErrChan
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("HTTP server exited unexpectedly", "error", err)
 		c.cancel()
@@ -223,6 +165,7 @@ func (c *Coordinator) Start() error {
 
 	// Wait for monitoring goroutines to stop before closing database
 	slog.Info("Waiting for monitoring goroutines to stop")
+	c.locs.Shutdown()
 	c.wg.Wait()
 
 	// Drain in-flight webhook deliveries from the coordinator's notifier.
@@ -242,40 +185,6 @@ func (c *Coordinator) Start() error {
 	}
 
 	return err
-}
-
-// listenWatcherEvents processes jobs emitted by the file system watcher
-func (c *Coordinator) listenWatcherEvents(w *scanner.Watcher) {
-	defer c.wg.Done()
-	defer func() { _ = w.Close() }()
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			slog.Info("Watcher event listener stopping")
-			return
-		case job, ok := <-w.Jobs:
-			if !ok {
-				return
-			}
-			err := c.db.CreateJob(job)
-			if err != nil {
-				if errors.Is(err, db.ErrJobAlreadyExists) {
-					// Job already exists, ignore
-				} else {
-					slog.Error("Failed to insert job from watcher", "job_id", job.ID, "error", err)
-				}
-			} else {
-				slog.Info("Successfully inserted job from watcher", "job_id", job.ID)
-				c.server.RefreshQueueDepth()
-			}
-		case err, ok := <-w.Errors:
-			if !ok {
-				return
-			}
-			slog.Error("Watcher reported error", "error", err)
-		}
-	}
 }
 
 // monitorWorkerHealth periodically checks worker health
@@ -528,48 +437,6 @@ func (c *Coordinator) monitorFailedJobs() {
 			}
 
 			c.server.RefreshQueueDepth()
-		}
-	}
-}
-
-// periodicScan periodically scans for new video files
-func (c *Coordinator) periodicScan() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.config.Scanner.ScanInterval)
-	defer ticker.Stop()
-
-	slog.Info("Periodic scanner started", "interval", c.config.Scanner.ScanInterval)
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			slog.Info("Periodic scanner stopping")
-			return
-		case <-ticker.C:
-			slog.Debug("Scanning for new video files")
-			jobs, err := c.scanner.ScanDirectory()
-			if err != nil {
-				slog.Error("Periodic scan failed", "error", err)
-				continue
-			}
-
-			newJobsCount := 0
-			for _, job := range jobs {
-				err := c.db.CreateJob(job)
-				if err == nil {
-					newJobsCount++
-				} else if !errors.Is(err, db.ErrJobAlreadyExists) {
-					// Error other than "already exists"
-					slog.Error("Failed to create job during periodic scan", "job_id", job.ID, "error", err)
-				}
-			}
-
-			if newJobsCount > 0 {
-				slog.Info("Found new video files during periodic scan", "new_jobs", newJobsCount, "total_scanned", len(jobs))
-				c.server.RefreshQueueDepth()
-			} else {
-				slog.Debug("No new video files found", "total_scanned", len(jobs))
-			}
 		}
 	}
 }

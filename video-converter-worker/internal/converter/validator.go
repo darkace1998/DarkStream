@@ -45,9 +45,12 @@ func (v *Validator) GetFileSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-// VerifyChecksum verifies that a file's SHA256 checksum matches the expected value
+// VerifyChecksum verifies that a file's checksum matches the expected value.
+// The algorithm is inferred from the expected checksum's hex length
+// (SHA-256 = 64 chars, SHA-1 = 40 chars), so locations configured with
+// hash_algo: sha1 are verified with SHA-1.
 func (v *Validator) VerifyChecksum(filePath, expectedChecksum string) (bool, error) {
-	match, err := utils.VerifyFileSHA256(filePath, expectedChecksum)
+	match, err := utils.VerifyFileHashAuto(filePath, expectedChecksum)
 	if err != nil {
 		return false, fmt.Errorf("failed to verify checksum: %w", err)
 	}

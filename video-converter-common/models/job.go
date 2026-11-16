@@ -4,22 +4,23 @@ import "time"
 
 // Job represents a video conversion job with its lifecycle state and metadata.
 type Job struct {
-	ID             string     `json:"id"`
-	SourcePath     string     `json:"source_path"`
-	OutputPath     string     `json:"output_path"`
-	Status         string     `json:"status"`   // see constants.JobStatus* constants
-	Priority       int        `json:"priority"` // see constants.JobPriority* constants (0=low, 5=normal, 10=high)
-	WorkerID       string     `json:"worker_id"`
-	StartedAt      *time.Time `json:"started_at"`
-	CompletedAt    *time.Time `json:"completed_at"`
-	ErrorMessage   string     `json:"error_message"`
-	RetryCount     int        `json:"retry_count"`
-	MaxRetries     int        `json:"max_retries"`
-	CreatedAt      time.Time  `json:"created_at"`
-	SourceDuration float64    `json:"source_duration"` // seconds
-	OutputSize     int64      `json:"output_size"`     // bytes
-	SourceChecksum string     `json:"source_checksum"` // SHA256 checksum of source file
-	OutputChecksum string     `json:"output_checksum"` // SHA256 checksum of output file
+	ID                 string     `json:"id"`
+	SourcePath         string     `json:"source_path"`
+	OutputPath         string     `json:"output_path"`
+	Status             string     `json:"status"`   // see constants.JobStatus* constants
+	Priority           int        `json:"priority"` // see constants.JobPriority* constants (0=low, 5=normal, 10=high)
+	WorkerID           string     `json:"worker_id"`
+	StartedAt          *time.Time `json:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at"`
+	ErrorMessage       string     `json:"error_message"`
+	RetryCount         int        `json:"retry_count"`
+	MaxRetries         int        `json:"max_retries"`
+	CreatedAt          time.Time  `json:"created_at"`
+	SourceDuration     float64    `json:"source_duration"`                // seconds
+	OutputSize         int64      `json:"output_size"`                    // bytes
+	SourceChecksum     string     `json:"source_checksum"`                // checksum of source file (algo in SourceChecksumAlgo)
+	SourceChecksumAlgo string     `json:"source_checksum_algo,omitempty"` // "sha256" (default) or "sha1"
+	OutputChecksum     string     `json:"output_checksum"`                // SHA256 checksum of output file
 	// Video metadata fields (populated from FFprobe)
 	SourceWidth      int    `json:"source_width,omitempty"`       // Video width in pixels
 	SourceHeight     int    `json:"source_height,omitempty"`      // Video height in pixels

@@ -110,6 +110,52 @@ func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, er
 	return tracker, nil
 }
 
+// GetFileScanState returns the stored scan state for path. ok is false when
+// the file has never been scanned (or its record was removed).
+func (t *Tracker) GetFileScanState(path string) (size int64, mtimeNs int64, hash string, algo string, ok bool, err error) {
+	err = t.db.QueryRow(`
+		SELECT size, mtime_ns, COALESCE(hash, ''), COALESCE(algo, '')
+		FROM files WHERE path = ?
+	`, path).Scan(&size, &mtimeNs, &hash, &algo)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, "", "", false, nil
+		}
+		return 0, 0, "", "", false, fmt.Errorf("failed to query file scan state: %w", err)
+	}
+	return size, mtimeNs, hash, algo, true, nil
+}
+
+// UpsertFileScanState records the scan state of a file so later scans can skip
+// re-hashing it when size and mtime are unchanged.
+func (t *Tracker) UpsertFileScanState(path string, size int64, mtimeNs int64, hash, algo string) error {
+	now := time.Now()
+	_, err := t.db.Exec(`
+		INSERT INTO files (path, size, mtime_ns, hash, algo, first_seen, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			size = excluded.size,
+			mtime_ns = excluded.mtime_ns,
+			hash = excluded.hash,
+			algo = excluded.algo,
+			last_seen = excluded.last_seen
+	`, path, size, mtimeNs, hash, algo, now, now)
+	if err != nil {
+		return fmt.Errorf("failed to upsert file scan state: %w", err)
+	}
+	return nil
+}
+
+// DeleteFileScanState removes the scan state for a file (e.g. when the source
+// file is deleted from disk).
+func (t *Tracker) DeleteFileScanState(path string) error {
+	_, err := t.db.Exec(`DELETE FROM files WHERE path = ?`, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete file scan state: %w", err)
+	}
+	return nil
+}
+
 // CreateJob inserts a new job into the database
 // Returns error if insertion failed, nil if successful or if job already exists
 func (t *Tracker) CreateJob(job *models.Job) error {
@@ -1471,7 +1517,18 @@ func (t *Tracker) initSchema() error {
 		created_at TIMESTAMP NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS files (
+		path TEXT PRIMARY KEY,
+		size INTEGER NOT NULL,
+		mtime_ns INTEGER NOT NULL,
+		hash TEXT,
+		algo TEXT,
+		first_seen TIMESTAMP NOT NULL,
+		last_seen TIMESTAMP NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+	CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);

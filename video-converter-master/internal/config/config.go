@@ -18,11 +18,17 @@ func LoadMasterConfig(path string) (*models.MasterConfig, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	return parseMasterConfig(data)
+}
+
+// parseMasterConfig decodes YAML config data strictly (unknown fields are
+// rejected) into a MasterConfig.
+func parseMasterConfig(data []byte) (*models.MasterConfig, error) {
 	var cfg models.MasterConfig
 	if len(bytes.TrimSpace(data)) > 0 {
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true)
-		err = dec.Decode(&cfg)
+		err := dec.Decode(&cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}

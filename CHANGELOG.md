@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Master**: Multi-location scanning: multiple source trees run in parallel, each with its own
+  worker pool and settings, manageable at runtime from the Web UI ("Scan Locations" tab) or via
+  `/api/scan-locations` (list, add/update, remove, scan-now) and persisted to the config file.
+- **Master**: `/api/server-settings` and a Server Settings form in the Web UI to persist server,
+  database and logging settings to the config file (applied after restart).
+- **Master**: Config-free startup: the master generates a working default config when none is found.
+
+### Changed
+- **Master**: The initial library scan runs in the background of each scan location's runtime,
+  so the web interface starts immediately instead of waiting for scans to finish.
+- **Master**: `POST /api/server-settings` uses merge semantics: fields left empty keep their
+  current value from the config file, so partial payloads can no longer silently clear the API
+  key or TLS paths.
+- **Build**: Docker builds fetch Go modules with `GOPROXY=direct` first and fall back to the
+  public module proxy, so a single flaky direct fetch no longer fails image builds.
+
+### Fixed
+- **Master**: A scan location's job priority of `0` (low) is no longer silently rewritten to 5;
+  omitting `priority` now means the default (5).
+- **Master**: Scans abort promptly on shutdown or location removal instead of blocking until the
+  full pass finishes, and overlapping scan triggers for the same location are skipped.
+- **Master**: `restart_required` in `GET /api/server-settings` is now a boolean, and the endpoint
+  also documents the config file path (previously the boolean was a human-readable string).
+- **Master**: A warning is logged at startup when no `api_key` is configured, since the
+  scan-locations and server-settings endpoints then accept unauthenticated requests.
+
 ## [0.6.0] - 2026-11-16
 
 ### Fixed
