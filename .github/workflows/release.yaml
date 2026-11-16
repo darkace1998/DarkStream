@@ -1,0 +1,75 @@
+name: Release
+
+# Publishing a release: push a commit to main that sets .release-version to the
+# new version (e.g. "v0.6.0"). The workflow validates the CHANGELOG has a
+# matching section, creates the annotated tag, publishes the GitHub Release with
+# generated notes, and dispatches the Docker Build and Push workflow on the tag
+# so version-tagged images are built. Tags pushed with the Actions GITHUB_TOKEN
+# do not trigger tag workflows, so the Docker build is dispatched explicitly;
+# workflow_dispatch is exempt from the GITHUB_TOKEN recursion rule.
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ '.release-version' ]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read and validate release version
+        id: version
+        run: |
+          version="$(tr -d '[:space:]' < .release-version)"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::.release-version must contain a semantic version like v0.6.0, got '$version'"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
+            echo "::error::tag $version already exists"
+            exit 1
+          fi
+          if ! grep -q "^## \[${version#v}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create annotated tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --verify-tag \
+            --title "$VERSION" \
+            --generate-notes \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$VERSION/CHANGELOG.md) for the full changelog."
+
+      - name: Build version-tagged Docker images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh workflow run docker-build.yaml --ref "$VERSION"

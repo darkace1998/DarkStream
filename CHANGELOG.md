@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-16
+
 ### Fixed
 - **Worker**: Conversions no longer fail on machines without a usable GPU. `use_vulkan: true`
   (the default) is now only honoured when a Vulkan device was actually detected, and a failed
@@ -66,6 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Master**: The per-IP API rate limit is now 600 requests/minute (was 100) to accommodate
   workers running several concurrent jobs or sharing an address.
+- **Build**: The master module now builds with Go 1.26 (go.mod, go.work, Dockerfile and CI pins
+  raised from Go 1.25); CI's test matrix runs Go 1.25 and 1.26 and annotates failing tests.
+- **Dependencies**: `prometheus/client_golang` v1.25.0, `mattn/go-sqlite3` v1.14.53 and
+  `stretchr/testify` v1.12.1 in the master module; `darkace1998/golang-vulkan-api` v1.2.2 in
+  the worker module.
+- **CI**: Repaired the test toolchain matrix and the gosec security scan (25 findings
+  remediated, each module now scanned in its own working directory), and fixed the Docker
+  verify-images jobs that failed on every main push (lowercase GHCR repository name; the
+  all-in-one image is verified with its full command).
+- **Release**: Releases are now automated: pushing a version to `.release-version` on `main`
+  creates the annotated tag, publishes the GitHub Release with generated notes, and dispatches
+  the Docker Build and Push workflow on the tag so version-tagged images are published.
 
 ## [0.5.0] - 2026-08-04
 
