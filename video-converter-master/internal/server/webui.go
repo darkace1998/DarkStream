@@ -149,6 +149,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             <div class="tab" data-tab="processing">⚙️ Processing</div>
             <div class="tab" data-tab="history">📜 History</div>
             <div class="tab" data-tab="workers">👥 Workers</div>
+            <div class="tab" data-tab="locations">📁 Scan Locations</div>
             <div class="tab" data-tab="config">⚙️ Configuration</div>
         </div>
 
@@ -380,6 +381,127 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         </div>
 
         <!-- Configuration Tab -->
+        <!-- Scan Locations Tab -->
+        <div id="locations" class="tab-content">
+            <div class="card">
+                <h2>Scan Locations <button class="btn btn-primary btn-sm refresh-btn" onclick="location.reload()">🔄 Refresh</button></h2>
+                <p style="color: #888; font-size: 0.85em;">Each location is scanned by its own pool of <em>engines</em> parallel workers. Files whose size and modification time are unchanged since the last scan are skipped without being re-read. Locations persist to the config file.</p>
+                <table class="table"{{if not .Locations}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Source Root</th>
+                            <th>Output Base</th>
+                            <th>Engines</th>
+                            <th>Hash</th>
+                            <th>Interval</th>
+                            <th>Watch</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Locations}}
+                        <tr>
+                            <td>{{.ID}}</td>
+                            <td>{{.Name}}</td>
+                            <td><code>{{.RootPath}}</code></td>
+                            <td><code>{{.OutputBase}}</code></td>
+                            <td>{{.Engines}}</td>
+                            <td>{{.HashAlgo}}</td>
+                            <td>{{.ScanInterval}}</td>
+                            <td>{{if .EnableWatch}}yes{{else}}no{{end}}</td>
+                            <td>{{.Priority}}</td>
+                            <td>{{if .Running}}<span style="color:#4caf50;">running</span>{{else}}<span style="color:#f44336;">stopped</span>{{end}}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="scanLocationNow('{{.ID}}')">▶ Scan now</button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteLocation('{{.ID}}')">🗑 Remove</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                {{if not .Locations}}<p>No scan locations configured yet. Add one below.</p>{{end}}
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h2>Add Scan Location</h2>
+                <form id="locationForm">
+                    <div class="grid">
+                        <div class="card">
+                            <h2>Paths</h2>
+                            <div class="form-group">
+                                <label for="locId">ID (slug)</label>
+                                <input type="text" id="locId" placeholder="movies" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locName">Name</label>
+                                <input type="text" id="locName" placeholder="Movies library" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locRoot">Source Root Path</label>
+                                <input type="text" id="locRoot" placeholder="/mnt/storage/videos" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locOutput">Output Base Path</label>
+                                <input type="text" id="locOutput" placeholder="/mnt/storage/converted" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locExtensions">Video Extensions (comma-separated, empty = default)</label>
+                                <input type="text" id="locExtensions" placeholder=".mp4,.mkv,.mov" />
+                            </div>
+                        </div>
+                        <div class="card">
+                            <h2>Scanning</h2>
+                            <div class="form-group">
+                                <label for="locEngines">Scan Engines (parallel workers)</label>
+                                <input type="number" id="locEngines" value="4" min="1" max="64" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locHashAlgo">Hash Algorithm</label>
+                                <select id="locHashAlgo">
+                                    <option value="sha256">SHA-256 (default, strongest)</option>
+                                    <option value="sha1">SHA-1 (faster, less CPU)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="locInterval">Scan Interval (seconds, 0 = watch/startup only)</label>
+                                <input type="number" id="locInterval" value="300" min="0" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locWatch">Watch filesystem (fsnotify)</label>
+                                <select id="locWatch">
+                                    <option value="true" selected>Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="locPriority">Default Job Priority (0-10)</label>
+                                <input type="number" id="locPriority" value="5" min="0" max="10" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locDepth">Recursive Depth (-1 = unlimited)</label>
+                                <input type="number" id="locDepth" value="-1" min="-1" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locDedup">Detect duplicate files</label>
+                                <select id="locDedup">
+                                    <option value="true" selected>Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" id="saveLocationBtn">💾 Save Location</button>
+                        <div class="status" id="locationStatus" style="display:none;"></div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <div id="config" class="tab-content">
             <form id="configForm">
                 <div class="grid">
@@ -543,6 +665,66 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <div class="loading" id="loading"><span class="spinner"></span></div>
                 </div>
             </form>
+
+            <h2 style="margin-top: 30px;">🖥️ Server Settings (persisted)</h2>
+            <p style="color: #888; font-size: 0.85em;">
+                These settings are written to the config file{{if .ServerSettings.ConfigFile}} (<code>{{.ServerSettings.ConfigFile}}</code>){{end}}
+                and apply after the master restarts. If no config file exists, one is generated automatically on startup.
+            </p>
+            <form id="serverSettingsForm">
+                <div class="grid">
+                    <div class="card">
+                        <h2>Server</h2>
+                        <div class="form-group">
+                            <label for="srvHost">Listen Host</label>
+                            <input type="text" id="srvHost" name="srvHost" value="{{.ServerSettings.Host}}" placeholder="0.0.0.0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvPort">Listen Port</label>
+                            <input type="number" id="srvPort" name="srvPort" value="{{.ServerSettings.Port}}" min="1" max="65535" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvApiKey">API Key (leave empty to disable auth)</label>
+                            <input type="password" id="srvApiKey" name="srvApiKey" value="{{.ServerSettings.APIKey}}" autocomplete="off" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvTlsCert">TLS Certificate Path (enables HTTPS)</label>
+                            <input type="text" id="srvTlsCert" name="srvTlsCert" value="{{.ServerSettings.TLSCert}}" placeholder="/etc/darkstream/cert.pem" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvTlsKey">TLS Private Key Path</label>
+                            <input type="text" id="srvTlsKey" name="srvTlsKey" value="{{.ServerSettings.TLSKey}}" placeholder="/etc/darkstream/key.pem" />
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Storage &amp; Logging</h2>
+                        <div class="form-group">
+                            <label for="srvDbPath">Database Path</label>
+                            <input type="text" id="srvDbPath" name="srvDbPath" value="{{.ServerSettings.DatabasePath}}" placeholder="./jobs.db" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvLogLevel">Master Log Level</label>
+                            <select id="srvLogLevel" name="srvLogLevel">
+                                <option value="debug" {{if eq .ServerSettings.LogLevel "debug"}}selected{{end}}>Debug</option>
+                                <option value="info" {{if eq .ServerSettings.LogLevel "info"}}selected{{end}}>Info</option>
+                                <option value="warn" {{if eq .ServerSettings.LogLevel "warn"}}selected{{end}}>Warn</option>
+                                <option value="error" {{if eq .ServerSettings.LogLevel "error"}}selected{{end}}>Error</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="srvLogFormat">Master Log Format</label>
+                            <select id="srvLogFormat" name="srvLogFormat">
+                                <option value="json" {{if eq .ServerSettings.LogFormat "json"}}selected{{end}}>JSON</option>
+                                <option value="text" {{if eq .ServerSettings.LogFormat "text"}}selected{{end}}>Text</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="btn btn-primary" id="saveServerBtn">💾 Save Server Settings</button>
+                    <div class="status" id="serverSettingsStatus" style="display:none;"></div>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -699,6 +881,119 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             loading.classList.remove('show');
             setTimeout(function() { status.style.display = 'none'; }, 3000);
         });
+
+        // Server settings form submission (persisted to the config file, restart required)
+        document.getElementById('serverSettingsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('saveServerBtn');
+            const status = document.getElementById('serverSettingsStatus');
+
+            btn.disabled = true;
+
+            const settings = {
+                host: document.getElementById('srvHost').value.trim(),
+                port: parseInt(document.getElementById('srvPort').value, 10),
+                api_key: document.getElementById('srvApiKey').value,
+                tls_cert: document.getElementById('srvTlsCert').value.trim(),
+                tls_key: document.getElementById('srvTlsKey').value.trim(),
+                database_path: document.getElementById('srvDbPath').value.trim(),
+                log_level: document.getElementById('srvLogLevel').value,
+                log_format: document.getElementById('srvLogFormat').value
+            };
+
+            try {
+                const resp = await authorizedFetch('/api/server-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                const data = await resp.json();
+                status.className = resp.ok ? 'status status-success' : 'status status-error';
+                if (resp.ok) {
+                    status.textContent = data.message || 'Server settings saved to the config file. Restart the master to apply.';
+                } else if (data.errors && data.errors.length) {
+                    status.textContent = 'Error: ' + data.errors.map(function(e) { return e.field + ': ' + e.message; }).join('; ');
+                } else {
+                    status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+            }
+
+            status.style.display = 'block';
+            btn.disabled = false;
+            setTimeout(function() { status.style.display = 'none'; }, 6000);
+        });
+
+        // Scan locations
+        document.getElementById('locationForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('saveLocationBtn');
+            const status = document.getElementById('locationStatus');
+            btn.disabled = true;
+
+            const extRaw = document.getElementById('locExtensions').value.trim();
+            const extensions = extRaw === '' ? [] : extRaw.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+
+            const loc = {
+                id: document.getElementById('locId').value.trim(),
+                name: document.getElementById('locName').value.trim(),
+                root_path: document.getElementById('locRoot').value.trim(),
+                output_base: document.getElementById('locOutput').value.trim(),
+                video_extensions: extensions,
+                engines: parseInt(document.getElementById('locEngines').value, 10) || 4,
+                hash_algo: document.getElementById('locHashAlgo').value,
+                scan_interval_sec: parseInt(document.getElementById('locInterval').value, 10) || 0,
+                enable_watch: document.getElementById('locWatch').value === 'true',
+                priority: parseInt(document.getElementById('locPriority').value, 10) || 5,
+                recursive_depth: parseInt(document.getElementById('locDepth').value, 10),
+                detect_duplicates: document.getElementById('locDedup').value === 'true',
+                skip_hidden_files: true,
+                skip_hidden_dirs: true,
+                replace_source: false,
+                min_file_size: 0,
+                max_file_size: 0
+            };
+
+            try {
+                const resp = await authorizedFetch('/api/scan-locations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loc)
+                });
+                const data = await resp.json();
+                status.className = resp.ok ? 'status status-success' : 'status status-error';
+                if (resp.ok) {
+                    status.textContent = data.message || 'Scan location saved.';
+                    setTimeout(function() { location.reload(); }, 800);
+                } else if (data.errors && data.errors.length) {
+                    status.textContent = 'Error: ' + data.errors.map(function(e) { return e.field + ': ' + e.message; }).join('; ');
+                } else {
+                    status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+            }
+            status.style.display = 'block';
+            btn.disabled = false;
+        });
+
+        async function deleteLocation(id) {
+            if (!confirm('Remove scan location "' + id + '"? Its jobs stay in the queue.')) return;
+            try {
+                const resp = await authorizedFetch('/api/scan-locations?id=' + encodeURIComponent(id), { method: 'DELETE' });
+                if (resp.ok) { location.reload(); } else { alert('Failed to remove location'); }
+            } catch (err) { alert('Network error: ' + err.message); }
+        }
+
+        async function scanLocationNow(id) {
+            try {
+                const resp = await authorizedFetch('/api/scan-locations?scan_now=' + encodeURIComponent(id), { method: 'POST' });
+                if (!resp.ok) { alert('Failed to trigger scan'); }
+            } catch (err) { alert('Network error: ' + err.message); }
+        }
 
         // Update job priority
         async function updatePriority(jobId, currentPriority) {
@@ -1285,9 +1580,24 @@ type DashboardStats struct {
 	Workers    int
 }
 
+// ServerSettingsView carries the persisted server settings to the template.
+type ServerSettingsView struct {
+	Host         string
+	Port         int
+	APIKey       string
+	TLSCert      string
+	TLSKey       string
+	DatabasePath string
+	LogLevel     string
+	LogFormat    string
+	ConfigFile   string
+}
+
 // WebUIData holds data for rendering the web interface
 type WebUIData struct {
 	Config         *config.ActiveConfig
+	ServerSettings ServerSettingsView
+	Locations      []models.LocationStatus
 	Workers        []WorkerInfo
 	Stats          DashboardStats
 	PendingJobs    []*models.Job
@@ -1376,8 +1686,31 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 	// Get worker defaults for display (uses shared helper from http.go)
 	workerDefaults := s.buildRemoteWorkerConfig()
 
+	configFile := ""
+	if s.persister != nil {
+		configFile = s.persister.Path()
+	}
+	serverSettings := ServerSettingsView{
+		Host:         s.masterCfg.Server.Host,
+		Port:         s.masterCfg.Server.Port,
+		APIKey:       s.masterCfg.Server.APIKey,
+		TLSCert:      s.masterCfg.Server.TLSCert,
+		TLSKey:       s.masterCfg.Server.TLSKey,
+		DatabasePath: s.masterCfg.Database.Path,
+		LogLevel:     s.masterCfg.Logging.Level,
+		LogFormat:    s.masterCfg.Logging.Format,
+		ConfigFile:   configFile,
+	}
+
+	var locations []models.LocationStatus
+	if s.locMgr != nil {
+		locations = s.locMgr.List()
+	}
+
 	data := WebUIData{
 		Config:         cfg,
+		ServerSettings: serverSettings,
+		Locations:      locations,
 		Workers:        workerInfos,
 		Stats:          stats,
 		PendingJobs:    pendingJobs,

@@ -17,7 +17,9 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	flag.Parse()
 
-	cfg, err := config.LoadMasterConfig(*configPath)
+	// LoadOrGenerate starts with built-in defaults and generates the config
+	// file (persisting server settings) when it does not exist yet.
+	cfg, err := config.LoadOrGenerate(*configPath)
 	if err != nil {
 		// Use standard log before slog is initialized
 		log.Printf("Failed to load config: %v", err)
@@ -31,6 +33,10 @@ func main() {
 		slog.Error("Failed to initialize coordinator", "error", err)
 		os.Exit(1)
 	}
+
+	// The persister lets the Web UI / API write server-level settings back to
+	// the config file so they survive restarts.
+	coord.SetPersister(config.NewPersister(*configPath))
 
 	err = coord.Start()
 	if err != nil {

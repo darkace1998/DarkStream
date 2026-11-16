@@ -24,6 +24,46 @@ The master configuration file maps to the `MasterConfig` struct in `video-conver
 
 See `video-converter-master/config.yaml.example` for a complete example.
 
+### Starting without a config file
+
+The `-config` flag is optional in practice: if the file does not exist (or is
+empty), the master starts with built-in defaults (`models.DefaultMasterConfig()`)
+and **auto-generates the config file** at the given path. The generated file
+contains only the settings that must persist across restarts (`server`,
+`database`, `logging`) and is written with `0600` permissions because it may
+hold the API key. Conversion and worker defaults stay runtime-editable via the
+Web UI / `/api/config` and are stored in `active-config.json` next to the
+database.
+
+Environment variables override file values on every start (precedence:
+environment > config file > defaults):
+
+| Variable | Overrides |
+|---|---|
+| `DARKSTREAM_SERVER_HOST` | `server.host` |
+| `DARKSTREAM_SERVER_PORT` | `server.port` |
+| `DARKSTREAM_API_KEY` | `server.api_key` |
+| `DARKSTREAM_TLS_CERT` / `DARKSTREAM_TLS_KEY` | `server.tls_cert` / `server.tls_key` |
+| `DARKSTREAM_DB_PATH` | `database.path` |
+| `DARKSTREAM_LOG_LEVEL` (or `LOG_LEVEL`) | `logging.level` |
+| `DARKSTREAM_LOG_FORMAT` (or `LOG_FORMAT`) | `logging.format` |
+
+### Changing server settings at runtime
+
+The Web UI's **Configuration** tab has a *Server Settings* card, and the same
+is available via the API:
+
+```
+GET  /api/server-settings          # current effective server settings + config file path
+POST /api/server-settings          # {host, port, api_key, tls_cert, tls_key, database_path, log_level, log_format}
+```
+
+Both require the API key (`Authorization: Bearer ...`) when one is configured.
+POST validates the input and merges it into the config file (other sections
+are preserved), then responds with `restart_required: true` — server-level
+changes only apply after the master restarts. Note the master refuses to start
+with an `api_key` over plain HTTP; set `tls_cert`/`tls_key` as well.
+
 ### `server` (Maps to `MasterConfig.Server`)
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
@@ -44,6 +84,40 @@ See `video-converter-master/config.yaml.example` for a complete example.
 *   `replace_source`: Replace source file with output. Use with caution.
 *   `detect_duplicates`: Detect and skip duplicate files based on content hash.
 *   `enable_watch`: Watch for filesystem changes using fsnotify.
+*   `locations`: List of scan locations (see below). When empty, the legacy
+    `root_path`/`output_base`/... fields above are migrated into a single
+    `default` location on startup.
+
+### Scan locations (`scanner.locations[]`)
+
+Multiple source trees can be scanned at once, each with its own engine pool.
+Locations can be managed at runtime from the Web UI ("Scan Locations" tab) or
+the API, and are persisted to the config file:
+
+```
+GET    /api/scan-locations                  # list with runtime status
+POST   /api/scan-locations                  # create or update (upsert by id)
+DELETE /api/scan-locations?id=<id>          # stop and remove
+POST   /api/scan-locations?scan_now=<id>    # trigger an immediate scan
+```
+
+| Field | Meaning |
+|---|---|
+| `id` / `name` | Slug (1-64 chars `[a-zA-Z0-9_-]`) and display name |
+| `root_path` / `output_base` | Source tree and output tree for this location |
+| `engines` | Parallel scan workers for this location (1-64, default 4) — match to the disk |
+| `hash_algo` | `sha256` (default) or `sha1`. SHA-1 is faster and less CPU-intensive; workers infer the algorithm from the checksum length, so `sha1` works end-to-end for download verification |
+| `scan_interval` | Periodic rescan interval (e.g. `5m`); `0` = startup/watch events only |
+| `enable_watch` | fsnotify watcher for instant pickup of new files |
+| `video_extensions` | Extensions to convert; everything else is skipped without stat/hash I/O |
+| `recursive_depth`, `min_file_size`, `max_file_size`, `skip_hidden_*`, `replace_source`, `detect_duplicates` | Same semantics as the legacy scanner fields, but per location |
+| `priority` | Default job priority (0-10) for files from this location |
+
+Scan performance notes: files whose size and mtime are unchanged since the last
+scan are recorded in the `files` table and skipped without being re-read, so
+repeat scans are stat-only. Scan duration and per-outcome file counts are
+exported as `darkstream_scanner_scan_duration_seconds` and
+`darkstream_scanner_files_total{location,outcome}` on `/metrics`.
 
 ### `monitoring` (Maps to `MasterConfig.Monitoring`)
 *   `job_timeout`: Maximum time a job can be in processing state (default: 2 hours).

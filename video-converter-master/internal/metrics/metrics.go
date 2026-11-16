@@ -48,6 +48,10 @@ type Metrics struct {
 	BytesDownloaded prometheus.Counter
 	BytesUploaded   prometheus.Counter
 	TransferSpeed   *prometheus.HistogramVec
+
+	// Scanner metrics
+	ScanDuration *prometheus.HistogramVec
+	ScanFiles    *prometheus.CounterVec
 }
 
 // New creates and registers all Prometheus metrics (singleton pattern to avoid double registration)
@@ -191,6 +195,27 @@ func newMetrics() *Metrics {
 			},
 			[]string{"direction"}, // "upload" or "download"
 		),
+
+		// Scanner metrics
+		ScanDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Subsystem: "scanner",
+				Name:      "scan_duration_seconds",
+				Help:      "Duration of a full scan pass per scan location",
+				Buckets:   []float64{0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600},
+			},
+			[]string{"location"},
+		),
+		ScanFiles: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Subsystem: "scanner",
+				Name:      "files_total",
+				Help:      "Files seen per scan location, by outcome (hashed, skipped_unchanged, skipped_output, duplicate, non_video)",
+			},
+			[]string{"location", "outcome"},
+		),
 	}
 
 	// Register all metrics
@@ -209,6 +234,8 @@ func newMetrics() *Metrics {
 		m.BytesDownloaded,
 		m.BytesUploaded,
 		m.TransferSpeed,
+		m.ScanDuration,
+		m.ScanFiles,
 	)
 
 	return m
@@ -301,4 +328,14 @@ func (m *Metrics) RecordBytesUploaded(bytes int64) {
 // RecordTransferSpeed records the transfer speed in bytes per second
 func (m *Metrics) RecordTransferSpeed(direction string, bytesPerSec float64) {
 	m.TransferSpeed.WithLabelValues(direction).Observe(bytesPerSec)
+}
+
+// RecordScan records the outcome of one scan pass of a location.
+func (m *Metrics) RecordScan(locationID string, durationSeconds float64, hashed, skippedUnchanged, skippedOutput, duplicates, nonVideo int) {
+	m.ScanDuration.WithLabelValues(locationID).Observe(durationSeconds)
+	m.ScanFiles.WithLabelValues(locationID, "hashed").Add(float64(hashed))
+	m.ScanFiles.WithLabelValues(locationID, "skipped_unchanged").Add(float64(skippedUnchanged))
+	m.ScanFiles.WithLabelValues(locationID, "skipped_output").Add(float64(skippedOutput))
+	m.ScanFiles.WithLabelValues(locationID, "duplicate").Add(float64(duplicates))
+	m.ScanFiles.WithLabelValues(locationID, "non_video").Add(float64(nonVideo))
 }

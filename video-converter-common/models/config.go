@@ -1,7 +1,10 @@
 // Package models defines data models and configuration structures for the video converter application.
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // LoggingSettings defines logging configuration used by both Master and Worker
 type LoggingSettings struct {
@@ -44,6 +47,11 @@ type MasterConfig struct {
 		ReplaceSource    bool          `yaml:"replace_source"`    // Replace source file with output
 		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
 		EnableWatch      bool          `yaml:"enable_watch"`      // Watch for filesystem changes using fsnotify
+		// Locations is the list of scan locations. Each runs its own pool of
+		// scan engines. When empty, the legacy root_path/output_base fields
+		// above are migrated into a single default location (see
+		// NormalizeScanLocations).
+		Locations []ScanLocation `yaml:"locations"`
 	} `yaml:"scanner"`
 
 	Monitoring struct {
@@ -89,6 +97,149 @@ type MasterConfig struct {
 		LogLevel               string        `yaml:"log_level"`                // Default: info
 		LogFormat              string        `yaml:"log_format"`               // Default: json
 	} `yaml:"worker_defaults"`
+}
+
+// ScanLocation describes one directory tree to scan for convertible videos.
+// Each location runs its own pool of Engines parallel scan workers and its own
+// optional filesystem watcher, so locations on different disks can be scanned
+// at different speeds.
+type ScanLocation struct {
+	ID               string        `json:"id"                yaml:"id"`
+	Name             string        `json:"name"              yaml:"name"`
+	RootPath         string        `json:"root_path"         yaml:"root_path"`
+	OutputBase       string        `json:"output_base"       yaml:"output_base"`
+	Engines          int           `json:"engines"           yaml:"engines"`       // parallel scan workers (default 4)
+	HashAlgo         string        `json:"hash_algo"         yaml:"hash_algo"`     // sha256 (default) or sha1 — faster, less CPU
+	ScanInterval     time.Duration `json:"scan_interval"     yaml:"scan_interval"` // 0 = scan only on startup/watch events
+	EnableWatch      bool          `json:"enable_watch"      yaml:"enable_watch"`  // fsnotify watcher for this location
+	VideoExtensions  []string      `json:"video_extensions"  yaml:"video_extensions"`
+	RecursiveDepth   int           `json:"recursive_depth"   yaml:"recursive_depth"` // -1 unlimited
+	MinFileSize      int64         `json:"min_file_size"     yaml:"min_file_size"`
+	MaxFileSize      int64         `json:"max_file_size"     yaml:"max_file_size"`
+	SkipHiddenFiles  bool          `json:"skip_hidden_files" yaml:"skip_hidden_files"`
+	SkipHiddenDirs   bool          `json:"skip_hidden_dirs"  yaml:"skip_hidden_dirs"`
+	ReplaceSource    bool          `json:"replace_source"    yaml:"replace_source"`
+	DetectDuplicates bool          `json:"detect_duplicates" yaml:"detect_duplicates"`
+	Priority         int           `json:"priority"          yaml:"priority"` // default job priority for files from this location (0-10)
+}
+
+// DefaultScanLocationEngines is the default number of parallel scan workers per location.
+const DefaultScanLocationEngines = 4
+
+// NormalizeScanLocations migrates the legacy single-root scanner settings into
+// the Locations list and fills in per-location defaults. It is idempotent.
+func (c *MasterConfig) NormalizeScanLocations() {
+	s := &c.Scanner
+	if len(s.Locations) == 0 && s.RootPath != "" {
+		s.Locations = []ScanLocation{{
+			ID:               "default",
+			Name:             "Default",
+			RootPath:         s.RootPath,
+			OutputBase:       s.OutputBase,
+			ScanInterval:     s.ScanInterval,
+			EnableWatch:      s.EnableWatch,
+			VideoExtensions:  s.VideoExtensions,
+			RecursiveDepth:   s.RecursiveDepth,
+			MinFileSize:      s.MinFileSize,
+			MaxFileSize:      s.MaxFileSize,
+			SkipHiddenFiles:  s.SkipHiddenFiles,
+			SkipHiddenDirs:   s.SkipHiddenDirs,
+			ReplaceSource:    s.ReplaceSource,
+			DetectDuplicates: s.DetectDuplicates,
+			Priority:         5,
+		}}
+	}
+	for i := range s.Locations {
+		loc := &s.Locations[i]
+		if loc.ID == "" {
+			loc.ID = fmt.Sprintf("loc-%d", i+1)
+		}
+		if loc.Name == "" {
+			loc.Name = loc.ID
+		}
+		if loc.Engines <= 0 {
+			loc.Engines = DefaultScanLocationEngines
+		}
+		if loc.HashAlgo == "" {
+			loc.HashAlgo = "sha256"
+		}
+		if len(loc.VideoExtensions) == 0 {
+			loc.VideoExtensions = s.VideoExtensions
+		}
+		if loc.RecursiveDepth == 0 && s.RecursiveDepth != 0 {
+			loc.RecursiveDepth = s.RecursiveDepth
+		}
+		if loc.RecursiveDepth == 0 {
+			loc.RecursiveDepth = -1
+		}
+		if loc.Priority == 0 {
+			loc.Priority = 5
+		}
+	}
+}
+
+// LocationStatus pairs a scan location with its runtime state.
+type LocationStatus struct {
+	ScanLocation
+	Running bool `json:"running"`
+}
+
+// DefaultMasterConfig returns a MasterConfig populated with sensible defaults.
+// It is used when the master is started without a config file: the effective
+// configuration (defaults + environment overrides) is then written back to a
+// generated config.yaml so the server settings persist across restarts.
+func DefaultMasterConfig() *MasterConfig {
+	cfg := &MasterConfig{}
+
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Port = 8080
+
+	cfg.Scanner.RootPath = "./videos"
+	cfg.Scanner.VideoExtensions = []string{".mp4", ".mkv", ".mov", ".avi", ".flv", ".webm", ".m4v"}
+	cfg.Scanner.OutputBase = "./converted"
+	cfg.Scanner.RecursiveDepth = -1
+	cfg.Scanner.ScanInterval = 5 * time.Minute
+	cfg.Scanner.SkipHiddenFiles = true
+	cfg.Scanner.SkipHiddenDirs = true
+	cfg.Scanner.DetectDuplicates = true
+
+	cfg.Monitoring.JobTimeout = 2 * time.Hour
+	cfg.Monitoring.WorkerHealthInterval = 30 * time.Second
+	cfg.Monitoring.FailedJobRetryInterval = time.Minute
+
+	cfg.Database.Path = "./jobs.db"
+
+	cfg.Conversion = ConversionSettings{
+		TargetResolution: "1920x1080",
+		Codec:            "h264",
+		Bitrate:          "5M",
+		Preset:           "fast",
+		AudioCodec:       "aac",
+		AudioBitrate:     "128k",
+		OutputFormat:     "mp4",
+	}
+
+	cfg.Logging = LoggingSettings{Level: "info", Format: "json"}
+
+	cfg.WorkerDefaults.Concurrency = 3
+	cfg.WorkerDefaults.HeartbeatInterval = 30 * time.Second
+	cfg.WorkerDefaults.JobCheckInterval = 5 * time.Second
+	cfg.WorkerDefaults.JobTimeout = 2 * time.Hour
+	cfg.WorkerDefaults.MaxAPIRequestsPerMin = 60
+	cfg.WorkerDefaults.MaxBackoffInterval = 30 * time.Second
+	cfg.WorkerDefaults.InitialBackoffInterval = time.Second
+	cfg.WorkerDefaults.DownloadTimeout = 30 * time.Minute
+	cfg.WorkerDefaults.UploadTimeout = 30 * time.Minute
+	cfg.WorkerDefaults.MaxCacheSize = 10737418240 // 10GB
+	cfg.WorkerDefaults.CacheCleanupAge = 24 * time.Hour
+	cfg.WorkerDefaults.BandwidthLimit = 0
+	cfg.WorkerDefaults.EnableResumeDownload = true
+	cfg.WorkerDefaults.UseVulkan = true
+	cfg.WorkerDefaults.FFmpegTimeout = 2 * time.Hour
+	cfg.WorkerDefaults.LogLevel = "info"
+	cfg.WorkerDefaults.LogFormat = "json"
+
+	return cfg
 }
 
 // WorkerConfig holds the configuration for worker processes.
