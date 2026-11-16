@@ -130,8 +130,8 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Scan location saved", "id", loc.ID, "root", loc.RootPath, "engines", loc.Engines, "hash_algo", loc.HashAlgo)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"ok":       true,
-		"location": loc,
+		"ok":         true,
+		"location":   loc,
 		fieldMessage: "Scan location saved. It is active now and persisted to the config file.",
 	}); err != nil {
 		slog.Error("Failed to encode scan location response", "error", err)
