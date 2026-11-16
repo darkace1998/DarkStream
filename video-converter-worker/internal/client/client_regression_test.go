@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/darkace1998/video-converter-common/models"
 )
 
 // The master answers 204 on the batch endpoint while the queue is paused.
@@ -69,7 +71,7 @@ func TestUploadSendsWellFormedMultipart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := New(srv.URL, "w1", false).uploadConvertedVideoAttempt("job1", path, nil); err != nil {
+	if err := New(srv.URL, "w1", false).uploadConvertedVideoAttempt("job1", path, nil, nil); err != nil {
 		t.Fatalf("upload failed: %v (server parse error: %v)", err, parseErr)
 	}
 	if parseErr != nil {
@@ -94,7 +96,7 @@ func TestUploadReportsEarlyServerRejection(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- New(srv.URL, "w1", false).uploadConvertedVideoAttempt("job1", path, nil) }()
+	go func() { done <- New(srv.URL, "w1", false).uploadConvertedVideoAttempt("job1", path, nil, nil) }()
 
 	select {
 	case err := <-done:
@@ -131,5 +133,82 @@ func TestConfigFetcherSendsAPIKey(t *testing.T) {
 	}
 	if cfg.TargetResolution != "1280x720" {
 		t.Errorf("unexpected config: %+v", cfg)
+	}
+}
+
+// A 409 on a progress report means the job was cancelled or reassigned.
+func TestReportJobProgressSignalsLostAssignment(t *testing.T) {
+	status := http.StatusConflict
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+
+	mc := New(srv.URL, "w1", false)
+	if err := mc.ReportJobProgress(&models.JobProgress{JobID: "j", WorkerID: "w1"}); !errors.Is(err, ErrJobNoLongerAssigned) {
+		t.Fatalf("expected ErrJobNoLongerAssigned on 409, got %v", err)
+	}
+
+	// Transient trouble (rate limiting, server errors) must not abort the job.
+	for _, transient := range []int{http.StatusOK, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		status = transient
+		if err := mc.ReportJobProgress(&models.JobProgress{JobID: "j", WorkerID: "w1"}); err != nil {
+			t.Errorf("status %d should not signal a lost assignment, got %v", transient, err)
+		}
+	}
+}
+
+// Job requests carry the worker's concurrency, and uploads carry its metadata
+// ahead of the video part.
+func TestClientSendsCapacityAndMetadata(t *testing.T) {
+	var maxJobs, metadata string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/worker/next-job" {
+			maxJobs = r.URL.Query().Get("max_jobs")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for {
+			part, err := reader.NextPart()
+			if err != nil {
+				break
+			}
+			data, _ := io.ReadAll(part)
+			if part.FormName() == "metadata" {
+				metadata = string(data)
+			}
+			if part.FormName() == "video" && metadata == "" {
+				http.Error(w, "metadata must precede the video part", http.StatusBadRequest)
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`{"file_size":1,"status":"completed"}`))
+	}))
+	defer srv.Close()
+
+	mc := New(srv.URL, "w1", false)
+	mc.SetMaxJobs(8)
+	if _, err := mc.GetNextJob(); !errors.Is(err, ErrNoJobsAvailable) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if maxJobs != "8" {
+		t.Errorf("max_jobs = %q, want 8", maxJobs)
+	}
+
+	path := filepath.Join(t.TempDir(), "output.mkv")
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	job := &models.Job{SourceWidth: 1280, SourceVideoCodec: "h264"}
+	if err := mc.uploadConvertedVideoAttempt("job1", path, nil, job); err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if !strings.Contains(metadata, `"source_width":1280`) || !strings.Contains(metadata, `"source_video_codec":"h264"`) {
+		t.Errorf("metadata not sent: %q", metadata)
 	}
 }

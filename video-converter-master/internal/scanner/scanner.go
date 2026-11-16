@@ -28,7 +28,21 @@ type ScanOptions struct {
 	ReplaceSource    bool                                // Replace source file with output (output path = source path)
 	DetectDuplicates bool                                // Track file hashes to detect duplicates
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
+	// KnownOutputChecker optionally reports whether a file with this checksum was
+	// produced by an earlier conversion, in which case it is not a new source.
+	KnownOutputChecker func(checksum string) (bool, error)
 }
+
+// convertedExtensions are the container extensions a conversion may produce.
+var convertedExtensions = []string{extMP4, extMKV, extWebM, extAVI}
+
+// Container file extensions.
+const (
+	extMP4  = ".mp4"
+	extMKV  = ".mkv"
+	extWebM = ".webm"
+	extAVI  = ".avi"
+)
 
 // Scanner discovers video files in a directory tree
 type Scanner struct {
@@ -206,18 +220,9 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 		return nil, nil
 	}
 
-	// Hash the file once; the result serves both duplicate detection and the
-	// job's source checksum (hashing a large video twice doubles the scan I/O).
-	sourceChecksum, hashErr := computeFileHash(fullPath)
-	if hashErr != nil {
-		slog.Warn("Failed to compute source checksum", "path", fullPath, "error", hashErr)
-		// Continue without checksum - it will be empty string
-		sourceChecksum = ""
-	}
-
-	// Detect duplicates if enabled
-	if opts.DetectDuplicates && sourceChecksum != "" && s.isDuplicate(fullPath, sourceChecksum, opts) {
-		return nil, nil // Skip duplicate
+	sourceChecksum, skip := s.checksumUnlessHandled(fullPath, fileInfo, opts)
+	if skip {
+		return nil, nil
 	}
 
 	// Generate output path
@@ -265,6 +270,70 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 
 	slog.Debug("Found video file", "path", fullPath, "job_id", job.ID, "size", fileSize, "checksum", sourceChecksum)
 	return job, nil
+}
+
+// checksumUnlessHandled decides whether fullPath still needs converting. It
+// returns skip=true when the file is already converted, is itself the product
+// of a conversion, or is a duplicate; otherwise it returns the file's checksum
+// (empty if it could not be computed).
+func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, opts ScanOptions) (checksum string, skip bool) {
+	// Skip sources that already have an up-to-date converted file. Without this,
+	// pruning finished jobs (or losing the database) makes the next scan queue
+	// every already-converted video again.
+	if !opts.ReplaceSource && s.hasCurrentOutput(fullPath, fileInfo) {
+		slog.Debug("Skipping file (already converted)", "path", fullPath)
+		return "", true
+	}
+
+	// Hash the file once; the result serves both duplicate detection and the
+	// job's source checksum (hashing a large video twice doubles the scan I/O).
+	checksum, hashErr := computeFileHash(fullPath)
+	if hashErr != nil {
+		slog.Warn("Failed to compute source checksum", "path", fullPath, "error", hashErr)
+		// Continue without checksum - it will be empty string
+		return "", false
+	}
+
+	// A file this system produced itself (e.g. the result of a replace-source
+	// conversion) is not a new source.
+	if opts.KnownOutputChecker != nil {
+		known, checkErr := opts.KnownOutputChecker(checksum)
+		if checkErr != nil {
+			slog.Warn("Failed to check known outputs", "path", fullPath, "error", checkErr)
+		} else if known {
+			slog.Debug("Skipping file (output of an earlier conversion)", "path", fullPath)
+			return "", true
+		}
+	}
+
+	// Detect duplicates if enabled
+	if opts.DetectDuplicates && s.isDuplicate(fullPath, checksum, opts) {
+		return "", true
+	}
+
+	return checksum, false
+}
+
+// hasCurrentOutput reports whether a converted file for the source already
+// exists in the output directory and is at least as new as the source. Any of
+// the supported output containers counts, since the format is configurable.
+func (s *Scanner) hasCurrentOutput(fullPath string, sourceInfo os.FileInfo) bool {
+	relPath, err := filepath.Rel(s.RootPath, fullPath)
+	if err != nil || s.OutputBase == "" {
+		return false
+	}
+	base := filepath.Join(s.OutputBase, strings.TrimSuffix(relPath, filepath.Ext(relPath)))
+	for _, outExt := range convertedExtensions {
+		candidate := base + outExt
+		if candidate == fullPath {
+			continue
+		}
+		info, statErr := os.Stat(candidate)
+		if statErr == nil && !info.IsDir() && info.Size() > 0 && !info.ModTime().Before(sourceInfo.ModTime()) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsOutputPath reports whether path lies inside the output directory when that

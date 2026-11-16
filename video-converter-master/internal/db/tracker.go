@@ -1214,6 +1214,64 @@ func (t *Tracker) MarkJobCancelled(jobID, errorMessage string, expectedStartedAt
 	return matched, nil
 }
 
+// SetJobOutputPath updates where a job's converted output is stored.
+func (t *Tracker) SetJobOutputPath(jobID, outputPath string) error {
+	_, err := t.db.Exec(`UPDATE jobs SET output_path = ? WHERE id = ?`, outputPath, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to update job output path: %w", err)
+	}
+	return nil
+}
+
+// UpdateJobSourceMetadata stores the source video metadata a worker extracted
+// with ffprobe. Only the metadata columns are touched.
+func (t *Tracker) UpdateJobSourceMetadata(job *models.Job) error {
+	_, err := t.db.Exec(`
+		UPDATE jobs SET
+			source_duration = ?, source_width = ?, source_height = ?,
+			source_video_codec = ?, source_audio_codec = ?,
+			source_bitrate = ?, source_file_size = ?
+		WHERE id = ?
+	`, job.SourceDuration, job.SourceWidth, job.SourceHeight,
+		job.SourceVideoCodec, job.SourceAudioCodec,
+		job.SourceBitrate, job.SourceFileSize, job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update job metadata: %w", err)
+	}
+	return nil
+}
+
+// RecordKnownOutput remembers the checksum of a converted file. Unlike the jobs
+// table this record survives pruning, so the scanner can keep recognising files
+// the system produced itself (and not convert them again).
+func (t *Tracker) RecordKnownOutput(checksum, path string) error {
+	if checksum == "" {
+		return nil
+	}
+	_, err := t.db.Exec(`
+		INSERT INTO known_outputs (checksum, path, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(checksum) DO UPDATE SET path = excluded.path
+	`, checksum, path, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to record known output: %w", err)
+	}
+	return nil
+}
+
+// HasKnownOutputChecksum reports whether a file with this checksum was produced
+// by a completed conversion.
+func (t *Tracker) HasKnownOutputChecksum(checksum string) (bool, error) {
+	if checksum == "" {
+		return false, nil
+	}
+	var count int
+	err := t.db.QueryRow(`SELECT COUNT(*) FROM known_outputs WHERE checksum = ?`, checksum).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check known outputs: %w", err)
+	}
+	return count > 0, nil
+}
+
 // Close closes the database connection
 func (t *Tracker) Close() error {
 	err := t.db.Close()
@@ -1405,6 +1463,12 @@ func (t *Tracker) initSchema() error {
 		log_level TEXT DEFAULT 'info',
 		log_format TEXT DEFAULT 'json',
 		updated_at TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS known_outputs (
+		checksum TEXT PRIMARY KEY,
+		path TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

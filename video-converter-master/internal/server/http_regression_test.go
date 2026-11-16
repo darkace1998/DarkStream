@@ -188,3 +188,158 @@ func TestMetricsMiddlewareUsesRoutePattern(t *testing.T) {
 		t.Error("expected unmatched paths to be recorded under endpoint=\"other\"")
 	}
 }
+
+// The upload is stored under the container extension the worker produced, the
+// job follows it, and the reported source metadata is saved.
+func TestUploadVideoAdjustsExtensionAndStoresMetadata(t *testing.T) {
+	srv := newTestServer(t)
+	original := uploadTestJob(t, srv, "upload-mkv")
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("metadata", `{"source_width":1920,"source_height":1080,"source_video_codec":"hevc","source_duration":12.5}`); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("video", "output.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("matroska-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/upload-video?job_id=upload-mkv", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	srv.UploadVideo(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	wantPath := strings.TrimSuffix(original, ".mp4") + ".mkv"
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected output at %s: %v", wantPath, err)
+	}
+	if _, err := os.Stat(original); err == nil {
+		t.Error("a Matroska file was stored under the .mp4 name")
+	}
+
+	job, err := srv.db.GetJobByID("upload-mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.OutputPath != wantPath {
+		t.Errorf("job output path = %s, want %s", job.OutputPath, wantPath)
+	}
+	if job.SourceWidth != 1920 || job.SourceHeight != 1080 || job.SourceVideoCodec != "hevc" || job.SourceDuration != 12.5 {
+		t.Errorf("metadata not stored: %+v", job)
+	}
+	if known, err := srv.db.HasKnownOutputChecksum(job.OutputChecksum); err != nil || !known {
+		t.Errorf("output checksum not recorded as a known output (known=%v err=%v)", known, err)
+	}
+}
+
+func TestOutputPathForUpload(t *testing.T) {
+	cases := []struct{ current, upload, want string }{
+		{"/o/v.mp4", "output.mkv", "/o/v.mkv"},
+		{"/o/w.mp4", "output.mp4", "/o/w.mp4"},
+		{"/o/x.MP4", "output.mp4", "/o/x.MP4"},
+		{"/o/y.mp4", "output.exe", "/o/y.mp4"},
+		{"/o/z.mp4", "", "/o/z.mp4"},
+		{"/out/my.movie.mp4", "output.webm", "/out/my.movie.webm"},
+	}
+	for _, c := range cases {
+		if got := outputPathForUpload(c.current, c.upload); got != c.want {
+			t.Errorf("outputPathForUpload(%q, %q) = %q, want %q", c.current, c.upload, got, c.want)
+		}
+	}
+}
+
+// Progress from a worker that does not hold the job is refused, which is how
+// that worker learns the job was cancelled or reassigned.
+func TestJobProgressRejectsForeignOrFinishedJobs(t *testing.T) {
+	srv := newTestServer(t)
+	uploadTestJob(t, srv, "progress-job") // processing, owned by w1
+
+	post := func(workerID string) int {
+		payload := `{"job_id":"progress-job","worker_id":"` + workerID + `","progress":10,"stage":"convert"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/worker/job-progress", strings.NewReader(payload))
+		rec := httptest.NewRecorder()
+		srv.JobProgress(rec, req)
+		return rec.Code
+	}
+
+	if code := post("w1"); code != http.StatusOK {
+		t.Fatalf("owner's progress rejected: %d", code)
+	}
+	if code := post("someone-else"); code != http.StatusConflict {
+		t.Errorf("foreign worker's progress: got %d, want 409", code)
+	}
+
+	job, _ := srv.db.GetJobByID("progress-job")
+	if updated, err := srv.db.MarkJobCancelled(job.ID, "cancelled", job.StartedAt); err != nil || !updated {
+		t.Fatalf("cancel failed: %v", err)
+	}
+	if code := post("w1"); code != http.StatusConflict {
+		t.Errorf("progress for a cancelled job: got %d, want 409", code)
+	}
+}
+
+func TestWorkerCapacity(t *testing.T) {
+	cases := map[string]int{"": 5, "max_jobs=8": 8, "max_jobs=0": 5, "max_jobs=abc": 5, "max_jobs=9999": 64}
+	for query, want := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/worker/next-job?"+query, nil)
+		if got := workerCapacity(req); got != want {
+			t.Errorf("workerCapacity(%q) = %d, want %d", query, got, want)
+		}
+	}
+}
+
+const regressionAPIKey = "secret-key"
+
+// With an API key configured the HTML pages must not expose job data to
+// requests that do not present it.
+func TestWebUIHidesDataWithoutAPIKey(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = regressionAPIKey
+	uploadTestJob(t, srv, "private-job")
+
+	render := func(path string, withCookie bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if withCookie {
+			req.AddCookie(&http.Cookie{Name: uiAuthCookieName, Value: regressionAPIKey})
+		}
+		rec := httptest.NewRecorder()
+		if strings.HasPrefix(path, "/ui/job") {
+			srv.handleJobDetailsUI(rec, req)
+		} else {
+			srv.ServeWebUI(rec, req)
+		}
+		return rec
+	}
+
+	if rec := render("/", false); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "private-job") {
+		t.Errorf("dashboard leaked job data without a key (status %d)", rec.Code)
+	}
+	if rec := render("/", true); !strings.Contains(rec.Body.String(), "private-job") {
+		t.Error("dashboard did not render job data for an authorised request")
+	}
+	if rec := render("/ui/job?id=private-job", false); rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "private-job.mkv") {
+		t.Errorf("job page not protected (status %d)", rec.Code)
+	}
+	if rec := render("/ui/job?id=private-job", true); rec.Code != http.StatusOK {
+		t.Errorf("job page rejected an authorised request (status %d)", rec.Code)
+	}
+
+	// The cookie must not unlock the API itself.
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.AddCookie(&http.Cookie{Name: uiAuthCookieName, Value: regressionAPIKey})
+	rec := httptest.NewRecorder()
+	srv.GetStats(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("API accepted the UI cookie as a credential (status %d)", rec.Code)
+	}
+}

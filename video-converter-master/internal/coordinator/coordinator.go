@@ -103,6 +103,8 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		ReplaceSource:    cfg.Scanner.ReplaceSource,
 		DetectDuplicates: cfg.Scanner.DetectDuplicates,
 		DuplicateChecker: tracker.HasJobWithSourceChecksum,
+
+		KnownOutputChecker: tracker.HasKnownOutputChecksum,
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)

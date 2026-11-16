@@ -187,6 +187,7 @@ Fetches a single pending job from the queue.
 
 **Query Parameters:**
 - `worker_id` (string, required): The ID of the worker requesting a job.
+- `max_jobs` (integer, optional): The worker's concurrency. The master assigns no job once the worker's reported active jobs reach this value. Defaults to 5, capped at 64.
 
 **Response (200 OK):**
 Returns a JSON object representing the job, or a `204 No Content` if no jobs are available.
@@ -196,7 +197,8 @@ Fetches multiple pending jobs in a single request.
 
 **Query Parameters:**
 - `worker_id` (string, required): The ID of the worker requesting jobs.
-- `count` (integer, optional): The maximum number of jobs to fetch. Defaults to 1, max is 50.
+- `limit` (integer, optional): The maximum number of jobs to fetch. Defaults to 5, max is 20.
+- `max_jobs` (integer, optional): The worker's concurrency, as for `next-job`.
 
 **Response (200 OK):**
 Returns a JSON array of job objects.
@@ -269,6 +271,8 @@ Updates the conversion progress of a job.
   "updated_at": "2025-11-07T20:56:59Z"
 }
 ```
+
+Returns `409 Conflict` (or `404` if the job no longer exists) when the job is not currently being processed by that worker — for example after it was cancelled or requeued. Workers treat this as the signal to stop working on the job.
 
 ### `GET /api/worker/config`
 Retrieves worker configuration settings from the master.

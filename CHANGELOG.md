@@ -46,6 +46,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workers connect to `http://master:8080` instead of `localhost`, the job database lives on the
   `master_db` volume, and converted output has its own volume.
 
+- **Master**: With an API key configured, the dashboard no longer renders job and worker data
+  for unauthenticated requests, and job detail pages require the key. The web UI mirrors the saved
+  key into a `SameSite=Strict` cookie that only the HTML pages accept (never the API).
+- **Master**: Converted files are stored under the extension of the container actually produced
+  (`output_format: mkv` yields `.mkv`, not a Matroska file named `.mp4`); the job's `output_path`
+  follows. In replace-source mode the original is removed when the extension changes.
+- **Master/Worker**: Source video metadata extracted by the worker (resolution, codecs, duration,
+  bitrate, size) is now sent with the upload and stored on the job.
+- **Master/Worker**: Workers report their concurrency (`max_jobs`) with job requests, so the
+  master no longer caps every worker at 5 active jobs.
+- **Master/Worker**: Cancelling, requeuing or reassigning a job stops the worker that is
+  converting it: progress reports for a job the worker no longer holds are answered with `409`,
+  and the worker terminates FFmpeg instead of finishing unwanted work.
+- **Scanner**: Sources that already have an up-to-date converted file are not queued again, and
+  files the system produced itself are recognised by checksum (kept in a `known_outputs` table
+  that survives pruning). Pruning finished jobs therefore no longer triggers reconversion.
+
 ### Changed
 - **Master**: The per-IP API rate limit is now 600 requests/minute (was 100) to accommodate
   workers running several concurrent jobs or sharing an address.

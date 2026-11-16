@@ -107,6 +107,21 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	progressCallback ProgressCallback,
 	log *slog.Logger,
 ) error {
+	return fc.ConvertVideoContext(fc.ctx, job, cfg, progressCallback, log)
+}
+
+// ConvertVideoContext performs the video conversion and stops FFmpeg as soon as
+// ctx is cancelled (for example when the job is cancelled on the master). A nil
+// ctx means no external cancellation.
+//
+//nolint:contextcheck // a nil ctx intentionally falls back to context.Background()
+func (fc *FFmpegConverter) ConvertVideoContext(
+	ctx context.Context,
+	job *models.Job,
+	cfg *models.ConversionConfig,
+	progressCallback ProgressCallback,
+	log *slog.Logger,
+) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -135,7 +150,7 @@ func (fc *FFmpegConverter) ConvertVideoWithProgressLogger(
 	args := fc.buildFFmpegCommand(job, cfg, log)
 
 	// Create context with timeout
-	parent := fc.ctx
+	parent := ctx
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -450,7 +465,10 @@ func (fc *FFmpegConverter) trackProgress(
 		if !strings.HasPrefix(line, "progress=") {
 			continue
 		}
-		if callback != nil && totalDuration > 0 && currentTime > 0 {
+		// Report even before the first frame is out (progress 0): slow encoders
+		// can take a while to get there, and the callback is also how the worker
+		// notices that the job was cancelled.
+		if callback != nil && totalDuration > 0 {
 			progress := (currentTime / totalDuration) * 100.0
 			if progress > 100 {
 				progress = 100

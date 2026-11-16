@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // When the output directory lives inside the scanned root, converted files must
@@ -16,7 +17,7 @@ func TestScanSkipsNestedOutputDirectory(t *testing.T) {
 	}
 	for _, p := range []string{
 		filepath.Join(root, "movie.mkv"),
-		filepath.Join(output, "movie.mp4"),
+		filepath.Join(output, "unrelated.mp4"),
 		filepath.Join(output, "sub", "other.mp4"),
 	} {
 		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
@@ -24,7 +25,7 @@ func TestScanSkipsNestedOutputDirectory(t *testing.T) {
 		}
 	}
 
-	s := New(root, []string{".mkv", extMP4}, output)
+	s := New(root, []string{extMKV, extMP4}, output)
 	jobs, err := s.ScanDirectory()
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func TestScanSkipsNestedOutputDirectory(t *testing.T) {
 	}
 
 	// The watcher path goes through ProcessFile directly.
-	if job, _ := s.ProcessFile(filepath.Join(output, "movie.mp4")); job != nil {
+	if job, _ := s.ProcessFile(filepath.Join(output, "unrelated.mp4")); job != nil {
 		t.Error("ProcessFile created a job for a converted output file")
 	}
 }
@@ -71,5 +72,66 @@ func TestIsOutputPath(t *testing.T) {
 	replace.SetOptions(opts)
 	if replace.IsOutputPath(filepath.Join(root, "out", "a.mp4")) {
 		t.Error("replace-source mode must not exclude the output directory")
+	}
+}
+
+// A source whose converted file already exists must not be queued again (for
+// example after finished jobs were pruned), unless the source is newer.
+func TestScanSkipsAlreadyConvertedSources(t *testing.T) {
+	root := t.TempDir()
+	output := t.TempDir()
+	source := filepath.Join(root, "show", "episode.mkv")
+	converted := filepath.Join(output, "show", "episode.webm") // any output container counts
+	for _, p := range []string{source, converted} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := New(root, []string{extMKV}, output)
+	jobs, err := s.ScanDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("already converted source was queued again: %s", jobs[0].SourcePath)
+	}
+
+	// The source changes after the conversion: it needs converting again.
+	newer := time.Now().Add(time.Hour)
+	if err := os.Chtimes(source, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = s.ScanDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected the modified source to be queued, got %d jobs", len(jobs))
+	}
+}
+
+// Files the system produced itself are recognised by checksum.
+func TestScanSkipsKnownOutputs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "replaced.mp4"), []byte("converted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(root, []string{extMP4}, root)
+	opts := s.GetOptions()
+	opts.ReplaceSource = true
+	opts.KnownOutputChecker = func(string) (bool, error) { return true, nil }
+	s.SetOptions(opts)
+
+	jobs, err := s.ScanDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatal("a known conversion output was queued as a new source")
 	}
 }

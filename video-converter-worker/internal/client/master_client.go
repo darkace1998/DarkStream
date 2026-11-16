@@ -67,7 +67,19 @@ type MasterClient struct {
 	enableResumeDownload bool
 	apiKey               string
 	ctx                  context.Context // optional; used to abort retry backoff on shutdown
+	maxJobs              int             // concurrency reported to the master for load balancing
 }
+
+// SetMaxJobs sets the number of concurrent jobs this worker runs. It is sent
+// with job requests so the master does not cap the worker below its capacity.
+func (mc *MasterClient) SetMaxJobs(maxJobs int) {
+	mc.maxJobs = maxJobs
+}
+
+// ErrJobNoLongerAssigned is returned by ReportJobProgress when the master says
+// the job is not (or no longer) being processed by this worker - it was
+// cancelled, requeued, reassigned or deleted - so work on it should stop.
+var ErrJobNoLongerAssigned = errors.New("job is no longer assigned to this worker")
 
 // SetContext wires a context whose cancellation aborts inter-attempt retry
 // backoff and in-flight HTTP requests, so a download/upload/heartbeat does not
@@ -129,6 +141,7 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-job", url.Values{
 		paramWorkerID:   {mc.workerID},
 		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
+		"max_jobs":      {fmt.Sprintf("%d", mc.maxJobs)},
 	})
 
 	if err != nil {
@@ -191,6 +204,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-jobs", url.Values{
 		paramWorkerID:   {mc.workerID},
 		"gpu_available": {fmt.Sprintf("%t", mc.gpuAvailable)},
+		"max_jobs":      {fmt.Sprintf("%d", mc.maxJobs)},
 		"limit":         {fmt.Sprintf("%d", limit)},
 	})
 
@@ -344,8 +358,6 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 }
 
 // SendHeartbeat sends a heartbeat to the master
-//
-//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		slog.Error("Refusing to send heartbeat", "error", err)
@@ -393,27 +405,29 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 
 // ReportJobProgress reports job progress to the master
 //
-//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
-func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
+// It returns ErrJobNoLongerAssigned when the master reports that the job is not
+// being processed by this worker any more; every other problem is transient,
+// logged, and reported as nil so a flaky connection never aborts a conversion.
+func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		slog.Error("Refusing to send job progress", "error", err)
-		return
+		return nil
 	}
 	body, err := json.Marshal(progress)
 	if err != nil {
 		slog.Error("Failed to marshal job progress", "error", err)
-		return
+		return nil
 	}
 
 	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-progress", nil)
 	if err != nil {
 		slog.Error("Failed to build job progress request URL", "error", err)
-		return
+		return nil
 	}
 	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("Failed to create job progress request", "error", err)
-		return
+		return nil
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -422,7 +436,7 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 	resp, err := mc.client.Do(req)
 	if err != nil {
 		slog.Error("Failed to send job progress", "error", err)
-		return
+		return nil
 	}
 	defer func() {
 		cerr := resp.Body.Close()
@@ -433,10 +447,14 @@ func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusNotFound {
+			return ErrJobNoLongerAssigned
+		}
 		slog.Warn("Job progress response status not OK",
 			"status", resp.StatusCode,
 			"body", string(body))
 	}
+	return nil
 }
 
 // httpStatusError signals a non-success HTTP response and carries the status
@@ -464,8 +482,6 @@ func isPermanentHTTPError(err error) bool {
 }
 
 // DownloadSourceVideo downloads the source video file from the master
-//
-//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) DownloadSourceVideo(jobID, outputPath string) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
@@ -574,9 +590,14 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 }
 
 // UploadConvertedVideo uploads the converted video file to the master
-//
-//nolint:dupl // parallel download/upload retry loops, kept separate for clarity
 func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
+	return mc.UploadConvertedVideoWithMetadata(jobID, filePath, nil)
+}
+
+// UploadConvertedVideoWithMetadata uploads the converted video together with
+// the source metadata extracted for the job (may be nil), which the master
+// stores alongside the job.
+func (mc *MasterClient) UploadConvertedVideoWithMetadata(jobID, filePath string, metadata *models.Job) error {
 	// Retry logic with exponential backoff
 	maxRetries := 3
 	baseDelay := 2 * time.Second
@@ -593,7 +614,7 @@ func (mc *MasterClient) UploadConvertedVideo(jobID, filePath string) error {
 			}
 		}
 
-		err := mc.uploadConvertedVideoAttempt(jobID, filePath, nil)
+		err := mc.uploadConvertedVideoAttempt(jobID, filePath, nil, metadata)
 		if err == nil {
 			return nil
 		}
@@ -716,7 +737,7 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 			}
 		}
 
-		err := mc.uploadConvertedVideoAttempt(jobID, filePath, progressCallback)
+		err := mc.uploadConvertedVideoAttempt(jobID, filePath, progressCallback, nil)
 		if err == nil {
 			return nil
 		}
@@ -896,8 +917,67 @@ func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, pro
 	return nil
 }
 
+// writeUploadMetadata adds the job's source metadata as a JSON form field.
+func writeUploadMetadata(writer *multipart.Writer, job *models.Job) error {
+	payload, err := json.Marshal(map[string]any{
+		"source_duration":    job.SourceDuration,
+		"source_width":       job.SourceWidth,
+		"source_height":      job.SourceHeight,
+		"source_video_codec": job.SourceVideoCodec,
+		"source_audio_codec": job.SourceAudioCodec,
+		"source_bitrate":     job.SourceBitrate,
+		"source_file_size":   job.SourceFileSize,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode job metadata: %w", err)
+	}
+	if err := writer.WriteField("metadata", string(payload)); err != nil {
+		return fmt.Errorf("failed to write job metadata: %w", err)
+	}
+	return nil
+}
+
+// writeUploadBody writes the complete multipart body of an upload: optional
+// metadata first (the master reads the body as a stream and stops at the video
+// part), then the video, then the terminating boundary.
+func (mc *MasterClient) writeUploadBody(
+	writer *multipart.Writer, file io.Reader, fileSize int64, fileName string,
+	progressCallback ProgressCallback, metadata *models.Job,
+) error {
+	if metadata != nil {
+		if err := writeUploadMetadata(writer, metadata); err != nil {
+			return err
+		}
+	}
+
+	part, err := writer.CreateFormFile("video", fileName)
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Wrap file reader with throttling and progress tracking
+	reader := file
+	if mc.bandwidthLimit > 0 {
+		reader = NewThrottledReader(reader, mc.bandwidthLimit)
+	}
+	if progressCallback != nil {
+		reader = NewProgressReader(reader, fileSize, progressCallback)
+	}
+	if _, err := io.Copy(part, reader); err != nil {
+		return fmt.Errorf("failed to copy file to multipart: %w", err)
+	}
+
+	// The multipart writer must be closed BEFORE the pipe: closing it emits the
+	// terminating boundary, and without that the server sees a truncated body
+	// and rejects the upload.
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to finish multipart body: %w", err)
+	}
+	return nil
+}
+
 // uploadConvertedVideoAttempt performs a single upload attempt with optional progress tracking
-func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, progressCallback ProgressCallback) error {
+func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, progressCallback ProgressCallback, metadata *models.Job) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		return err
 	}
@@ -930,34 +1010,7 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	// Start goroutine to write multipart data
 	errChan := make(chan error, 1)
 	go func() {
-		writeErr := func() error {
-			part, partErr := multipartWriter.CreateFormFile("video", filepath.Base(filePath))
-			if partErr != nil {
-				return fmt.Errorf("failed to create form file: %w", partErr)
-			}
-
-			// Wrap file reader with progress tracking
-			var reader io.Reader = file
-			if mc.bandwidthLimit > 0 {
-				reader = NewThrottledReader(reader, mc.bandwidthLimit)
-			}
-			if progressCallback != nil {
-				reader = NewProgressReader(reader, fileSize, progressCallback)
-			}
-
-			if _, copyErr := io.Copy(part, reader); copyErr != nil {
-				return fmt.Errorf("failed to copy file to multipart: %w", copyErr)
-			}
-
-			// The multipart writer must be closed BEFORE the pipe: closing it
-			// emits the terminating boundary, and without that the server sees a
-			// truncated body and rejects the upload.
-			if closeErr := multipartWriter.Close(); closeErr != nil {
-				return fmt.Errorf("failed to finish multipart body: %w", closeErr)
-			}
-			return nil
-		}()
-
+		writeErr := mc.writeUploadBody(multipartWriter, file, fileSize, filepath.Base(filePath), progressCallback, metadata)
 		// Closing with an error makes the HTTP client abort the request instead
 		// of sending a body that merely looks complete.
 		_ = pipeWriter.CloseWithError(writeErr)
