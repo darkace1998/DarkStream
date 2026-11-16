@@ -51,7 +51,7 @@ func (s *Server) GetServerSettings(w http.ResponseWriter, r *http.Request) {
 		configFile = s.persister.Path()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	resp := map[string]any{
 		"host":             cfg.Server.Host,
 		"port":             cfg.Server.Port,
@@ -72,6 +72,7 @@ func (s *Server) GetServerSettings(w http.ResponseWriter, r *http.Request) {
 // UpdateServerSettings validates and persists server settings to the config
 // file. The running process is not reconfigured; a restart is required.
 func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "server-settings.update", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
 	if s.persister == nil {
 		http.Error(w, "Server settings persistence is not configured", http.StatusServiceUnavailable)
 		return
@@ -86,7 +87,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if validationErrs := validateServerSettings(req); validationErrs != nil {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"error":     "validation failed",
@@ -116,7 +117,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Server settings persisted to config file (restart required to apply)",
 		"path", s.persister.Path(), "host", req.Host, "port", req.Port)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"ok":               true,
 		"persisted_to":     s.persister.Path(),

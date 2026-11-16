@@ -35,6 +35,7 @@ type ScanOptions struct {
 	ReplaceSource    bool                                // Replace source file with output (output path = source path)
 	DetectDuplicates bool                                // Track file hashes to detect duplicates
 	HashAlgo         string                              // sha256 (default) or sha1 — sha1 is faster and less CPU-intensive
+	HashMode         string                              // "full" (default) hashes files; "skip" never reads file contents (no source checksum, no content dedup)
 	Priority         int                                 // Default priority for jobs created by this scanner (0-10)
 	FileStore        FileStore                           // Optional store enabling unchanged-file skip
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
@@ -276,13 +277,28 @@ func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, o
 		algo = utils.HashAlgoSHA256
 	}
 
+	// hash_mode=skip: trust size+mtime change detection and never read the
+	// file at scan time. The job is created without a source checksum (the
+	// worker then skips download verification) and content-hash duplicate
+	// detection is disabled.
+	if opts.HashMode == models.HashModeSkip {
+		s.bump(func(st *ScanStats) { st.Hashed += 0 }) // no hashing
+		if opts.FileStore != nil {
+			if storeErr := opts.FileStore.UpsertFileScanState(fullPath, fileInfo.Size(), fileInfo.ModTime().UnixNano(), "", models.HashModeSkip); storeErr != nil {
+				slog.Warn("Failed to store file scan state", "path", fullPath, "error", storeErr)
+			}
+		}
+		s.bump(func(st *ScanStats) { st.SkippedUnchanged++ })
+		return "", models.HashModeSkip, false
+	}
+
 	// Change detection: if size and mtime match the stored record, reuse the
 	// stored hash instead of reading the whole file again.
 	if opts.FileStore != nil {
 		size, mtimeNs, storedHash, storedAlgo, ok, storeErr := opts.FileStore.GetFileScanState(fullPath)
 		if storeErr != nil {
 			slog.Warn("Failed to read file scan state", "path", fullPath, "error", storeErr)
-		} else if ok && storedHash != "" && size == fileInfo.Size() && mtimeNs == fileInfo.ModTime().UnixNano() {
+		} else if ok && (storedHash != "" || storedAlgo == models.HashModeSkip) && size == fileInfo.Size() && mtimeNs == fileInfo.ModTime().UnixNano() {
 			s.bump(func(st *ScanStats) { st.SkippedUnchanged++ })
 			checksum, algo = storedHash, storedAlgo
 			return s.dedupAndFinish(fullPath, checksum, algo, opts)

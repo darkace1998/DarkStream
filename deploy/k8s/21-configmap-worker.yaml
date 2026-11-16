@@ -1,0 +1,52 @@
+# Worker configuration template. Mounted as worker-config.yaml.tpl and rendered
+# by the DaemonSet entrypoint, which substitutes __MASTER_API_KEY__ (from the
+# Secret) and __WORKER_ID__ (from the node name) before starting the worker.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: darkstream-worker-config
+  namespace: darkstream
+data:
+  worker-config.yaml.tpl: |
+    worker:
+      id: "__WORKER_ID__"
+      master_url: "http://darkstream-master.darkstream.svc.cluster.local:8080"
+      api_key: "__MASTER_API_KEY__"
+      concurrency: 2
+      heartbeat_interval: "30s"
+      job_check_interval: "5s"
+      job_timeout: "2h"
+      max_api_requests_per_min: 120
+      max_backoff_interval: "30s"
+      initial_backoff_interval: "1s"
+    storage:
+      mount_path: "/media"
+      download_timeout: "30m"
+      upload_timeout: "30m"
+      cache_path: "/cache"
+      # Chunked parallel upload of converted files (master reassembles).
+      # 0 disables it and falls back to a single-stream multipart upload.
+      chunk_size: 33554432 # 32 MiB
+      max_cache_size: 21474836480 # 20 GiB
+      cache_cleanup_age: "24h"
+      bandwidth_limit: 0 # bytes/sec, 0 = unlimited
+      enable_resume_download: true
+    ffmpeg:
+      path: "ffmpeg"
+      use_vulkan: true
+      timeout: "2h"
+    vulkan:
+      preferred_device: "auto"
+      enable_validation: false
+    logging:
+      level: "info"
+      format: "json"
+      output_path: "" # stdout in Kubernetes; ship via the cluster log pipeline
+    conversion:
+      target_resolution: "1920x1080"
+      codec: "h264"
+      bitrate: "5M"
+      preset: "fast"
+      audio_codec: "aac"
+      audio_bitrate: "128k"
+      output_format: "mp4"

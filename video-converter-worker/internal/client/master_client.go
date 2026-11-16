@@ -64,6 +64,7 @@ type MasterClient struct {
 	downloadTimeout      time.Duration
 	uploadTimeout        time.Duration
 	bandwidthLimit       int64 // bytes per second (0 = unlimited)
+	chunkSize            int64 // chunk size in bytes for chunked uploads (0 = disabled)
 	enableResumeDownload bool
 	apiKey               string
 	ctx                  context.Context // optional; used to abort retry backoff on shutdown

@@ -1,0 +1,84 @@
+# Workers run as a DaemonSet so every node with media can convert locally.
+# The worker renders its config from a template, substituting the API key
+# from the Secret at startup (the config loader has KnownFields(true), so the
+# key cannot be injected any other way). If you run the master without an API
+# key you can instead use remote config mode: args: ["-url", "http://darkstream-master:8080"]
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: darkstream-worker
+  namespace: darkstream
+  labels:
+    app.kubernetes.io/name: darkstream
+    app.kubernetes.io/component: worker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: darkstream
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: darkstream
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: darkstream:latest # docker build -t darkstream:latest --target worker .
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              sed "s|__MASTER_API_KEY__|${DARKSTREAM_MASTER_API_KEY}|g;
+                  s|__WORKER_ID__|${HOSTNAME}|g"
+              /etc/darkstream/worker-config.yaml.tpl > /tmp/worker-config.yaml
+              && exec /app/video-converter-worker -config /tmp/worker-config.yaml
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DARKSTREAM_MASTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: darkstream-secrets
+                  key: master-api-key
+          volumeMounts:
+            - name: config
+              mountPath: /etc/darkstream/worker-config.yaml.tpl
+              subPath: worker-config.yaml.tpl
+              readOnly: true
+            - name: media
+              mountPath: /media
+            - name: cache
+              mountPath: /cache
+          # Workers need ffmpeg + GPU access; keep probes light.
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "pgrep -f video-converter-worker >/dev/null"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "8"
+              memory: 8Gi
+          securityContext:
+            # ffmpeg/Vulkan need device access on many nodes; tighten per site.
+            privileged: false
+      volumes:
+        - name: config
+          configMap:
+            name: darkstream-worker-config
+        - name: media
+          hostPath:
+            path: /srv/media
+            type: Directory
+        - name: cache
+          emptyDir:
+            sizeLimit: 20Gi
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule

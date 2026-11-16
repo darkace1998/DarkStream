@@ -14,6 +14,16 @@ const (
 	testJobID = "test-job-123"
 	// flagStatus is the status-filter flag shared by the bulk command tests.
 	flagStatus = "--status"
+	// flagFormat is the output-format flag shared by the display commands.
+	flagFormat = "--format"
+	// flagLimit is the page-size flag shared by the list commands.
+	flagLimit = "--limit"
+	// flagPriority is the job-priority flag used by submit/priority.
+	flagPriority = "--priority"
+	// flagJobID is the job-id flag shared by the single-job commands.
+	flagJobID = "--job-id"
+	// formatJSON is the JSON output format value used across format flags.
+	formatJSON = "json"
 )
 
 func TestNewMasterRequest_RejectsInsecureAuthTransport(t *testing.T) {

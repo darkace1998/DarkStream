@@ -42,10 +42,10 @@ func TestJob(t *testing.T) {
 	os.Stdout = w
 
 	// Test success json
-	Job([]string{flagMasterURL, ts.URL, "--job-id", testJobID, "--format", "json"})
+	Job([]string{flagMasterURL, ts.URL, flagJobID, testJobID, flagFormat, formatJSON})
 
 	// Test not found
-	Job([]string{flagMasterURL, ts.URL, "--job-id", "not-found"})
+	Job([]string{flagMasterURL, ts.URL, flagJobID, "not-found"})
 
 	// Restore stdout
 	_ = w.Close()

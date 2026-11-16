@@ -64,7 +64,9 @@ func New(dbPath string) (*Tracker, error) {
 
 // NewWithConfig creates a new database tracker instance with custom connection pool configuration
 func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	// WAL + busy_timeout let the parallel scan engines, watchers and HTTP
+	// handlers write concurrently without SQLITE_BUSY failures.
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -1320,11 +1322,63 @@ func (t *Tracker) HasKnownOutputChecksum(checksum string) (bool, error) {
 
 // Close closes the database connection
 func (t *Tracker) Close() error {
+	// Best-effort ANALYZE so the query planner has fresh stats after big scans.
+	_, _ = t.db.Exec(`PRAGMA optimize`)
 	err := t.db.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close database: %w", err)
 	}
 	return nil
+}
+
+// Ping checks database connectivity (used by readiness probes).
+func (t *Tracker) Ping() error {
+	return t.db.Ping()
+}
+
+// AuditEntry is one row of the audit log.
+type AuditEntry struct {
+	ID     int64     `json:"id"`
+	TS     time.Time `json:"ts"`
+	Actor  string    `json:"actor"`
+	Action string    `json:"action"`
+	Detail string    `json:"detail,omitempty"`
+}
+
+// RecordAudit appends an audit log entry (actor/action changes to config,
+// queue, workers, jobs).
+func (t *Tracker) RecordAudit(actor, action, detail string) error {
+	_, err := t.db.Exec(`INSERT INTO audit_log (ts, actor, action, detail) VALUES (?, ?, ?, ?)`,
+		time.Now(), actor, action, detail)
+	if err != nil {
+		return fmt.Errorf("failed to record audit entry: %w", err)
+	}
+	return nil
+}
+
+// GetAuditLog returns the most recent audit entries, newest first.
+func (t *Tracker) GetAuditLog(limit int) ([]AuditEntry, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := t.db.Query(`
+		SELECT id, ts, actor, action, COALESCE(detail, '')
+		FROM audit_log ORDER BY id DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query audit log: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	entries := make([]AuditEntry, 0, limit)
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail); err != nil {
+			return nil, fmt.Errorf("failed to scan audit entry: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 // UpdateJobProgress updates the progress of a job
@@ -1527,8 +1581,18 @@ func (t *Tracker) initSchema() error {
 		last_seen TIMESTAMP NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS audit_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts TIMESTAMP NOT NULL,
+		actor TEXT NOT NULL,
+		action TEXT NOT NULL,
+		detail TEXT
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+	CREATE INDEX IF NOT EXISTS idx_jobs_source_path ON jobs(source_path);
 	CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
+	CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);

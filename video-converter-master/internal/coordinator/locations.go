@@ -84,6 +84,7 @@ func (m *LocationManager) Add(loc models.ScanLocation) error {
 		ReplaceSource:      loc.ReplaceSource,
 		DetectDuplicates:   loc.DetectDuplicates,
 		HashAlgo:           loc.HashAlgo,
+		HashMode:           loc.HashMode,
 		Priority:           loc.Priority,
 		FileStore:          m.db, // *db.Tracker implements scanner.FileStore
 		DuplicateChecker:   m.db.HasJobWithSourceChecksum,

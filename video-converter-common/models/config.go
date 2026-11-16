@@ -24,6 +24,12 @@ type ConversionSettings struct {
 	OutputFormat     string `json:"output_format" yaml:"output_format"` // mp4, mkv, webm, avi
 }
 
+// Hash modes for scan locations (ScanLocation.HashMode).
+const (
+	HashModeFull = "full" // hash every changed video at scan time (default)
+	HashModeSkip = "skip" // never read file contents at scan time; trust size+mtime
+)
+
 // MasterConfig holds the configuration for the master coordinator service.
 type MasterConfig struct {
 	Server struct {
@@ -32,6 +38,9 @@ type MasterConfig struct {
 		APIKey  string `yaml:"api_key"`  // API key for worker authentication
 		TLSCert string `yaml:"tls_cert"` // Path to TLS certificate file (enables HTTPS when set)
 		TLSKey  string `yaml:"tls_key"`  // Path to TLS private key file
+		// WorkerTokens maps worker_id -> bearer token. Tokens are accepted on
+		// /api/worker/* routes only, enabling per-worker revocation/rotation.
+		WorkerTokens map[string]string `yaml:"worker_tokens"`
 	} `yaml:"server"`
 
 	Scanner struct {
@@ -110,6 +119,7 @@ type ScanLocation struct {
 	OutputBase       string        `json:"output_base"       yaml:"output_base"`
 	Engines          int           `json:"engines"           yaml:"engines"`       // parallel scan workers (default 4)
 	HashAlgo         string        `json:"hash_algo"         yaml:"hash_algo"`     // sha256 (default) or sha1 — faster, less CPU
+	HashMode         string        `json:"hash_mode"         yaml:"hash_mode"`     // full (default) or skip — skip never reads file contents at scan time
 	ScanInterval     time.Duration `json:"scan_interval"     yaml:"scan_interval"` // 0 = scan only on startup/watch events
 	EnableWatch      bool          `json:"enable_watch"      yaml:"enable_watch"`  // fsnotify watcher for this location
 	VideoExtensions  []string      `json:"video_extensions"  yaml:"video_extensions"`
@@ -162,6 +172,9 @@ func (c *MasterConfig) NormalizeScanLocations() {
 		}
 		if loc.HashAlgo == "" {
 			loc.HashAlgo = "sha256"
+		}
+		if loc.HashMode == "" {
+			loc.HashMode = HashModeFull
 		}
 		if len(loc.VideoExtensions) == 0 {
 			loc.VideoExtensions = s.VideoExtensions
@@ -262,7 +275,7 @@ type WorkerConfig struct {
 		DownloadTimeout      time.Duration `yaml:"download_timeout"`
 		UploadTimeout        time.Duration `yaml:"upload_timeout"`
 		CachePath            string        `yaml:"cache_path"`
-		ChunkSize            int           `yaml:"chunk_size"`             // Reserved for future chunked streaming; currently unused
+		ChunkSize            int           `yaml:"chunk_size"`             // Chunk size in bytes for parallel chunked uploads (0 = single-stream upload)
 		MaxCacheSize         int64         `yaml:"max_cache_size"`         // Maximum cache size in bytes (0 = unlimited)
 		CacheCleanupAge      time.Duration `yaml:"cache_cleanup_age"`      // Age after which cached files are cleaned up
 		BandwidthLimit       int64         `yaml:"bandwidth_limit"`        // Bandwidth limit in bytes per second (0 = unlimited)

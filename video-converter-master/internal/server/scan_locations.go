@@ -26,6 +26,7 @@ type scanLocationRequest struct {
 	OutputBase       string   `json:"output_base"`
 	Engines          int      `json:"engines"`
 	HashAlgo         string   `json:"hash_algo"`
+	HashMode         string   `json:"hash_mode"`
 	ScanIntervalSec  int64    `json:"scan_interval_sec"`
 	EnableWatch      bool     `json:"enable_watch"`
 	VideoExtensions  []string `json:"video_extensions"`
@@ -67,13 +68,14 @@ func (s *Server) HandleScanLocations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listScanLocations(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{"locations": s.locMgr.List()}); err != nil {
 		slog.Error("Failed to encode scan locations", "error", err)
 	}
 }
 
 func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "scan-location.upsert", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
 	const maxBodySize = 64 << 10
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var req scanLocationRequest
@@ -84,7 +86,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 
 	loc, verrs := req.toModel()
 	if verrs != nil {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		if err := json.NewEncoder(w).Encode(map[string]any{"error": "validation failed", fieldErrors: verrs.Errors}); err != nil {
 			slog.Error("Failed to encode validation errors", "error", err)
@@ -128,7 +130,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("Scan location saved", "id", loc.ID, "root", loc.RootPath, "engines", loc.Engines, "hash_algo", loc.HashAlgo)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"ok":       true,
 		"location": loc,
@@ -139,6 +141,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteScanLocation(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "scan-location.delete", r.Method+" "+r.URL.Path+" "+r.URL.RawQuery)
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		http.Error(w, "Missing id query parameter", http.StatusBadRequest)
@@ -158,7 +161,7 @@ func (s *Server) deleteScanLocation(w http.ResponseWriter, r *http.Request) {
 			slog.Error("Failed to persist scan locations to config file", "error", perr)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": id}); err != nil {
 		slog.Error("Failed to encode response", "error", err)
 	}
@@ -169,7 +172,7 @@ func (s *Server) scanLocationNow(w http.ResponseWriter, _ *http.Request, id stri
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "scanning": id}); err != nil {
 		slog.Error("Failed to encode response", "error", err)
 	}
@@ -184,6 +187,7 @@ func (req *scanLocationRequest) toModel() (models.ScanLocation, *config.Validati
 		OutputBase:       req.OutputBase,
 		Engines:          req.Engines,
 		HashAlgo:         req.HashAlgo,
+		HashMode:         req.HashMode,
 		ScanInterval:     time.Duration(req.ScanIntervalSec) * time.Second,
 		EnableWatch:      req.EnableWatch,
 		VideoExtensions:  req.VideoExtensions,
@@ -216,6 +220,17 @@ func (req *scanLocationRequest) toModel() (models.ScanLocation, *config.Validati
 	if loc.Engines < 1 || loc.Engines > 64 {
 		add("engines", "must be between 1 and 64")
 	}
+	validateHashSettings(&loc, add)
+	validateScanTuning(&loc, add)
+
+	if len(errs) > 0 {
+		return loc, &config.ValidationErrors{Errors: errs}
+	}
+	return loc, nil
+}
+
+// validateHashSettings normalizes and validates hash_algo/hash_mode.
+func validateHashSettings(loc *models.ScanLocation, add func(field, msg string)) {
 	switch loc.HashAlgo {
 	case "", utils.HashAlgoSHA256, utils.HashAlgoSHA1:
 		if loc.HashAlgo == "" {
@@ -224,6 +239,18 @@ func (req *scanLocationRequest) toModel() (models.ScanLocation, *config.Validati
 	default:
 		add("hash_algo", "must be sha256 or sha1")
 	}
+	switch loc.HashMode {
+	case "", models.HashModeFull, models.HashModeSkip:
+		if loc.HashMode == "" {
+			loc.HashMode = models.HashModeFull
+		}
+	default:
+		add("hash_mode", "must be full or skip")
+	}
+}
+
+// validateScanTuning normalizes and validates the remaining tunables.
+func validateScanTuning(loc *models.ScanLocation, add func(field, msg string)) {
 	if loc.ScanInterval < 0 {
 		add("scan_interval_sec", "must be >= 0")
 	}
@@ -241,9 +268,4 @@ func (req *scanLocationRequest) toModel() (models.ScanLocation, *config.Validati
 	if loc.Name == "" {
 		loc.Name = loc.ID
 	}
-
-	if len(errs) > 0 {
-		return loc, &config.ValidationErrors{Errors: errs}
-	}
-	return loc, nil
 }
