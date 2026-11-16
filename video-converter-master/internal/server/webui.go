@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -26,6 +28,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DarkStream - Video Converter Dashboard</title>
     <style>
+        a { color: #4fc3f7; }
+        a:hover { color: #81d4fa; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; line-height: 1.6; }
         .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
@@ -152,8 +156,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="queue" class="tab-content active">
             <div class="card">
                 <h2>Pending Jobs <button class="btn btn-danger btn-sm refresh-btn" onclick="cancelAllPending()">Cancel All Pending</button></h2>
-                {{if .PendingJobs}}
-                <table class="table">
+                <table class="table"{{if not .PendingJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -178,9 +181,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No pending jobs in queue</div>
-                {{end}}
+                <div class="no-data"{{if .PendingJobs}} style="display: none;"{{end}}>No pending jobs in queue</div>
             </div>
         </div>
 
@@ -188,8 +189,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
         <div id="processing" class="tab-content">
             <div class="card">
                 <h2>Currently Processing</h2>
-                {{if .ProcessingJobs}}
-                <table class="table">
+                <table class="table"{{if not .ProcessingJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -217,9 +217,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No jobs currently processing</div>
-                {{end}}
+                <div class="no-data"{{if .ProcessingJobs}} style="display: none;"{{end}}>No jobs currently processing</div>
             </div>
         </div>
 
@@ -230,8 +228,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="pruneJobs('all')" style="margin-left: 10px;">Clear Completed & Failed</button>
                     <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button>
                 </h2>
-                {{if .RecentJobs}}
-                <table class="table">
+                <table class="table"{{if not .RecentJobs}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Job ID</th>
@@ -262,9 +259,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No recent jobs</div>
-                {{end}}
+                <div class="no-data"{{if .RecentJobs}} style="display: none;"{{end}}>No recent jobs</div>
             </div>
         </div>
 
@@ -280,8 +275,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             </div>
             <div class="card" style="margin-top: 20px;">
                 <h2>👥 Connected Workers</h2>
-                {{if .Workers}}
-                <table class="table">
+                <table class="table"{{if not .Workers}} style="display: none;"{{end}}>
                     <thead>
                         <tr>
                             <th>Worker ID</th>
@@ -311,9 +305,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         {{end}}
                     </tbody>
                 </table>
-                {{else}}
-                <div class="no-data">No workers connected</div>
-                {{end}}
+                <div class="no-data"{{if .Workers}} style="display: none;"{{end}}>No workers connected</div>
             </div>
         </div>
 
@@ -556,6 +548,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
     <script>
         const apiKeyStorageKey = 'darkstreamAdminApiKey';
+        const apiKeyCookieName = 'darkstream_api_key';
 
         function loadApiKey() {
             const input = document.getElementById('apiKeyInput');
@@ -577,15 +570,42 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             } else {
                 localStorage.removeItem(apiKeyStorageKey);
             }
+            setApiKeyCookie(value);
+            // Reload so the server renders the (now authorised) job and worker data
+            location.reload();
         }
 
         function clearApiKey() {
             localStorage.removeItem(apiKeyStorageKey);
+            setApiKeyCookie('');
             const input = document.getElementById('apiKeyInput');
             if (input) {
                 input.value = '';
             }
+            location.reload();
         }
+
+        // Page navigations cannot carry an Authorization header, so the key is
+        // mirrored into a same-site cookie that only the HTML pages accept.
+        function setApiKeyCookie(value) {
+            const secure = location.protocol === 'https:' ? '; Secure' : '';
+            if (value) {
+                document.cookie = apiKeyCookieName + '=' + encodeURIComponent(value) + '; path=/; SameSite=Strict; max-age=31536000' + secure;
+            } else {
+                document.cookie = apiKeyCookieName + '=; path=/; SameSite=Strict; max-age=0' + secure;
+            }
+        }
+
+        // Keys saved before the cookie existed: mirror once, then reload
+        (function() {
+            const saved = localStorage.getItem(apiKeyStorageKey);
+            const hasCookie = document.cookie.split('; ').some(function(c) { return c.indexOf(apiKeyCookieName + '=') === 0; });
+            if (saved && !hasCookie && !sessionStorage.getItem('darkstreamCookieSynced')) {
+                sessionStorage.setItem('darkstreamCookieSynced', '1');
+                setApiKeyCookie(saved);
+                location.reload();
+            }
+        })();
 
         function authHeaders(headers) {
             const out = {};
@@ -816,7 +836,8 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
             }
             const evtSource = new EventSource(url);
 
-            evtSource.onmessage = function(event) {
+            // The server emits named "stats" events; onmessage only receives unnamed ones.
+            evtSource.addEventListener('stats', function(event) {
                 try {
                     const data = JSON.parse(event.data);
 
@@ -848,12 +869,16 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
                     function createElement(tag, opts = {}) {
                         const el = document.createElement(tag);
-                        if (opts.text) el.textContent = opts.text;
+                        // Compare against undefined/null so legitimate falsy values (0) still render
+                        if (opts.text !== undefined && opts.text !== null) el.textContent = String(opts.text);
                         if (opts.className) el.className = opts.className;
                         if (opts.title) el.title = opts.title;
+                        if (opts.href) el.setAttribute('href', opts.href);
                         if (opts.onclick) el.onclick = opts.onclick;
                         if (opts.innerHTML) el.innerHTML = opts.innerHTML; // only for static UI bits, not data
-                        if (opts.style) {
+                        if (typeof opts.style === 'string') {
+                            el.style.cssText = opts.style;
+                        } else if (opts.style) {
                             for (let key in opts.style) {
                                 el.style[key] = opts.style[key];
                             }
@@ -861,10 +886,22 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                         return el;
                     }
 
+                    // Show the table when it has rows, otherwise the "no data" note next to it
+                    function toggleEmptyState(tbody, rowCount) {
+                        const table = tbody.closest('table');
+                        if (!table) return;
+                        table.style.display = rowCount > 0 ? '' : 'none';
+                        const note = table.nextElementSibling;
+                        if (note && note.classList.contains('no-data')) {
+                            note.style.display = rowCount > 0 ? 'none' : '';
+                        }
+                    }
+
                     // Update pending jobs table
                     if (data.pending_jobs && document.getElementById('pending-jobs')) {
                         const tbody = document.getElementById('pending-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.pending_jobs.length);
                         data.pending_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             const createdAt = new Date(job.created_at).toLocaleString();
@@ -904,6 +941,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.processing_jobs && document.getElementById('processing-jobs')) {
                         const tbody = document.getElementById('processing-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.processing_jobs.length);
                         data.processing_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             let startedAt = '';
@@ -942,6 +980,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.recent_jobs && document.getElementById('recent-jobs')) {
                         const tbody = document.getElementById('recent-jobs');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.recent_jobs.length);
                         data.recent_jobs.forEach(job => {
                             const tr = document.createElement('tr');
                             let statusClass = 'badge-pending';
@@ -991,6 +1030,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                     if (data.workers && document.getElementById('workers-list')) {
                         const tbody = document.getElementById('workers-list');
                         tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.workers.length);
                         data.workers.forEach(worker => {
                             const tr = document.createElement('tr');
                             const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
@@ -1044,7 +1084,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 } catch (err) {
                     console.error('Failed to parse SSE data:', err);
                 }
-            };
+            });
 
             evtSource.onerror = function() {
                 const indicator = document.getElementById('live-indicator');
@@ -1273,11 +1313,20 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.configMgr.Get()
 
+	// With an API key configured, the page itself must stay reachable (it is
+	// where the key is entered) but job and worker data is only rendered for
+	// authorised requests.
+	authorized := s.authenticateUIRequest(r)
+
 	// Get workers from database
-	workers, err := s.db.GetWorkers()
-	if err != nil {
-		slog.Error("Failed to get workers", "error", err)
-		workers = nil
+	var workers []*models.WorkerHeartbeat
+	var err error
+	if authorized {
+		workers, err = s.db.GetWorkers()
+		if err != nil {
+			slog.Error("Failed to get workers", "error", err)
+			workers = nil
+		}
 	}
 
 	// Convert to WorkerInfo with online status
@@ -1303,7 +1352,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 
 	// Get job statistics
 	stats := DashboardStats{Workers: onlineWorkers}
-	jobStats, err := s.db.GetJobStats()
+	jobStats, err := s.dashboardJobStats(authorized)
 	if err == nil {
 		if v, ok := jobStats["pending"].(int); ok {
 			stats.Pending = v
@@ -1319,22 +1368,7 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get pending jobs (limit 20)
-	pendingJobs, _ := s.db.GetJobsByStatus("pending", 20)
-
-	// Get processing jobs
-	processingJobs, _ := s.db.GetJobsByStatus("processing", 20)
-
-	// Get recent completed/failed jobs
-	recentJobs := make([]*models.Job, 0)
-	completed, err := s.db.GetJobsByStatus("completed", 25)
-	if err == nil {
-		recentJobs = append(recentJobs, completed...)
-	}
-	failed, err := s.db.GetJobsByStatus("failed", 25)
-	if err == nil {
-		recentJobs = append(recentJobs, failed...)
-	}
+	pendingJobs, processingJobs, recentJobs := s.dashboardJobs(authorized)
 
 	// Build master URL for display
 	masterURL := s.getMasterURL()
@@ -1361,6 +1395,56 @@ func (s *Server) ServeWebUI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+}
+
+// uiAuthCookieName is the cookie the web UI mirrors the API key into.
+const uiAuthCookieName = "darkstream_api_key"
+
+// authenticateUIRequest authorises a request for one of the HTML pages. Besides
+// the header/query credentials accepted by the API it accepts the UI's cookie,
+// because a plain link navigation cannot send an Authorization header. The
+// cookie is deliberately NOT accepted by the API endpoints, so it cannot be
+// abused for cross-site requests that change state.
+func (s *Server) authenticateUIRequest(r *http.Request) bool {
+	if s.authenticateRequest(r) {
+		return true
+	}
+	cookie, err := r.Cookie(uiAuthCookieName)
+	if err != nil {
+		return false
+	}
+	value, err := url.QueryUnescape(cookie.Value)
+	if err != nil || value == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(value), []byte(s.apiKey)) == 1
+}
+
+// dashboardJobStats returns job counts for the dashboard, or nothing for an
+// unauthorised request.
+func (s *Server) dashboardJobStats(authorized bool) (map[string]any, error) {
+	if !authorized {
+		return map[string]any{}, nil
+	}
+	return s.db.GetJobStats()
+}
+
+// dashboardJobs returns the job lists rendered into the dashboard, or empty
+// lists for an unauthorised request.
+func (s *Server) dashboardJobs(authorized bool) (pending, processing, recent []*models.Job) {
+	recent = make([]*models.Job, 0)
+	if !authorized {
+		return nil, nil, recent
+	}
+
+	pending, _ = s.db.GetJobsByStatus("pending", 20)
+	processing, _ = s.db.GetJobsByStatus("processing", 20)
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		if jobs, err := s.db.GetJobsByStatus(status, 25); err == nil {
+			recent = append(recent, jobs...)
+		}
+	}
+	return pending, processing, recent
 }
 
 // getMasterURL returns the master URL for worker connections
@@ -1661,6 +1745,11 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
+                        if (data.status && data.status !== 'processing') {
+                            // Job finished (or was cancelled/requeued): show its final state
+                            location.reload();
+                            return;
+                        }
                         const progress = data.progress || 0;
                         document.getElementById('progress-fill').style.width = progress + '%';
                         document.getElementById('progress-text').textContent = progress.toFixed(1) + '%';
@@ -1680,6 +1769,15 @@ var jobDetailsTemplate = template.Must(template.New("jobDetails").Parse(`<!DOCTY
 </html>`))
 
 func (s *Server) handleJobDetailsUI(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateUIRequest(r) {
+		slog.Warn("Unauthorized job details request", "ip", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Unauthorized</title></head>` +
+			`<body><h1>Unauthorized</h1><p>Enter the API key on the <a href="/">dashboard</a> to view job details.</p></body></html>`))
+		return
+	}
+
 	jobID := r.URL.Query().Get("id")
 	if jobID == "" {
 		http.Error(w, "Missing job ID", http.StatusBadRequest)

@@ -103,6 +103,8 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 		ReplaceSource:    cfg.Scanner.ReplaceSource,
 		DetectDuplicates: cfg.Scanner.DetectDuplicates,
 		DuplicateChecker: tracker.HasJobWithSourceChecksum,
+
+		KnownOutputChecker: tracker.HasKnownOutputChecksum,
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -293,6 +295,10 @@ func (c *Coordinator) monitorWorkerHealth() {
 
 	const heartbeatThreshold = 120 // 2 minutes in seconds
 
+	// Workers already reported as offline, so the warning and the database
+	// update happen once per outage instead of on every tick forever.
+	knownOffline := make(map[string]bool)
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -324,25 +330,32 @@ func (c *Coordinator) monitorWorkerHealth() {
 			// Find offline workers
 			offlineWorkers := make([]string, 0)
 			for _, worker := range allWorkers {
-				if !activeWorkerIDs[worker.WorkerID] {
-					offlineWorkers = append(offlineWorkers, worker.WorkerID)
-					slog.Warn("Worker offline detected",
-						"worker_id", worker.WorkerID,
-						"hostname", worker.Hostname,
-						"last_heartbeat", worker.Timestamp)
-
-					// Mark worker as offline in database
-					err := c.db.MarkWorkerOffline(worker.WorkerID)
-					if err != nil {
-						slog.Error("Failed to mark worker as offline",
-							"worker_id", worker.WorkerID, "error", err)
-					}
-
-					// Drop its heartbeat metric series so a worker that never
-					// returns (e.g. restarted with a new ID) does not leak metric
-					// cardinality. If it reconnects, its next heartbeat recreates it.
-					c.server.RemoveWorkerMetrics(worker.WorkerID)
+				if activeWorkerIDs[worker.WorkerID] {
+					delete(knownOffline, worker.WorkerID)
+					continue
 				}
+
+				offlineWorkers = append(offlineWorkers, worker.WorkerID)
+				if knownOffline[worker.WorkerID] {
+					continue
+				}
+				knownOffline[worker.WorkerID] = true
+				slog.Warn("Worker offline detected",
+					"worker_id", worker.WorkerID,
+					"hostname", worker.Hostname,
+					"last_heartbeat", worker.Timestamp)
+
+				// Mark worker as offline in database
+				err := c.db.MarkWorkerOffline(worker.WorkerID)
+				if err != nil {
+					slog.Error("Failed to mark worker as offline",
+						"worker_id", worker.WorkerID, "error", err)
+				}
+
+				// Drop its heartbeat metric series so a worker that never
+				// returns (e.g. restarted with a new ID) does not leak metric
+				// cardinality. If it reconnects, its next heartbeat recreates it.
+				c.server.RemoveWorkerMetrics(worker.WorkerID)
 			}
 
 			// Reassign jobs from offline workers

@@ -8,8 +8,6 @@ import (
 
 // Test fixture constants shared across the scanner test suite.
 const (
-	extMKV        = ".mkv"
-	extMP4        = ".mp4"
 	testVideoName = "video1.mp4"
 )
 
@@ -41,7 +39,7 @@ func TestScanDirectory(t *testing.T) {
 	}
 
 	// Create scanner
-	scanner := New(videosDir, []string{extMP4, extMKV, ".avi"}, outputDir)
+	scanner := New(videosDir, []string{extMP4, extMKV, extAVI}, outputDir)
 
 	// Scan directory
 	jobs, err := scanner.ScanDirectory()
@@ -449,7 +447,7 @@ func TestNew(t *testing.T) {
 	expectedExts := map[string]bool{
 		extMP4: true,
 		extMKV: true,
-		".avi": true,
+		extAVI: true,
 	}
 
 	if len(scanner.VideoExtensions) != len(expectedExts) {

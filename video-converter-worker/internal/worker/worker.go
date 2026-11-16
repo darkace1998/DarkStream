@@ -21,6 +21,14 @@ import (
 	"github.com/darkace1998/video-converter-worker/internal/converter"
 )
 
+// progressReportInterval is the minimum time between conversion progress
+// reports sent to the master for a single job.
+const progressReportInterval = 3 * time.Second
+
+// errJobAbandoned marks a job the master no longer wants from this worker
+// (cancelled, requeued or reassigned). It is not a failure of the job.
+var errJobAbandoned = errors.New("job abandoned: no longer assigned to this worker")
+
 // Worker manages job processing and communication with the master
 //
 //nolint:containedctx // Context stored in struct for long-running worker lifecycle management
@@ -104,7 +112,9 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	masterClient.SetBandwidthLimit(cfg.Storage.BandwidthLimit)
 	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
 	masterClient.SetAPIKey(cfg.Worker.APIKey)
+	masterClient.SetMaxJobs(cfg.Worker.Concurrency)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
+	configFetcher.SetAPIKey(cfg.Worker.APIKey)
 	validator := converter.NewValidator()
 
 	// Initialize cache manager
@@ -120,6 +130,7 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	// promptly on shutdown instead of sleeping out its full delay.
 	masterClient.SetContext(ctx)
 	configFetcher.SetContext(ctx)
+	ffmpegConverter.SetContext(ctx)
 
 	// Initialize job semaphore for concurrency control
 	jobSemaphore := make(chan struct{}, cfg.Worker.Concurrency)
@@ -456,6 +467,13 @@ func (w *Worker) processJob(job *models.Job) {
 	startedAt := time.Now()
 	err := w.executeJob(job, jobLog)
 	duration := time.Since(startedAt)
+	if errors.Is(err, errJobAbandoned) {
+		// Nothing to report: the master already moved the job on.
+		w.markJobFinished(job.ID, false, err)
+		jobLog.Info("Job abandoned, the master no longer assigns it to this worker",
+			"duration_seconds", duration.Seconds())
+		return
+	}
 	if err != nil {
 		w.markJobFinished(job.ID, false, err)
 		jobLog.Error("Job execution failed",
@@ -485,8 +503,15 @@ func (w *Worker) processJob(job *models.Job) {
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
 func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
+	// jobCtx is cancelled when the master stops assigning this job to us, which
+	// terminates a running conversion instead of finishing work nobody wants.
+	jobCtx, cancelJob := context.WithCancel(w.ctx)
+	defer cancelJob()
+
 	// Report progress: starting
-	w.reportProgress(job.ID, 0, 0, "download")
+	if w.reportProgress(job.ID, 0, 0, "download") != nil {
+		return errJobAbandoned
+	}
 
 	// Create job cache directory
 	jobCacheDir := filepath.Join(w.config.Storage.CachePath, fmt.Sprintf("job_%s", job.ID))
@@ -496,6 +521,12 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	}
 	defer w.cleanupJobCache(jobCacheDir)
 
+	// Keep the cache cleaner away from this job's files while it is running.
+	if w.cacheManager != nil {
+		w.cacheManager.Protect(jobCacheDir)
+		defer w.cacheManager.Unprotect(jobCacheDir)
+	}
+
 	// Download source video from master
 	// Preserve original file extension
 	sourceExt := filepath.Ext(job.SourcePath)
@@ -503,25 +534,8 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		sourceExt = ".mp4" // Default to .mp4 if no extension
 	}
 	sourceLocalPath := filepath.Join(jobCacheDir, "source"+sourceExt)
-	log.Info("Downloading source video", "local_path", sourceLocalPath)
-	err = w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-
-	// Validate source file checksum if available
-	if job.SourceChecksum != "" {
-		log.Info("Validating source file checksum", "expected_checksum", job.SourceChecksum)
-		valid, err := w.validator.VerifyChecksum(sourceLocalPath, job.SourceChecksum)
-		if err != nil {
-			return fmt.Errorf("checksum validation error: %w", err)
-		}
-		if !valid {
-			return fmt.Errorf("checksum mismatch: downloaded file checksum does not match expected value")
-		}
-		log.Info("Source file checksum validated successfully")
-	} else {
-		log.Debug("No source checksum available for validation")
+	if err := w.downloadAndVerify(job, sourceLocalPath, log); err != nil {
+		return err
 	}
 
 	// Extract video metadata using FFprobe
@@ -543,7 +557,9 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	}
 
 	// Report progress: download complete, starting conversion
-	w.reportProgress(job.ID, 0, 0, "convert")
+	if w.reportProgress(job.ID, 0, 0, "convert") != nil {
+		return errJobAbandoned
+	}
 
 	// Update job to use local source path
 	originalSourcePath := job.SourcePath
@@ -578,7 +594,10 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		Preset:           dynamicCfg.Preset,
 		AudioCodec:       dynamicCfg.AudioCodec,
 		AudioBitrate:     dynamicCfg.AudioBitrate,
-		UseVulkan:        w.config.FFmpeg.UseVulkan,
+		// Only ask FFmpeg for Vulkan when a usable device was actually detected;
+		// the config flag alone ("use_vulkan: true" is the default) would make
+		// every job fail on machines without a suitable GPU.
+		UseVulkan: w.config.FFmpeg.UseVulkan && w.vulkanCaps != nil && w.vulkanCaps.Supported,
 	}
 
 	log.Info("Using conversion config",
@@ -587,12 +606,11 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		"format", dynamicCfg.OutputFormat,
 	)
 
-	// Convert video with progress callback
-	progressCallback := func(progress float64, fps float64) {
-		w.reportProgress(job.ID, progress, fps, "convert")
-	}
-	err = w.ffmpegConverter.ConvertVideoWithProgressLogger(job, cfg, progressCallback, log)
+	err = w.convertWithFallback(jobCtx, cancelJob, job, cfg, log)
 	if err != nil {
+		if jobCtx.Err() != nil && w.ctx.Err() == nil {
+			return errJobAbandoned
+		}
 		return fmt.Errorf("conversion failed: %w", err)
 	}
 
@@ -603,11 +621,13 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	}
 
 	// Report progress: starting upload
-	w.reportProgress(job.ID, 100, 0, "upload")
+	if w.reportProgress(job.ID, 100, 0, "upload") != nil {
+		return errJobAbandoned
+	}
 
-	// Upload converted video to master
+	// Upload converted video to master, along with the source metadata
 	log.Info("Uploading converted video", "local_path", outputLocalPath)
-	err = w.masterClient.UploadConvertedVideo(job.ID, outputLocalPath)
+	err = w.masterClient.UploadConvertedVideoWithMetadata(job.ID, outputLocalPath, job)
 	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
@@ -619,8 +639,71 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	return nil
 }
 
-// reportProgress sends progress update to master
-func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) {
+// downloadAndVerify fetches the job's source video from the master and checks
+// it against the expected checksum when the job carries one.
+func (w *Worker) downloadAndVerify(job *models.Job, sourceLocalPath string, log *slog.Logger) error {
+	log.Info("Downloading source video", "local_path", sourceLocalPath)
+	if err := w.masterClient.DownloadSourceVideo(job.ID, sourceLocalPath); err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	if job.SourceChecksum == "" {
+		log.Debug("No source checksum available for validation")
+		return nil
+	}
+
+	log.Info("Validating source file checksum", "expected_checksum", job.SourceChecksum)
+	valid, err := w.validator.VerifyChecksum(sourceLocalPath, job.SourceChecksum)
+	if err != nil {
+		return fmt.Errorf("checksum validation error: %w", err)
+	}
+	if !valid {
+		return errors.New("checksum mismatch: downloaded file checksum does not match expected value")
+	}
+	log.Info("Source file checksum validated successfully")
+	return nil
+}
+
+// convertWithFallback runs the conversion, reporting throttled progress to the
+// master, and retries once with software encoding if a Vulkan attempt fails.
+func (w *Worker) convertWithFallback(
+	jobCtx context.Context, cancelJob context.CancelFunc,
+	job *models.Job, cfg *models.ConversionConfig, log *slog.Logger,
+) error {
+	// FFmpeg emits progress about twice a second; forwarding each update as an
+	// HTTP request would exhaust the master's per-IP rate limit (starving
+	// heartbeats and job polls), so throttle.
+	var lastProgressReport time.Time
+	progressCallback := func(progress float64, fps float64) {
+		if time.Since(lastProgressReport) < progressReportInterval {
+			return
+		}
+		lastProgressReport = time.Now()
+		if w.reportProgress(job.ID, progress, fps, "convert") != nil {
+			log.Info("Master no longer assigns this job here, stopping conversion")
+			cancelJob()
+		}
+	}
+
+	err := w.ffmpegConverter.ConvertVideoContext(jobCtx, job, cfg, progressCallback, log)
+	if err == nil || !cfg.UseVulkan || jobCtx.Err() != nil || errors.Is(err, converter.ErrConversionTimeout) {
+		return err
+	}
+
+	// Detecting a Vulkan device does not guarantee that this FFmpeg build and
+	// driver can actually encode with it; fall back to software encoding rather
+	// than failing the job.
+	log.Warn("Vulkan conversion failed, retrying with CPU encoding", "error", err)
+	cfg.UseVulkan = false
+	if rmErr := os.Remove(job.OutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
+		log.Warn("Failed to remove partial output before CPU retry", "error", rmErr)
+	}
+	return w.ffmpegConverter.ConvertVideoContext(jobCtx, job, cfg, progressCallback, log)
+}
+
+// reportProgress sends a progress update to the master. A non-nil result means
+// the master no longer assigns the job to this worker.
+func (w *Worker) reportProgress(jobID string, progress float64, fps float64, stage string) error {
 	progressReport := &models.JobProgress{
 		JobID:     jobID,
 		WorkerID:  w.config.Worker.ID,
@@ -629,7 +712,10 @@ func (w *Worker) reportProgress(jobID string, progress float64, fps float64, sta
 		Stage:     stage,
 		UpdatedAt: time.Now(),
 	}
-	w.masterClient.ReportJobProgress(progressReport)
+	if err := w.masterClient.ReportJobProgress(progressReport); err != nil {
+		return fmt.Errorf("progress report rejected: %w", err)
+	}
+	return nil
 }
 
 // sendHeartbeats periodically sends heartbeats to the master
@@ -639,35 +725,44 @@ func (w *Worker) sendHeartbeats() {
 	ticker := time.NewTicker(w.config.Worker.HeartbeatInterval)
 	defer ticker.Stop()
 
+	// Register with the master right away instead of after the first interval,
+	// so the worker is visible (and pause/capacity rules apply) from the start.
+	w.sendHeartbeat()
+
 	for {
 		select {
 		case <-w.ctx.Done():
 			slog.Info("Heartbeat goroutine stopping")
 			return
 		case <-ticker.C:
-			vulkanAvailable := false
-			gpuName := "CPU"
-			if w.vulkanCaps != nil && w.vulkanCaps.Supported {
-				vulkanAvailable = true
-				gpuName = w.vulkanCaps.Device.Name
-			}
-
-			hb := &models.WorkerHeartbeat{
-				WorkerID:        w.config.Worker.ID,
-				Hostname:        getHostname(),
-				VulkanAvailable: vulkanAvailable,
-				ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
-				Status:          constants.WorkerStatusOnline,
-				Timestamp:       time.Now(),
-				GPU:             gpuName,
-				CPUUsage:        getSystemCPUUsage(),
-				MemoryUsage:     getSystemMemoryUsage(),
-			}
-
-			w.recordHeartbeat(hb.Timestamp)
-			w.masterClient.SendHeartbeat(hb)
+			w.sendHeartbeat()
 		}
 	}
+}
+
+// sendHeartbeat sends a single heartbeat to the master.
+func (w *Worker) sendHeartbeat() {
+	vulkanAvailable := false
+	gpuName := "CPU"
+	if w.vulkanCaps != nil && w.vulkanCaps.Supported {
+		vulkanAvailable = true
+		gpuName = w.vulkanCaps.Device.Name
+	}
+
+	hb := &models.WorkerHeartbeat{
+		WorkerID:        w.config.Worker.ID,
+		Hostname:        getHostname(),
+		VulkanAvailable: vulkanAvailable,
+		ActiveJobs:      int(atomic.LoadInt32(&w.activeJobs)),
+		Status:          constants.WorkerStatusOnline,
+		Timestamp:       time.Now(),
+		GPU:             gpuName,
+		CPUUsage:        getSystemCPUUsage(),
+		MemoryUsage:     getSystemMemoryUsage(),
+	}
+
+	w.recordHeartbeat(hb.Timestamp)
+	w.masterClient.SendHeartbeat(hb)
 }
 
 func (w *Worker) markJobStarted(jobID string) {

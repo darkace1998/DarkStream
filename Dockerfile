@@ -52,12 +52,14 @@ RUN cd video-converter-cli && \
 # Stage 2: Master service image
 FROM ubuntu:24.04 AS master
 
-# Install runtime dependencies (FFmpeg, Vulkan libraries)
+# Install runtime dependencies (FFmpeg, Vulkan libraries).
+# curl is required by the container health check.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libvulkan1 \
     vulkan-tools \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -66,8 +68,15 @@ WORKDIR /app
 COPY --from=builder /build/bin/video-converter-master .
 COPY --from=builder /build/video-converter-master/config.yaml.example ./config.yaml
 
-# Create directories for storage and database
-RUN mkdir -p /mnt/storage/videos /app/db
+# Create directories for storage and database, and keep the job database on the
+# /app/db volume so it survives container re-creation (the example config's
+# relative path would put it in the container's writable layer).
+RUN mkdir -p /mnt/storage/videos /mnt/storage/converted /app/db \
+    && sed -i 's#^  path: ./jobs.db#  path: /app/db/jobs.db#' config.yaml \
+    && grep -q 'path: /app/db/jobs.db' config.yaml
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -fsS http://localhost:8080/healthz || exit 1
 
 # Expose HTTP API port (default 8080)
 EXPOSE 8080

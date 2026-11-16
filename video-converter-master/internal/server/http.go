@@ -12,12 +12,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,6 +66,12 @@ const (
 	fieldTimestamp = "timestamp"
 	fieldMessage   = "message"
 )
+
+// isTerminalJobStatus reports whether a job in this status will not change
+// again on its own (completed, failed or cancelled).
+func isTerminalJobStatus(status string) bool {
+	return status == statusCompleted || status == statusFailed || status == statusCancelled
+}
 
 // validateJobID checks if a job ID is valid
 func validateJobID(jobID string) bool {
@@ -188,6 +197,11 @@ type Server struct {
 	metrics     *metrics.Metrics
 	notifier    *notifier.WebhookNotifier
 	queuePaused atomic.Bool // New field to pause/resume queue
+
+	// done is closed on Shutdown so long-lived SSE handlers return promptly
+	// instead of holding the graceful shutdown open until its deadline.
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // New creates a new HTTP server instance
@@ -210,6 +224,7 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		allowedDirs: allowedDirs,
 		metrics:     metrics.New(),
 		notifier:    notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
+		done:        make(chan struct{}),
 	}
 }
 
@@ -325,6 +340,13 @@ func (s *Server) Start() (err error) {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.rateLimiter.stop()
 
+	// Tell streaming (SSE) handlers to finish; they never complete on their own.
+	s.doneOnce.Do(func() {
+		if s.done != nil {
+			close(s.done)
+		}
+	})
+
 	// Drain in-flight webhook deliveries within the shutdown grace period.
 	s.notifier.Shutdown(ctx)
 
@@ -338,6 +360,27 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("failed to shutdown server: %w", err)
 	}
 	return nil
+}
+
+// Bounds for how many jobs a single worker may hold at once.
+const (
+	defaultWorkerCapacity = 5
+	maxWorkerCapacity     = 64
+)
+
+// workerCapacity returns how many concurrent jobs the requesting worker can
+// run. Workers report their configured concurrency as max_jobs; older workers
+// that do not are held to the previous fixed limit.
+func workerCapacity(r *http.Request) int {
+	raw := r.URL.Query().Get("max_jobs")
+	if raw == "" {
+		return defaultWorkerCapacity
+	}
+	capacity, err := parseInt(raw)
+	if err != nil || capacity <= 0 {
+		return defaultWorkerCapacity
+	}
+	return min(capacity, maxWorkerCapacity)
 }
 
 // GetNextJob handles requests for the next pending job with load balancing
@@ -377,9 +420,9 @@ func (s *Server) GetNextJob(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
-				// Simple load balancing: don't assign jobs if worker is heavily loaded
-				// This could be made configurable based on worker capacity
-				const maxJobsPerWorker = 5
+				// Simple load balancing: don't assign jobs if the worker is at its
+				// own concurrency limit.
+				maxJobsPerWorker := workerCapacity(r)
 				if worker.ActiveJobs >= maxJobsPerWorker {
 					slog.Info("Worker at capacity, not assigning new job",
 						fieldWorkerID, workerID,
@@ -463,13 +506,19 @@ func (s *Server) GetNextJobs(w http.ResponseWriter, r *http.Request) {
 			if worker.WorkerID == workerID {
 				if worker.Status == "paused" {
 					slog.Info("Worker is paused, not assigning new jobs", fieldWorkerID, workerID)
+					// Use the same {jobs, count} envelope as every other branch;
+					// workers decode this response into that shape.
 					w.Header().Set("Content-Type", "application/json")
-					if encErr := json.NewEncoder(w).Encode([]*models.Job{}); encErr != nil {
+					response := map[string]any{
+						fieldJobs:  []*models.Job{},
+						fieldCount: 0,
+					}
+					if encErr := json.NewEncoder(w).Encode(response); encErr != nil {
 						slog.Error("Failed to encode response", "error", encErr)
 					}
 					return
 				}
-				const maxJobsPerWorker = 5
+				maxJobsPerWorker := workerCapacity(r)
 				availableSlots = maxJobsPerWorker - worker.ActiveJobs
 				if availableSlots <= 0 {
 					slog.Info("Worker at capacity, not assigning new jobs",
@@ -596,17 +645,8 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record metrics
-	if job.StartedAt != nil {
-		duration := time.Since(*job.StartedAt).Seconds()
-		s.metrics.RecordJobCompleted(duration)
-	}
-	s.metrics.RecordJobFinished()
-
-	// Notify webhook if configured
-	if updatedJob, fetchErr := s.db.GetJobByID(job.ID); fetchErr == nil {
-		s.notifier.Notify(statusCompleted, updatedJob)
-	}
+	// Record metrics and notify the webhook if configured
+	s.recordJobCompletion(job)
 
 	slog.Info("Job completed", fieldJobID, req.JobID, fieldWorkerID, req.WorkerID)
 	w.WriteHeader(http.StatusOK)
@@ -709,6 +749,12 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Liveness is judged against the master's clock, so record when the
+	// heartbeat arrived rather than trusting the worker's own timestamp. A
+	// worker with a skewed clock would otherwise look permanently offline (or
+	// permanently online) and have its jobs wrongly reassigned.
+	hb.Timestamp = time.Now().UTC()
+
 	err = s.db.UpdateWorkerHeartbeat(&hb)
 	if err != nil {
 		slog.Error("Failed to update worker heartbeat", fieldWorkerID, hb.WorkerID, "error", err)
@@ -789,6 +835,8 @@ func (s *Server) StreamStats(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case <-ctx.Done():
+			return
+		case <-s.done:
 			return
 		case <-ticker.C:
 			// Loop again
@@ -881,6 +929,10 @@ func (s *Server) writeStatsStreamEvent(w http.ResponseWriter, flusher http.Flush
 		failed, err := s.db.GetJobsByStatus(statusFailed, 25)
 		if err == nil {
 			recentJobs = append(recentJobs, failed...)
+		}
+		cancelled, err := s.db.GetJobsByStatus(statusCancelled, 25)
+		if err == nil {
+			recentJobs = append(recentJobs, cancelled...)
 		}
 
 		response := map[string]any{
@@ -1214,8 +1266,14 @@ func (s *Server) serveVideoRange(w http.ResponseWriter, jobID, sourcePath, range
 		return false
 	}
 
+	// A last-byte-pos beyond the end of the file is valid and simply means
+	// "to the end" (RFC 9110 section 14.1.2).
+	if end >= fileSize {
+		end = fileSize - 1
+	}
+
 	// Validate range
-	if start < 0 || start >= fileSize || end < start || end >= fileSize {
+	if start < 0 || start >= fileSize || end < start {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
 		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
 		return true
@@ -1361,8 +1419,6 @@ func (s *Server) DownloadVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // UploadVideo handles video file upload requests from workers
-//
-//nolint:cyclop // HTTP file upload with chunked transfer is inherently complex
 func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1417,16 +1473,16 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		job.OutputPath = outputPath
 	}
 
-	// Parse multipart form (32MB max memory)
-	// #nosec G120 - maxMemory is bounded to 32MB
-	err = r.ParseMultipartForm(32 << 20)
+	// Stream the multipart body straight to its destination. ParseMultipartForm
+	// would first spool the whole (multi-gigabyte) upload into the system temp
+	// directory and only then copy it, doubling the I/O and requiring as much
+	// free temp space as the largest video.
+	multipartReader, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)
 		return
 	}
-
-	// Get the file from the form
-	file, _, err := r.FormFile("video")
+	file, metadata, err := nextVideoPart(multipartReader)
 	if err != nil {
 		http.Error(w, "Failed to get video file from form", http.StatusBadRequest)
 		return
@@ -1438,73 +1494,23 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Create output directory if needed
-	outputDir := filepath.Dir(outputPath)
-	// #nosec G703 - outputDir is derived from the validated output path
-	err = os.MkdirAll(outputDir, 0o750)
-	if err != nil {
-		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
-		http.Error(w, "Failed to create output directory", http.StatusInternalServerError)
-		return
-	}
-
-	// Create a temporary file first to ensure atomic write
-	// Use the same extension as the output file
-	ext := filepath.Ext(outputPath)
-	tempFile, err := os.CreateTemp(outputDir, ".upload-*"+ext+".tmp")
-	if err != nil {
-		slog.Error("Failed to create temp file", "error", err)
-		http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
-		return
-	}
-	tempPath := tempFile.Name()
-	defer func() {
-		cerr := tempFile.Close()
-		if cerr != nil {
-			slog.Warn("Failed to close temp file", "error", cerr)
+	// The container format is a runtime setting, so the file the worker produced
+	// may not match the extension chosen when the job was created. Store it
+	// under the extension it actually has.
+	if adjusted := outputPathForUpload(outputPath, file.FileName()); adjusted != outputPath {
+		validatedAdjusted, validateErr := utils.ValidatePathInAllowedDirs(s.allowedDirs, adjusted)
+		if validateErr != nil {
+			slog.Error("Path validation failed for adjusted output file", fieldJobID, jobID, "path", adjusted, "error", validateErr)
+			http.Error(w, "Invalid file path", http.StatusForbidden)
+			return
 		}
-		// Clean up temp file if it still exists (meaning we didn't rename it)
-		// #nosec G703 - tempPath is created by os.CreateTemp inside the validated output directory
-		_, statErr := os.Stat(tempPath)
-		if statErr == nil {
-			// #nosec G703 - tempPath is created by os.CreateTemp inside the validated output directory
-			rerr := os.Remove(tempPath)
-			if rerr != nil {
-				slog.Warn("Failed to remove temp file", "path", tempPath, "error", rerr)
-			}
-		}
-	}()
-
-	// Copy the uploaded file to the temp file
-	startUploadTime := time.Now()
-	bytesWritten, err := io.Copy(tempFile, file)
-	if bytesWritten > 0 {
-		s.metrics.RecordBytesUploaded(bytesWritten)
-		durationSecs := time.Since(startUploadTime).Seconds()
-		if durationSecs > 0 {
-			s.metrics.RecordTransferSpeed("upload", float64(bytesWritten)/durationSecs)
-		}
-	}
-	if err != nil {
-		slog.Error("Failed to write temp file", "error", err)
-		http.Error(w, "Failed to write output file", http.StatusInternalServerError)
-		return
+		outputPath = validatedAdjusted
 	}
 
-	// Close the temp file before renaming
-	err = tempFile.Close()
+	bytesWritten, status, err := s.storeUpload(file, outputPath)
 	if err != nil {
-		slog.Error("Failed to close temp file before rename", "error", err)
-		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
-		return
-	}
-
-	// Atomically rename temp file to final location first
-	// #nosec G703 - tempPath comes from os.CreateTemp and outputPath is the validated output path
-	err = os.Rename(tempPath, outputPath)
-	if err != nil {
-		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", outputPath, "error", err)
-		http.Error(w, "Failed to finalize output file", http.StatusInternalServerError)
+		slog.Error("Failed to store uploaded video", fieldJobID, jobID, "output", outputPath, "error", err)
+		http.Error(w, err.Error(), status)
 		return
 	}
 
@@ -1530,7 +1536,10 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Video file uploaded", fieldJobID, jobID, "size", bytesWritten, "checksum", outputChecksum)
+	s.finalizeUploadedJob(job, outputPath, outputChecksum, metadata)
+	s.recordJobCompletion(job)
+
+	slog.Info("Video file uploaded", fieldJobID, jobID, "size", bytesWritten, "checksum", outputChecksum, "output", outputPath)
 
 	// Return success response with file size
 	w.Header().Set("Content-Type", "application/json")
@@ -1542,6 +1551,188 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to encode upload response", "error", err)
 		return
+	}
+}
+
+// uploadOutputExtensions are the container extensions an upload may be stored under.
+var uploadOutputExtensions = map[string]bool{".mp4": true, ".mkv": true, ".webm": true, ".avi": true}
+
+// outputPathForUpload returns outputPath with its extension replaced by that of
+// the uploaded file, when the upload carries a different, supported container
+// extension. Otherwise outputPath is returned unchanged.
+func outputPathForUpload(outputPath, uploadName string) string {
+	uploadExt := strings.ToLower(filepath.Ext(uploadName))
+	currentExt := filepath.Ext(outputPath)
+	if !uploadOutputExtensions[uploadExt] || strings.EqualFold(currentExt, uploadExt) {
+		return outputPath
+	}
+	return strings.TrimSuffix(outputPath, currentExt) + uploadExt
+}
+
+// errEmptyUpload is returned when a worker uploads a zero-byte video.
+var errEmptyUpload = errors.New("Uploaded video file is empty") //nolint:staticcheck // user-facing HTTP error text
+
+// storeUpload writes the uploaded video to outputPath atomically (temp file in
+// the same directory, then rename). On failure it returns the HTTP status to
+// answer with; the returned error text is safe to send to the client.
+func (s *Server) storeUpload(file io.Reader, outputPath string) (int64, int, error) {
+	// Create output directory if needed
+	outputDir := filepath.Dir(outputPath)
+	// #nosec G703 - outputDir is derived from the validated output path
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		slog.Error("Failed to create output directory", "path", outputDir, "error", err)
+		return 0, http.StatusInternalServerError, errors.New("Failed to create output directory") //nolint:staticcheck // HTTP error text
+	}
+
+	// Create a temporary file first to ensure atomic write
+	tempFile, err := os.CreateTemp(outputDir, ".upload-*"+filepath.Ext(outputPath)+".tmp")
+	if err != nil {
+		slog.Error("Failed to create temp file", "error", err)
+		return 0, http.StatusInternalServerError, errors.New("Failed to create temp file") //nolint:staticcheck // HTTP error text
+	}
+	tempPath := tempFile.Name()
+	defer cleanupUploadTemp(tempFile, tempPath)
+
+	// Copy the uploaded file to the temp file
+	startUploadTime := time.Now()
+	bytesWritten, err := io.Copy(tempFile, file)
+	if bytesWritten > 0 {
+		s.metrics.RecordBytesUploaded(bytesWritten)
+		durationSecs := time.Since(startUploadTime).Seconds()
+		if durationSecs > 0 {
+			s.metrics.RecordTransferSpeed("upload", float64(bytesWritten)/durationSecs)
+		}
+	}
+	if err != nil {
+		slog.Error("Failed to write temp file", "error", err)
+		return 0, http.StatusInternalServerError, errors.New("Failed to write output file") //nolint:staticcheck // HTTP error text
+	}
+	if bytesWritten == 0 {
+		// Never replace the output (or mark the job done) with an empty file.
+		return 0, http.StatusBadRequest, errEmptyUpload
+	}
+
+	// Close the temp file before renaming
+	if err := tempFile.Close(); err != nil {
+		slog.Error("Failed to close temp file before rename", "error", err)
+		return 0, http.StatusInternalServerError, errors.New("Failed to finalize output file") //nolint:staticcheck // HTTP error text
+	}
+
+	// os.CreateTemp creates the file with mode 0600; converted videos are meant
+	// to be consumed by other users/services (media servers, shares), so give
+	// the result ordinary file permissions before publishing it.
+	// #nosec G302 G703 - output videos are intentionally world-readable; tempPath comes from os.CreateTemp
+	if chmodErr := os.Chmod(tempPath, 0o644); chmodErr != nil {
+		slog.Warn("Failed to set permissions on output file", "path", tempPath, "error", chmodErr)
+	}
+
+	// Atomically rename temp file to final location
+	// #nosec G703 - tempPath comes from os.CreateTemp and outputPath is the validated output path
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		slog.Error("Failed to rename temp file to output path", "temp", tempPath, "output", outputPath, "error", err)
+		return 0, http.StatusInternalServerError, errors.New("Failed to finalize output file") //nolint:staticcheck // HTTP error text
+	}
+
+	return bytesWritten, http.StatusOK, nil
+}
+
+// finalizeUploadedJob records the side information of a completed upload: the
+// final output location, the source metadata reported by the worker, and the
+// output checksum (so the scanner recognises the file as already converted).
+// These are best effort; the job is already completed at this point.
+func (s *Server) finalizeUploadedJob(job *models.Job, outputPath, outputChecksum string, metadata []byte) {
+	if outputPath != job.OutputPath {
+		if err := s.db.SetJobOutputPath(job.ID, outputPath); err != nil {
+			slog.Warn("Failed to record adjusted output path", fieldJobID, job.ID, "error", err)
+		}
+
+		// Replace-source mode (output path == source path): the converted file
+		// landed next to the original under a new extension, so remove the
+		// original to complete the replacement.
+		if job.OutputPath == job.SourcePath {
+			if sourcePath, err := utils.ValidatePathInAllowedDirs(s.allowedDirs, job.SourcePath); err == nil {
+				// #nosec G703 - sourcePath was validated against the allowed directories
+				if rmErr := os.Remove(sourcePath); rmErr != nil && !os.IsNotExist(rmErr) {
+					slog.Warn("Failed to remove replaced source file", fieldJobID, job.ID, "path", sourcePath, "error", rmErr)
+				}
+			}
+		}
+	}
+
+	if err := s.db.RecordKnownOutput(outputChecksum, outputPath); err != nil {
+		slog.Warn("Failed to record output checksum", fieldJobID, job.ID, "error", err)
+	}
+
+	if len(metadata) == 0 {
+		return
+	}
+	var reported models.Job
+	if err := json.Unmarshal(metadata, &reported); err != nil {
+		slog.Warn("Ignoring malformed job metadata from worker", fieldJobID, job.ID, "error", err)
+		return
+	}
+	reported.ID = job.ID
+	if err := s.db.UpdateJobSourceMetadata(&reported); err != nil {
+		slog.Warn("Failed to store job metadata", fieldJobID, job.ID, "error", err)
+	}
+}
+
+// recordJobCompletion records completion metrics and fires the "completed"
+// webhook for a job that has just been marked completed. The upload is what
+// completes a job in the normal worker flow (workers do not send a separate
+// job-complete call), so both completion paths share this.
+func (s *Server) recordJobCompletion(job *models.Job) {
+	if job.StartedAt != nil {
+		s.metrics.RecordJobCompleted(time.Since(*job.StartedAt).Seconds())
+	}
+	s.metrics.RecordJobFinished()
+
+	if updatedJob, fetchErr := s.db.GetJobByID(job.ID); fetchErr == nil {
+		s.notifier.Notify(statusCompleted, updatedJob)
+	}
+}
+
+// cleanupUploadTemp closes the upload temp file and removes it if it was not
+// renamed into place (i.e. the upload did not complete).
+func cleanupUploadTemp(tempFile *os.File, tempPath string) {
+	// The success path closes the file explicitly before renaming it.
+	cerr := tempFile.Close()
+	if cerr != nil && !errors.Is(cerr, os.ErrClosed) {
+		slog.Warn("Failed to close temp file", "error", cerr)
+	}
+	// #nosec G703 - tempPath is created by os.CreateTemp inside the validated output directory
+	if _, statErr := os.Stat(tempPath); statErr != nil {
+		return
+	}
+	// #nosec G703 - tempPath is created by os.CreateTemp inside the validated output directory
+	if rerr := os.Remove(tempPath); rerr != nil {
+		slog.Warn("Failed to remove temp file", "path", tempPath, "error", rerr)
+	}
+}
+
+// maxUploadMetadataSize bounds the optional "metadata" form field of an upload.
+const maxUploadMetadataSize = 64 * 1024
+
+// nextVideoPart advances the multipart stream to the "video" file part. A
+// "metadata" field that precedes it (JSON source metadata from the worker) is
+// returned alongside; other fields are skipped.
+func nextVideoPart(reader *multipart.Reader) (*multipart.Part, []byte, error) {
+	var metadata []byte
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			return nil, nil, fmt.Errorf("video part not found: %w", err)
+		}
+		switch part.FormName() {
+		case "video":
+			return part, metadata, nil
+		case "metadata":
+			data, readErr := io.ReadAll(io.LimitReader(part, maxUploadMetadataSize))
+			if readErr == nil {
+				metadata = data
+			}
+		}
+		_ = part.Close()
 	}
 }
 
@@ -1566,6 +1757,19 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	if progress.WorkerID == "" {
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
+		return
+	}
+
+	// Progress is only meaningful for a job this worker is currently processing.
+	// Answering 409/404 otherwise is also how a worker learns that its job was
+	// cancelled, requeued or reassigned, so it can stop working on it.
+	job, err := s.db.GetJobByID(progress.JobID)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	if job.Status != statusProcessing || job.WorkerID != progress.WorkerID {
+		http.Error(w, "Job is no longer assigned to this worker", http.StatusConflict)
 		return
 	}
 
@@ -1626,8 +1830,18 @@ func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Include the job status so pollers can tell when the job has finished;
+	// the progress row itself outlives the job's processing state.
+	response := struct {
+		*models.JobProgress
+		Status string `json:"status,omitempty"`
+	}{JobProgress: progress}
+	if job, jobErr := s.db.GetJobByID(jobID); jobErr == nil {
+		response.Status = job.Status
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(progress)
+	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
 		slog.Error("Failed to encode job progress response", "error", err)
 	}
@@ -1703,6 +1917,8 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			// Client disconnected
 			return
+		case <-s.done:
+			return
 		case <-ticker.C:
 			// Check if job is still processing
 			currentJob, jobErr := s.db.GetJobByID(jobID)
@@ -1743,10 +1959,12 @@ func (s *Server) StreamJobProgress(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Check if job completed or failed
-			if currentJob.Status == constants.JobStatusCompleted || currentJob.Status == constants.JobStatusFailed {
-				progressEvent[fieldProgress] = 100.0
-				if currentJob.Status == constants.JobStatusFailed {
+			// Check if the job reached a terminal state (completed, failed or
+			// cancelled); without this the stream would poll forever.
+			if isTerminalJobStatus(currentJob.Status) {
+				if currentJob.Status == constants.JobStatusCompleted {
+					progressEvent[fieldProgress] = 100.0
+				} else {
 					progressEvent["error"] = currentJob.ErrorMessage
 				}
 				data, marshalErr := json.Marshal(progressEvent)
@@ -1968,7 +2186,11 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Support both JSON body and query parameters for flexibility
-	if r.Header.Get("Content-Type") == "application/json" {
+	// Only treat the request as JSON when it actually carries a body; clients
+	// (including the CLI) may send the JSON content type with query parameters,
+	// and the media type may carry parameters such as "; charset=utf-8".
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType == "application/json" && r.ContentLength != 0 {
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -2367,8 +2589,8 @@ func (s *Server) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 
 // parseInt safely parses an integer from string
 func parseInt(s string) (int, error) {
-	var n int
-	_, err := fmt.Sscanf(s, "%d", &n)
+	// strconv rejects trailing garbage ("12abc"), which fmt.Sscanf silently accepted.
+	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse integer: %w", err)
 	}
@@ -2438,13 +2660,22 @@ func validateConfigContent(configType string, content []byte) []string {
 	return errors
 }
 
+// Per-IP API rate limit: sustained requests per minute and burst size.
+const (
+	rateLimitPerMinute = 600
+	rateLimitBurst     = 600
+)
+
 // rateLimitMiddleware applies rate limiting to endpoints
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
 
-		// Apply rate limit: 100 requests per minute per IP
-		if !s.rateLimiter.allow(ip, 100, time.Minute/100) {
+		// Apply rate limit per IP. A single worker legitimately issues job polls,
+		// heartbeats and per-job progress reports for every concurrent job, and
+		// several workers may share one address behind NAT, so the budget has to
+		// leave room for that; it only exists to stop runaway clients.
+		if !s.rateLimiter.allow(ip, rateLimitBurst, time.Minute/rateLimitPerMinute) {
 			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -2555,6 +2786,15 @@ func (s *Server) updateQueueDepthMetric() {
 	if err == nil {
 		s.metrics.SetQueueDepth(float64(count))
 	}
+
+	// Re-sync the in-progress gauge from the database. It is otherwise only
+	// adjusted by start/finish events, so jobs that leave "processing" another
+	// way (cancelled, requeued, reclaimed from an offline worker) would make it
+	// drift upwards forever.
+	if stats, statsErr := s.db.GetJobStats(); statsErr == nil {
+		processing, _ := stats[statusProcessing].(int)
+		s.metrics.SetJobsInProgress(processing)
+	}
 }
 
 // RefreshQueueDepth updates the queue depth metric from the database.
@@ -2619,7 +2859,14 @@ func (s *Server) metricsMiddleware(next http.Handler) http.Handler {
 		if statusCode == 0 {
 			statusCode = http.StatusOK
 		}
-		s.metrics.RecordAPIRequest(r.URL.Path, r.Method, fmt.Sprintf("%d", statusCode), time.Since(start).Seconds())
+		// Label by the matched route, not the raw path: every distinct label
+		// value is a new Prometheus series kept for the life of the process, so
+		// raw paths would let any client (or scanner bot) grow memory unbounded.
+		endpoint := r.Pattern
+		if endpoint == "" || (endpoint == "/" && r.URL.Path != "/") {
+			endpoint = "other"
+		}
+		s.metrics.RecordAPIRequest(endpoint, r.Method, fmt.Sprintf("%d", statusCode), time.Since(start).Seconds())
 	})
 }
 

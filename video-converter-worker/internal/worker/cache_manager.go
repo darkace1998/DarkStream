@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +20,9 @@ type CacheManager struct {
 	mu          sync.RWMutex
 	currentSize int64
 	stopped     bool
+	// protected holds directories whose files must never be evicted (the working
+	// directories of jobs that are currently running), with a reference count.
+	protected map[string]int
 }
 
 // CacheEntry represents a cached file entry
@@ -59,6 +63,42 @@ func (cm *CacheManager) GetCacheSize() int64 {
 	return cm.currentSize
 }
 
+// Protect marks dir as in use so Cleanup never deletes files inside it. Without
+// this, enforcing the size limit evicts the oldest files first - which are the
+// source/output files of the jobs that are still being converted.
+func (cm *CacheManager) Protect(dir string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.protected == nil {
+		cm.protected = make(map[string]int)
+	}
+	cm.protected[filepath.Clean(dir)]++
+}
+
+// Unprotect releases a directory previously passed to Protect.
+func (cm *CacheManager) Unprotect(dir string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	key := filepath.Clean(dir)
+	if cm.protected[key] <= 1 {
+		delete(cm.protected, key)
+		return
+	}
+	cm.protected[key]--
+}
+
+// isProtected reports whether path lies inside a protected directory.
+func (cm *CacheManager) isProtected(path string) bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	for dir := range cm.protected {
+		if rel, err := filepath.Rel(dir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Cleanup removes old files and enforces size limits
 func (cm *CacheManager) Cleanup() error {
 	cm.mu.Lock()
@@ -68,9 +108,18 @@ func (cm *CacheManager) Cleanup() error {
 	}
 	cm.mu.Unlock()
 
-	totalSize, entries, err := cm.listCacheEntries()
+	totalSize, allEntries, err := cm.listCacheEntries()
 	if err != nil {
 		return err
+	}
+
+	// Files of running jobs still count towards the total but are not candidates
+	// for removal.
+	entries := make([]CacheEntry, 0, len(allEntries))
+	for _, entry := range allEntries {
+		if !cm.isProtected(entry.Path) {
+			entries = append(entries, entry)
+		}
 	}
 
 	var removedCount int
