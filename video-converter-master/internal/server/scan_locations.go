@@ -36,7 +36,7 @@ type scanLocationRequest struct {
 	SkipHiddenDirs   bool     `json:"skip_hidden_dirs"`
 	ReplaceSource    bool     `json:"replace_source"`
 	DetectDuplicates bool     `json:"detect_duplicates"`
-	Priority         int      `json:"priority"`
+	Priority         *int     `json:"priority,omitempty"`
 }
 
 // HandleScanLocations routes the scan-locations API:
@@ -233,10 +233,14 @@ func (req *scanLocationRequest) toModel() (models.ScanLocation, *config.Validati
 	if loc.RecursiveDepth == 0 {
 		loc.RecursiveDepth = -1
 	}
-	if loc.Priority < 0 || loc.Priority > 10 {
+	switch {
+	case loc.Priority == nil:
+		// Omitted priority means the default (normal); an explicit 0 is a
+		// valid low priority and must be preserved.
+		p := constants.JobPriorityNormal
+		loc.Priority = &p
+	case *loc.Priority < 0 || *loc.Priority > 10:
 		add("priority", "must be between 0 and 10")
-	} else if loc.Priority == 0 {
-		loc.Priority = constants.JobPriorityNormal
 	}
 	if loc.Name == "" {
 		loc.Name = loc.ID

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/darkace1998/video-converter-common/constants"
+	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-master/internal/config"
 )
 
@@ -62,7 +63,8 @@ func (s *Server) GetServerSettings(w http.ResponseWriter, r *http.Request) {
 		"log_level":        cfg.Logging.Level,
 		"log_format":       cfg.Logging.Format,
 		"config_file":      configFile,
-		"restart_required": "Changes to these settings are written to the config file and apply after the master restarts.",
+		"restart_required": true,
+		"message":          "Changes to these settings are written to the config file and apply after the master restarts.",
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("Failed to encode server settings", "error", err)
@@ -85,7 +87,17 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if validationErrs := validateServerSettings(req); validationErrs != nil {
+	// Merge semantics: empty/zero fields keep the current value from the
+	// config file (falling back to the running config when no file is
+	// readable yet), so a partial payload cannot silently clear the API key,
+	// TLS paths or any other setting. Clearing a setting requires editing the
+	// config file.
+	current := s.masterCfg
+	if loaded, lerr := config.LoadMasterConfig(s.persister.Path()); lerr == nil {
+		current = loaded
+	}
+	merged := mergedWithCurrent(current, req)
+	if validationErrs := validateServerSettings(merged); validationErrs != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		if err := json.NewEncoder(w).Encode(map[string]any{
@@ -98,14 +110,14 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	settings := config.ServerSettings{
-		Host:         req.Host,
-		Port:         req.Port,
-		APIKey:       req.APIKey,
-		TLSCert:      req.TLSCert,
-		TLSKey:       req.TLSKey,
-		DatabasePath: req.DatabasePath,
-		LogLevel:     req.LogLevel,
-		LogFormat:    req.LogFormat,
+		Host:         merged.Host,
+		Port:         merged.Port,
+		APIKey:       merged.APIKey,
+		TLSCert:      merged.TLSCert,
+		TLSKey:       merged.TLSKey,
+		DatabasePath: merged.DatabasePath,
+		LogLevel:     merged.LogLevel,
+		LogFormat:    merged.LogFormat,
 	}
 	if err := s.persister.Update(settings); err != nil {
 		slog.Error("Failed to persist server settings", "error", err)
@@ -114,7 +126,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("Server settings persisted to config file (restart required to apply)",
-		"path", s.persister.Path(), "host", req.Host, "port", req.Port)
+		"path", s.persister.Path(), "host", merged.Host, "port", merged.Port)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
@@ -125,6 +137,37 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		slog.Error("Failed to encode server settings response", "error", err)
 	}
+}
+
+// mergedWithCurrent fills empty/zero fields of the request with the current
+// effective values from cfg, so a partial update keeps existing settings
+// instead of wiping them.
+func mergedWithCurrent(cfg *models.MasterConfig, req ServerSettingsRequest) ServerSettingsRequest {
+	if req.Host == "" {
+		req.Host = cfg.Server.Host
+	}
+	if req.Port == 0 {
+		req.Port = cfg.Server.Port
+	}
+	if req.APIKey == "" {
+		req.APIKey = cfg.Server.APIKey
+	}
+	if req.TLSCert == "" {
+		req.TLSCert = cfg.Server.TLSCert
+	}
+	if req.TLSKey == "" {
+		req.TLSKey = cfg.Server.TLSKey
+	}
+	if req.DatabasePath == "" {
+		req.DatabasePath = cfg.Database.Path
+	}
+	if req.LogLevel == "" {
+		req.LogLevel = cfg.Logging.Level
+	}
+	if req.LogFormat == "" {
+		req.LogFormat = cfg.Logging.Format
+	}
+	return req
 }
 
 // validateServerSettings checks server settings before they are persisted.

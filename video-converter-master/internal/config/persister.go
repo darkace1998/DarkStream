@@ -75,7 +75,7 @@ func (p *Persister) UpdateScanLocations(locations []models.ScanLocation) error {
 			SkipHiddenDirs:   loc.SkipHiddenDirs,
 			ReplaceSource:    loc.ReplaceSource,
 			DetectDuplicates: loc.DetectDuplicates,
-			Priority:         loc.Priority,
+			Priority:         loc.EffectivePriority(),
 		})
 	}
 

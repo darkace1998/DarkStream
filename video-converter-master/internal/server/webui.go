@@ -413,7 +413,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <td>{{.HashAlgo}}</td>
                             <td>{{.ScanInterval}}</td>
                             <td>{{if .EnableWatch}}yes{{else}}no{{end}}</td>
-                            <td>{{.Priority}}</td>
+                            <td>{{.EffectivePriority}}</td>
                             <td>{{if .Running}}<span style="color:#4caf50;">running</span>{{else}}<span style="color:#f44336;">stopped</span>{{end}}</td>
                             <td>
                                 <button class="btn btn-primary btn-sm" onclick="scanLocationNow('{{.ID}}')">▶ Scan now</button>
@@ -684,7 +684,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                             <input type="number" id="srvPort" name="srvPort" value="{{.ServerSettings.Port}}" min="1" max="65535" />
                         </div>
                         <div class="form-group">
-                            <label for="srvApiKey">API Key (leave empty to disable auth)</label>
+                            <label for="srvApiKey">API Key (empty = keep current value)</label>
                             <input type="password" id="srvApiKey" name="srvApiKey" value="{{.ServerSettings.APIKey}}" autocomplete="off" />
                         </div>
                         <div class="form-group">
@@ -935,6 +935,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
 
             const extRaw = document.getElementById('locExtensions').value.trim();
             const extensions = extRaw === '' ? [] : extRaw.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+            const priorityVal = parseInt(document.getElementById('locPriority').value, 10);
 
             const loc = {
                 id: document.getElementById('locId').value.trim(),
@@ -946,7 +947,7 @@ var webUITemplate = template.Must(template.New("webui").Parse(`<!DOCTYPE html>
                 hash_algo: document.getElementById('locHashAlgo').value,
                 scan_interval_sec: parseInt(document.getElementById('locInterval').value, 10) || 0,
                 enable_watch: document.getElementById('locWatch').value === 'true',
-                priority: parseInt(document.getElementById('locPriority').value, 10) || 5,
+                priority: isNaN(priorityVal) ? 5 : priorityVal,
                 recursive_depth: parseInt(document.getElementById('locDepth').value, 10),
                 detect_duplicates: document.getElementById('locDedup').value === 'true',
                 skip_hidden_files: true,

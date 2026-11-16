@@ -2,7 +2,7 @@
 package utils
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G502 - SHA-1 is opt-in for fast integrity checks and dedup, not a security primitive
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"

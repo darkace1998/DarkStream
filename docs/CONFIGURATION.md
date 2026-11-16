@@ -64,6 +64,15 @@ are preserved), then responds with `restart_required: true` — server-level
 changes only apply after the master restarts. Note the master refuses to start
 with an `api_key` over plain HTTP; set `tls_cert`/`tls_key` as well.
 
+**Merge semantics:** any field left empty/zero in the POST body keeps its current
+value from the config file, so a partial payload cannot silently clear the API
+key or TLS paths. To clear a setting (e.g. disable authentication), edit the
+config file directly.
+
+When no `api_key` is configured, the scan-locations and server-settings
+endpoints accept unauthenticated requests; the master logs a warning at startup
+in that case.
+
 ### `server` (Maps to `MasterConfig.Server`)
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
@@ -111,7 +120,7 @@ POST   /api/scan-locations?scan_now=<id>    # trigger an immediate scan
 | `enable_watch` | fsnotify watcher for instant pickup of new files |
 | `video_extensions` | Extensions to convert; everything else is skipped without stat/hash I/O |
 | `recursive_depth`, `min_file_size`, `max_file_size`, `skip_hidden_*`, `replace_source`, `detect_duplicates` | Same semantics as the legacy scanner fields, but per location |
-| `priority` | Default job priority (0-10) for files from this location |
+| `priority` | Default job priority (0 = low, 10 = high) for files from this location. Omitted = 5 (normal); `0` is a valid low priority |
 
 Scan performance notes: files whose size and mtime are unchanged since the last
 scan are recorded in the `files` table and skipped without being re-read, so
