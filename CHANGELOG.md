@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
+
 ### Added
 - **Master**: Multi-location scanning: multiple source trees run in parallel, each with its own
   worker pool and settings, manageable at runtime from the Web UI ("Scan Locations" tab) or via
@@ -14,13 +16,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Master**: `/api/server-settings` and a Server Settings form in the Web UI to persist server,
   database and logging settings to the config file (applied after restart).
 - **Master**: Config-free startup: the master generates a working default config when none is found.
+- **Security**: Per-worker bearer tokens (`server.worker_tokens`) accepted only on `/api/worker/*`
+  endpoints and bound to the worker's own jobs; the worker's actor is recorded as `worker:<id>` in
+  the audit log. The master API key keeps working everywhere.
+- **Security**: Short-lived HMAC-signed stream tokens (`POST /api/stream-token`, 5-minute TTL) for
+  the `/api/stats/stream` and `/api/job/progress/stream` SSE endpoints, so the long-lived API key
+  never lands in URLs or access logs. The Web UI uses `?token=` with an `?api_key=` fallback.
+- **Master**: Audit log: an `audit_log` SQLite table plus `GET /api/audit-log?limit=N`; every
+  state-changing API call (config, server settings, scan locations, queue, jobs, worker admin,
+  uploads) is recorded with actor and detail.
+- **Master/Worker**: Chunked parallel upload of converted videos: `POST /api/worker/upload-chunk`
+  (offset/total size, gap/overlap detection validated before any bytes are written, SHA-256
+  finalize and job completion identical to single-stream) and a worker client that sends 4 chunks
+  in parallel with retries and backoff, falling back to multipart upload on older masters.
+  `storage.chunk_size` is now honored (it was documented but unused).
+- **Master**: `hash_mode: full|skip` per scan location: `skip` never reads file contents at scan
+  time (size+mtime change detection only), the biggest scan-speed win on large libraries.
+- **Ops**: Kubernetes manifests under `deploy/k8s/` (master Deployment+Service+PVC pinned to one
+  replica, worker DaemonSet with hostPath media, ConfigMaps validated against the strict config
+  loaders, Prometheus ServiceMonitor), a Grafana dashboard covering all `darkstream_*` metrics,
+  and `docs/LOG_ROTATION.md` log-rotation guidance per deployment style.
 
 ### Changed
 - **Master**: The initial library scan runs in the background of each scan location's runtime,
   so the web interface starts immediately instead of waiting for scans to finish.
 - **Master**: `POST /api/server-settings` uses merge semantics: fields left empty keep their
-  current value from the config file, so partial payloads can no longer silently clear the API
-  key or TLS paths.
+  current value from the config file, so partial payloads can no longer silently clear the
+  API key or TLS paths.
+- **Master**: `/readyz` now requires a database ping and at least one running scan location, so
+  a location-less master stays out of Service endpoints.
+- **Master**: The 3.4k-line `internal/server/http.go` is split into themed files
+  (`middleware.go`, `worker_api.go`, `jobs_api.go`, `streaming.go`, `uploads.go`,
+  `health.go`, `admin_api.go`, `auth_audit.go`, `upload_chunks.go`) and the Web UI templates
+  are extracted to embedded `webui.html.tmpl` / `jobdetails.html.tmpl`.
+- **Database**: SQLite runs with WAL and `busy_timeout`, runs `PRAGMA optimize` on close, and the
+  connection is pinged at startup.
 - **Build**: Docker builds fetch Go modules with `GOPROXY=direct` first and fall back to the
   public module proxy, so a single flaky direct fetch no longer fails image builds.
 
@@ -33,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also documents the config file path (previously the boolean was a human-readable string).
 - **Master**: A warning is logged at startup when no `api_key` is configured, since the
   scan-locations and server-settings endpoints then accept unauthenticated requests.
+- **Master**: In-handler `requireAPIKeyAuth` now honors the auth middleware's authenticated
+  context, so valid stream tokens no longer get a `401` after passing the middleware.
 
 ## [0.6.0] - 2026-11-16
 
