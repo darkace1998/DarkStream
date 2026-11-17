@@ -374,6 +374,7 @@
                             <th>Hash</th>
                             <th>Interval</th>
                             <th>Watch</th>
+                            <th>Replace</th>
                             <th>Priority</th>
                             <th>Status</th>
                             <th>Actions</th>
@@ -390,6 +391,7 @@
                             <td>{{.HashAlgo}}</td>
                             <td>{{.ScanInterval}}</td>
                             <td>{{if .EnableWatch}}yes{{else}}no{{end}}</td>
+                            <td>{{if .ReplaceSource}}yes{{else}}no{{end}}</td>
                             <td>{{.EffectivePriority}}</td>
                             <td>{{if .Running}}<span style="color:#4caf50;">running</span>{{else}}<span style="color:#f44336;">stopped</span>{{end}}</td>
                             <td>
@@ -467,6 +469,13 @@
                                 <select id="locDedup">
                                     <option value="true" selected>Enabled</option>
                                     <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="locReplace">Replace source file after conversion (use with caution!)</label>
+                                <select id="locReplace">
+                                    <option value="false" selected>Disabled</option>
+                                    <option value="true">Enabled</option>
                                 </select>
                             </div>
                         </div>
@@ -929,7 +938,7 @@
                 detect_duplicates: document.getElementById('locDedup').value === 'true',
                 skip_hidden_files: true,
                 skip_hidden_dirs: true,
-                replace_source: false,
+                replace_source: document.getElementById('locReplace').value === 'true',
                 min_file_size: 0,
                 max_file_size: 0
             };

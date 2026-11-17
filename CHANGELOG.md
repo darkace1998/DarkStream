@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Docker**: the `all-in-one` image now auto-starts: with no arguments its entrypoint
+  (`docker/entrypoint-all-in-one.sh`) starts the master, waits for `/healthz`, then starts
+  a worker pointed at the in-container master — the worker registers itself via heartbeat,
+  so one container scans `/mnt/storage/videos` and processes jobs end to end. Arguments are
+  still exec'd directly (`docker run <img> ./video-converter-cli --help`). `DARKSTREAM_API_KEY`
+  is injected into the worker config automatically; `DARKSTREAM_WORKER_ID` sets the worker id.
+  A matching `all-in-one` service was added to `docker-compose.yml`, and the master DB now
+  lives on the `/app/db` volume in this image.
+- **Master Web UI**: scan-location form now has a "Replace source file after conversion"
+  toggle (the API field `replace_source` was previously unreachable from the UI), and the
+  locations table shows a Replace column.
+
+
 ### Changed
 - **Master**: `hash_algo` now defaults to `sha1` for new scan locations — SHA-1 has no
   hardware instruction set, but its software implementation is already ~2.5x faster than
