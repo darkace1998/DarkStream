@@ -218,6 +218,7 @@ func (s *Server) storeUpload(file io.Reader, outputPath string) (int64, int, err
 	// to be consumed by other users/services (media servers, shares), so give
 	// the result ordinary file permissions before publishing it.
 	// #nosec G302 G703 - output videos are intentionally world-readable; tempPath comes from os.CreateTemp
+	// #nosec G302 -- converted output files are world-readable by design, same as the OS default for media files
 	if chmodErr := os.Chmod(tempPath, 0o644); chmodErr != nil {
 		slog.Warn("Failed to set permissions on output file", "path", tempPath, "error", chmodErr)
 	}

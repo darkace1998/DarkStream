@@ -166,7 +166,7 @@ func (s *Server) getChunkState(job *models.Job, outputPath string, totalSize int
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
 	partPath := outputPath + ".part"
-	f, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 G703 -- partPath is outputPath+".part"; outputPath was validated against the allowed directories in resolveChunkTarget
 	if err != nil {
 		return nil, fmt.Errorf("failed to create part file: %w", err)
 	}
@@ -260,7 +260,7 @@ func (st *chunkUploadState) writeChunk(offset int64, chunk []byte) (bool, error)
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	f, err := os.OpenFile(st.partPath, os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(st.partPath, os.O_WRONLY, 0o600) // #nosec G703 G304 -- st.partPath derives from job.OutputPath, which resolveChunkTarget validated against the allowed directories
 	if err != nil {
 		return false, err
 	}
@@ -314,10 +314,13 @@ func (st *chunkUploadState) progress() int64 {
 func (st *chunkUploadState) finalize() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if err := os.Rename(st.partPath, st.partPath[:len(st.partPath)-len(".part")]); err != nil {
+	finalPath := st.partPath[:len(st.partPath)-len(".part")]
+	// #nosec G703 -- partPath was validated against the allowed directories in resolveChunkTarget
+	if err := os.Rename(st.partPath, finalPath); err != nil {
 		return err
 	}
-	if err := os.Chmod(st.partPath[:len(st.partPath)-len(".part")], 0o644); err != nil {
+	// #nosec G302 -- final output keeps 0644, same as single-stream uploads (uploads.go)
+	if err := os.Chmod(finalPath, 0o644); err != nil {
 		return err
 	}
 	return nil

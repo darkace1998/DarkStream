@@ -2,7 +2,7 @@
 package utils
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- SHA-1 is used only for file integrity/duplicate-detection checksums, not for any security purpose
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -31,7 +31,7 @@ func NewHash(algo string) (hash.Hash, error) {
 	case "", HashAlgoSHA256:
 		return sha256.New(), nil
 	case HashAlgoSHA1:
-		return sha1.New(), nil
+		return sha1.New(), nil // #nosec G401 -- integrity/dedup checksum only, not a security primitive (collision resistance not required here)
 	default:
 		return nil, fmt.Errorf("unsupported hash algorithm %q (want %q or %q)", algo, HashAlgoSHA256, HashAlgoSHA1)
 	}
