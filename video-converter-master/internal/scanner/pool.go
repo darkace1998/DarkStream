@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkace1998/video-converter-common/models"
@@ -41,6 +42,35 @@ func (s *Scanner) ScanDirectoryParallelCtx(ctx context.Context, engines int) ([]
 
 	dirs := s.collectDirs()
 	s.bump(func(st *ScanStats) { st.Dirs = len(dirs) })
+	slog.Info("Scan started", "root", s.RootPath, "dirs", len(dirs), "engines", engines)
+
+	// Log progress every 30s so a long scan shows live hashed/skipped counts
+	// instead of looking hung.
+	var processed atomic.Int64
+	progressDone := make(chan struct{})
+	var progressWg sync.WaitGroup
+	progressWg.Go(func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-progressDone:
+				return
+			case <-ticker.C:
+				st := s.Stats()
+				slog.Info("Scan in progress",
+					"root", s.RootPath,
+					"processed", processed.Load(),
+					"videos", st.Videos,
+					"hashed", st.Hashed,
+					"skipped_unchanged", st.SkippedUnchanged,
+					"skipped_output", st.SkippedOutput,
+					"duplicates", st.Duplicates,
+					"elapsed", time.Since(start).Round(time.Second),
+				)
+			}
+		}
+	})
 
 	filesCh := make(chan string, 1024)
 	var wg sync.WaitGroup
@@ -55,6 +85,7 @@ func (s *Scanner) ScanDirectoryParallelCtx(ctx context.Context, engines int) ([]
 					// further work.
 					continue
 				}
+				processed.Add(1)
 				job, procErr := s.ProcessFile(path)
 				if procErr != nil {
 					continue
@@ -72,6 +103,8 @@ func (s *Scanner) ScanDirectoryParallelCtx(ctx context.Context, engines int) ([]
 	s.feedFiles(ctx, dirs, filesCh)
 	close(filesCh)
 	wg.Wait()
+	close(progressDone)
+	progressWg.Wait()
 
 	stats := s.Stats()
 	stats.Duration = time.Since(start)

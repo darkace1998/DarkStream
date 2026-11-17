@@ -141,7 +141,7 @@ POST   /api/scan-locations?scan_now=<id>    # trigger an immediate scan
 | `id` / `name` | Slug (1-64 chars `[a-zA-Z0-9_-]`) and display name |
 | `root_path` / `output_base` | Source tree and output tree for this location |
 | `engines` | Parallel scan workers for this location (1-64, default 4) — match to the disk |
-| `hash_algo` | `sha256` (default) or `sha1`. SHA-1 is faster and less CPU-intensive; workers infer the algorithm from the checksum length, so `sha1` works end-to-end for download verification |
+| `hash_algo` | `sha256` (default) or `sha1`. `sha256` is hardware-accelerated (SHA-NI / AVX-512 / AVX2, picked at runtime; identical digests to standard SHA-256) so scanning is not CPU-bound on modern CPUs; `sha1` is even lighter on CPUs without SHA extensions. Workers infer the algorithm from the checksum length, so `sha1` works end-to-end for download verification |
 | `hash_mode` | `full` (default) hashes every changed video during the scan; `skip` never reads file contents at scan time (no source checksum, no content dedup) and relies on size+mtime change detection — fastest option for huge libraries on slow disks |
 | `scan_interval` | Periodic rescan interval (e.g. `5m`); `0` = startup/watch events only |
 | `enable_watch` | fsnotify watcher for instant pickup of new files |

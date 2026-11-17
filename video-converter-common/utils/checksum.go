@@ -3,7 +3,6 @@ package utils
 
 import (
 	"crypto/sha1" // #nosec G505 - SHA-1 is opt-in for fast integrity checks and dedup, not a security primitive
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -11,6 +10,13 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	// sha256-simd produces standard SHA-256 digests but dispatches at runtime
+	// to SHA-NI, AVX-512 or AVX2 assembly when the CPU supports it. Go's
+	// crypto/sha256 only uses SHA-NI on amd64 and otherwise falls back to a
+	// slow generic implementation, which made scanning large libraries CPU-
+	// bound at 100% on AVX2-only CPUs (no SHA-NI).
+	sha256simd "github.com/minio/sha256-simd"
 )
 
 // Supported hash algorithms for file checksums.
@@ -20,8 +26,9 @@ const (
 )
 
 // hashReadBufferSize is the chunk size used when streaming a file into a hash.
-// 1 MiB keeps sequential reads efficient without large allocations per file.
-const hashReadBufferSize = 1 << 20
+// 4 MiB keeps sequential reads efficient on slow/network storage without large
+// allocations per file (a few engines x 4 MiB is negligible).
+const hashReadBufferSize = 4 << 20
 
 // NewHash returns a hash.Hash for the given algorithm. Empty and "sha256"
 // return SHA-256 (the default); "sha1" returns SHA-1, which is faster and less
@@ -29,7 +36,9 @@ const hashReadBufferSize = 1 << 20
 func NewHash(algo string) (hash.Hash, error) {
 	switch strings.ToLower(algo) {
 	case "", HashAlgoSHA256:
-		return sha256.New(), nil
+		// Identical digests to crypto/sha256; only the block function is
+		// hardware-accelerated.
+		return sha256simd.New(), nil
 	case HashAlgoSHA1:
 		// #nosec G401 - SHA-1 is opt-in for fast integrity checks and dedup, not a security primitive
 		return sha1.New(), nil

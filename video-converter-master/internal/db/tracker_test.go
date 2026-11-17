@@ -2120,3 +2120,23 @@ func TestMarkJobCancelledNotRetryable(t *testing.T) {
 		}
 	}
 }
+
+// Scans call HasJobWithSourceChecksum once per hashed file; without an index
+// that is a full table scan per file, which dominates scan time on large
+// libraries. Guard the index so it cannot be dropped accidentally.
+func TestSourceChecksumIndexExists(t *testing.T) {
+	dir := t.TempDir()
+	tracker, err := New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("Failed to create test db: %v", err)
+	}
+	defer func() { _ = tracker.Close() }()
+
+	var name string
+	err = tracker.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_jobs_source_checksum'`,
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("idx_jobs_source_checksum missing: %v", err)
+	}
+}

@@ -66,7 +66,12 @@ func New(dbPath string) (*Tracker, error) {
 func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, error) {
 	// WAL + busy_timeout let the parallel scan engines, watchers and HTTP
 	// handlers write concurrently without SQLITE_BUSY failures.
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	// WAL + busy_timeout let the parallel scan engines, watchers and HTTP
+	// handlers share one database. synchronous=NORMAL skips the per-commit
+	// fsync in WAL mode (still crash-safe for application crashes; only a
+	// power loss can lose the last commits), which matters a lot when the DB
+	// lives on slow/network storage and scans upsert per-file state.
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -1591,6 +1596,7 @@ func (t *Tracker) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_source_path ON jobs(source_path);
+	CREATE INDEX IF NOT EXISTS idx_jobs_source_checksum ON jobs(source_checksum);
 	CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
 	CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);

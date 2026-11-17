@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Common**: SHA-256 checksums now use `minio/sha256-simd`, which dispatches at runtime
+  to SHA-NI / AVX-512 / AVX2 assembly (identical digests to standard SHA-256). Scanning
+  large libraries no longer pegs the CPU on machines where Go's pure-Go SHA-256 fallback
+  was the bottleneck; hash reads use a 4 MiB buffer to cut syscall overhead on
+  network/FUSE mounts.
+- **Master**: scan-time duplicate lookups (`jobs.source_checksum`) are now indexed, and
+  the SQLite DSN uses `synchronous=NORMAL` in WAL mode, removing a per-commit fsync per
+  scanned file on slow storage.
+- **Master**: long scans log progress every 30s (`Scan in progress` with
+  processed/hashed/skipped_unchanged counts) in addition to the `Scan started` /
+  `Scan complete` lines.
+
+### Added
+- **Common**: `TestNewHashSHA256MatchesStdlib` proves the accelerated SHA-256 produces
+  byte-identical digests to `crypto/sha256`, plus a throughput benchmark.
+
 ## [0.7.0] - 2026-11-17
 
 ### Added

@@ -104,9 +104,7 @@ func TestGetAndUpdateBackoffConcurrency(t *testing.T) {
 
 	// Run concurrent updates
 	for range numGoroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range iterations {
 				// Alternate between increase and reset
 				if j%3 == 0 {
@@ -115,7 +113,7 @@ func TestGetAndUpdateBackoffConcurrency(t *testing.T) {
 					w.getAndUpdateBackoff(true)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
