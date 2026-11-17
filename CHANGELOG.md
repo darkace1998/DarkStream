@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Master**: `hash_algo` now defaults to `sha1` for new scan locations — SHA-1 has no
+  hardware instruction set, but its software implementation is already ~2.5x faster than
+  the SHA-256 fallback on CPUs without SHA-NI, which is the common case on NAS/ARM
+  boxes. Choose `sha256` explicitly on SHA-NI/AVX CPUs, where the SIMD-accelerated
+  SHA-256 is fastest. Existing configs keep their configured algorithm; workers infer
+  it from the checksum length, so mixed algorithms work end-to-end.
+
+### Changed
 - **Common**: SHA-256 checksums now use `minio/sha256-simd`, which dispatches at runtime
   to SHA-NI / AVX-512 / AVX2 assembly (identical digests to standard SHA-256). Scanning
   large libraries no longer pegs the CPU on machines where Go's pure-Go SHA-256 fallback

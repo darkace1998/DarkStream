@@ -156,3 +156,26 @@ func BenchmarkHashSHA256(b *testing.B) {
 		_ = h.Sum(nil)
 	}
 }
+
+// BenchmarkHashSHA1 measures raw SHA-1 throughput; on CPUs without SHA-NI
+// this is typically 2-3x the SHA-256 fallback, which is why sha1 is the
+// default hash_algo for scan locations.
+func BenchmarkHashSHA1(b *testing.B) {
+	data := make([]byte, 64<<20)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	h, err := NewHash(HashAlgoSHA1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		h.Reset()
+		if _, err := h.Write(data); err != nil {
+			b.Fatal(err)
+		}
+		_ = h.Sum(nil)
+	}
+}

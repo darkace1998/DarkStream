@@ -457,7 +457,7 @@ Lists all configured scan locations with their runtime status (running or stoppe
       "root_path": "/data/videos",
       "output_base": "/data/converted",
       "engines": 4,
-      "hash_algo": "sha256",
+      "hash_algo": "sha1",
       "scan_interval": 3600000000000,
       "enable_watch": true,
       "priority": 5,
@@ -479,13 +479,13 @@ Creates or updates (upserts by `id`) a scan location. The location starts scanni
   "root_path": "/data/videos",
   "output_base": "/data/converted",
   "engines": 4,
-  "hash_algo": "sha256",
+  "hash_algo": "sha1",
   "scan_interval_sec": 3600,
   "enable_watch": true,
   "priority": 5
 }
 ```
-*Notes: `id` must be 1-64 chars of `[a-zA-Z0-9_-]`; `root_path` must be an existing directory; `engines` 1-64; `priority` 0-10 (omitted = 5, 0 = low); `scan_interval_sec` 0 = startup/watch events only; `hash_algo` `sha256` (default) or `sha1`. Validation errors return `400` with a field-level `errors` array.*
+*Notes: `id` must be 1-64 chars of `[a-zA-Z0-9_-]`; `root_path` must be an existing directory; `engines` 1-64; `priority` 0-10 (omitted = 5, 0 = low); `scan_interval_sec` 0 = startup/watch events only; `hash_algo` `sha1` (default, fastest on most CPUs) or `sha256` (hardware-accelerated via SHA-NI/AVX-512/AVX2 where available; identical digests to standard SHA-256). Validation errors return `400` with a field-level `errors` array.*
 
 ### `DELETE /api/scan-locations?id=<id>`
 Stops and removes a scan location. Its queued jobs stay in the database. The change is persisted to the config file.
