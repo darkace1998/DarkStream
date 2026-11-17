@@ -16,6 +16,8 @@ import (
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
+
+	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // maxChunkBodySize caps a single chunk upload body (256 MiB).
@@ -137,6 +139,7 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while uploading", http.StatusConflict)
 		return
 	}
+	s.db.SetJobLogTail(job.ID, r.Header.Get(constants.HeaderLogTail))
 
 	s.finalizeUploadedJob(job, validatedPath, outputChecksum, nil)
 	s.recordJobCompletion(job)

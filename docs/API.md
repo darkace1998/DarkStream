@@ -30,7 +30,8 @@ The `Job` object represents a single video conversion task.
   "source_video_codec": "h264",
   "source_audio_codec": "aac",
   "source_bitrate": 5000000,
-  "source_file_size": 1073741824
+  "source_file_size": 1073741824,
+  "log_tail": "string (optional, last ~16 KiB of the worker's ffmpeg log for this job)"
 }
 ```
 
@@ -75,9 +76,13 @@ The `ConversionConfig` object defines the parameters for video conversion operat
   "use_vulkan": true,
   "audio_codec": "aac",
   "audio_bitrate": "128k",
-  "output_format": "mp4"
+  "output_format": "mp4",
+  "hw_accel": "auto"
 }
 ```
+
+`hw_accel` selects the ffmpeg `-hwaccel` decoder (`auto`, `none`, `cuda`, `vaapi`,
+`qsv`, `vulkan`); empty falls back to the legacy `use_vulkan` flag.
 
 ### WorkerHeartbeat
 The `WorkerHeartbeat` object contains status information sent periodically from workers to the master.
@@ -211,7 +216,8 @@ Reports that a job has been successfully completed.
 {
   "job_id": "string",
   "worker_id": "string",
-  "output_size": 1073741824
+  "output_size": 1073741824,
+  "log_tail": "string (optional, tail of the worker's ffmpeg log, stored on the job)"
 }
 ```
 
@@ -223,7 +229,8 @@ Reports that a job has failed to convert.
 {
   "job_id": "string",
   "worker_id": "string",
-  "error_message": "string"
+  "error_message": "string",
+  "log_tail": "string (optional, tail of the worker's ffmpeg log, stored on the job)"
 }
 ```
 
@@ -256,6 +263,12 @@ Uploads the converted video file. Requires `multipart/form-data`.
 
 **Query Parameters:**
 - `job_id` (string, required): The job ID to upload the converted video for.
+
+The optional `X-Darkstream-Log-Tail` request header (tail of the worker's ffmpeg log)
+is stored on the job and served by `GET /api/job/log`. The chunked variant
+`POST /api/worker/upload-chunk` accepts the same header on every chunk; the last one
+wins.
+
 
 ### `POST /api/worker/job-progress`
 Updates the conversion progress of a job.
@@ -548,6 +561,37 @@ Accepts a JSON payload corresponding to the complete or partial master configura
 Validates a configuration payload without applying it.
 
 ---
+
+## Ops / Admin
+### `GET /api/job/log?job_id=<id>`
+Returns the stored worker log tail for a job as `text/plain` (the last ~16 KiB of the
+ffmpeg/worker log captured when the job finished or failed). 404 when the job has no
+log stored. Requires the API key when one is configured.
+
+### `GET|POST /api/admin/backup?keep=true`
+Creates a consistent online backup of the SQLite job database (`VACUUM INTO`, safe
+while running under WAL) into `database.backup_dir` (or the DB directory), streams it
+as a file download, and deletes the on-disk copy unless `keep=true`. Recorded in the
+audit log as `admin.backup`.
+
+### `GET /api/webhook-deliveries?limit=N`
+Lists recent webhook delivery attempts (newest first, default limit 100): event, URL,
+attempt count, final HTTP status, duration and error for each delivery.
+
+### `GET /api/audit-log?limit=N`
+Lists recent audit-log entries (newest first). Also visible in the Web UI's Audit Log tab.
+
+## Webhooks
+When `notifications.webhook_url` is set, job events (`notifications.events`) are POSTed
+as JSON. Each request carries:
+* `X-Darkstream-Event` — the event name
+* `X-Darkstream-Delivery` — unique delivery ID
+* `X-Darkstream-Timestamp` — RFC 3339 send time
+* `X-Darkstream-Signature: sha256=<hex>` — HMAC-SHA256 of the raw request body, only when
+  `notifications.webhook_secret` (or `DARKSTREAM_WEBHOOK_SECRET`) is set
+
+Deliveries retry up to 3 times with exponential backoff on errors/non-2xx; outcomes are
+recorded per attempt and visible via `GET /api/webhook-deliveries`.
 
 ## System / Diagnostics
 

@@ -41,7 +41,7 @@ func TestWebhookNotifier_Notify(t *testing.T) {
 	defer ts.Close()
 
 	// Test 1: Event enabled, should send
-	notifier := NewWebhookNotifier(ts.URL, []string{constants.JobStatusCompleted, "failed"})
+	notifier := NewWebhookNotifier(ts.URL, []string{constants.JobStatusCompleted, "failed"}, "", nil)
 	job := &models.Job{ID: "job123", Status: constants.JobStatusCompleted}
 
 	notifier.Notify(constants.JobStatusCompleted, job)

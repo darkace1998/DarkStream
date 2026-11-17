@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Master/Worker**: Per-job logs — each worker tees the job's ffmpeg/worker log to disk and
+  uploads the last 16 KiB on completion/failure (`log_tail` on job-complete/job-failed and the
+  `X-Darkstream-Log-Tail` upload header); the master stores it (capped at 64 KiB) and serves it
+  via `GET /api/job/log?job_id=` and in the job details page ("Worker Log" section).
+- **Master**: Retention & backup — `database.retention_days` auto-prunes
+  completed/failed/cancelled jobs at startup and daily; `GET|POST /api/admin/backup?keep=true`
+  creates a consistent online (`VACUUM INTO`) backup into `database.backup_dir` and streams it
+  as a download (audited as `admin.backup`).
+- **Master/Web UI**: Audit Log tab in the dashboard (lazy-loaded from `GET /api/audit-log`).
+- **Master**: Webhooks are now reliable and verifiable — up to 3 attempts with exponential
+  backoff (1s/4s, cap 30s, abortable on shutdown), `X-Darkstream-Signature: sha256=<HMAC>`
+  when `notifications.webhook_secret` (or `DARKSTREAM_WEBHOOK_SECRET`) is set, and every
+  delivery recorded in the `webhook_deliveries` table, queryable via
+  `GET /api/webhook-deliveries?limit=N`.
+- **Worker/Master**: Hardware-accelerated decoding — `conversion.hw_accel`
+  (`auto`/`none`/`cuda`/`vaapi`/`qsv`/`vulkan`) maps to ffmpeg `-hwaccel` (with the right
+  `-hwaccel_device`), `auto` detects once per worker (CUDA > VAAPI > QSV > Vulkan), selectable
+  in the Web UI Configuration tab, validated server-side, and hardware encoder codecs
+  (`*_nvenc`/`*_qsv`/`*_vaapi`/...) pass through unchanged. A failed hw-accel conversion
+  automatically retries once with software encoding.
+- **Docs**: `config.yaml` added to `.gitignore`; secret-hygiene guidance (env vars
+  `DARKSTREAM_API_KEY` / `DARKSTREAM_WEBHOOK_SECRET` over plaintext config).
+
+### Fixed
+- **Master**: webhook delivery ID used a `%d` verb for a string job ID (go vet).
+
 ## [0.7.0] - 2026-11-17
 
 ### Added

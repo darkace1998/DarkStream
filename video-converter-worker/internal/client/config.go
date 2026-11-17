@@ -319,7 +319,13 @@ func FetchRemoteWorkerConfig(masterURL string, workerID string) (*models.RemoteW
 		requestURL = parsedURL.String()
 	}
 
-	apiKey := os.Getenv("DARKSTREAM_API_KEY")
+	// A per-worker token (DARKSTREAM_WORKER_TOKEN) is preferred over the master
+	// API key; /api/worker/config accepts worker tokens and binds them to the
+	// worker_id sent as a query parameter.
+	apiKey := os.Getenv("DARKSTREAM_WORKER_TOKEN")
+	if apiKey == "" {
+		apiKey = os.Getenv("DARKSTREAM_API_KEY")
+	}
 	if err := utils.ValidateSecureTransport(requestURL, apiKey != ""); err != nil {
 		return nil, err
 	}

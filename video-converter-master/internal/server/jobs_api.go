@@ -80,6 +80,33 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// GetJobLog returns the stored worker-side log tail for a job (ffmpeg output,
+// download/upload steps) as plain text. Empty when the worker sent none.
+func (s *Server) GetJobLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jobID := r.URL.Query().Get(fieldJobID)
+	if !validateJobID(jobID) {
+		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
+		return
+	}
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if job.LogTail != "" {
+		// #nosec G705 -- served with Content-Type text/plain above; the worker-supplied
+		// tail is never rendered as HTML, so it cannot execute as script.
+		if _, err := w.Write([]byte(job.LogTail)); err != nil {
+			slog.Error("Failed to write job log", fieldJobID, jobID, "error", err)
+		}
+	}
+}
+
 // GetJobProgress returns the current progress of a specific job
 func (s *Server) GetJobProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

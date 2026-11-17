@@ -160,8 +160,28 @@
 
     </div>
 
-    <script>
+                <h2>Worker Log <button class="btn btn-primary btn-sm" onclick="loadJobLog()">🔄 Reload</button></h2>
+            <p style="color: #888; font-size: 0.85em;">Last 64 KiB of the worker-side job log (download, ffprobe, ffmpeg output), sent with the completion/failure report.</p>
+            <pre id="jobLog" style="background:#111; color:#ccc; padding:10px; max-height:420px; overflow:auto; white-space:pre-wrap;">Loading…</pre>
+
+<script>
         const jobId = '{{.ID}}';
+
+        async function loadJobLog() {
+            const el = document.getElementById('jobLog');
+            try {
+                const resp = await fetch('/api/job/log?job_id=' + encodeURIComponent(jobId), { headers: authHeaders() });
+                if (!resp.ok) {
+                    el.textContent = resp.status === 404 ? 'Job not found.' : ('Failed to load log: HTTP ' + resp.status);
+                    return;
+                }
+                const text = await resp.text();
+                el.textContent = text || '(no log recorded for this job)';
+            } catch (err) {
+                el.textContent = 'Failed to load log: ' + err;
+            }
+        }
+        loadJobLog();
         const jobStatus = '{{.Status}}';
 
         function createElement(tag, options = {}) {

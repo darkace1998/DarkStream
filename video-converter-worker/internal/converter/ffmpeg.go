@@ -18,6 +18,8 @@ import (
 
 	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
+
+	"sync"
 )
 
 const (
@@ -62,6 +64,10 @@ type FFmpegConverter struct {
 	vulkanDetector *VulkanDetector
 	timeout        time.Duration
 	ctx            context.Context //nolint:containedctx // optional parent; cancels running conversions on shutdown
+
+	hwAccelMu     sync.Mutex
+	hwAccelCached string
+	hwAccelDone   bool
 }
 
 // SetContext wires a parent context whose cancellation stops in-flight FFmpeg
@@ -232,6 +238,82 @@ func (fc *FFmpegConverter) ValidateOutputWithLogger(outputPath string, log *slog
 	return nil
 }
 
+// hwAccelNames are the -hwaccel values this worker understands.
+var hwAccelNames = map[string]bool{
+	"":                    true,
+	constants.HWAccelNone: true, constants.HWAccelAuto: true,
+	constants.HWAccelCUDA: true, constants.HWAccelVAAPI: true,
+	constants.HWAccelQSV: true, constants.HWAccelVulkan: true,
+}
+
+// hwEncoderSuffixes mark codecs that are hardware encoders; they are passed
+// through to ffmpeg unchanged instead of being mapped to a software encoder.
+var hwEncoderSuffixes = []string{"_nvenc", "_qsv", "_vaapi", "_vulkan", "_amf", "_videotoolbox"}
+
+// resolveHWAccel picks the effective -hwaccel value for a conversion:
+// cfg.HWAccel wins when set ("auto" triggers one-time detection); otherwise the
+// legacy UseVulkan flag maps to vulkan. Returns "" for software decoding.
+func (fc *FFmpegConverter) resolveHWAccel(cfg *models.ConversionConfig, log *slog.Logger) string {
+	if log == nil {
+		log = slog.Default()
+	}
+	hw := strings.ToLower(strings.TrimSpace(cfg.HWAccel))
+	if hw == "" && cfg.UseVulkan {
+		return constants.HWAccelVulkan
+	}
+	if hw == constants.HWAccelAuto {
+		hw = fc.detectHWAccel(log)
+	}
+	if hw == constants.HWAccelNone {
+		return ""
+	}
+	if !hwAccelNames[hw] {
+		log.Warn("Unknown hw_accel value, ignoring", "hw_accel", cfg.HWAccel)
+		return ""
+	}
+	return hw
+}
+
+// detectHWAccel asks ffmpeg which hardware accelerators this build supports and
+// picks the best one present on this machine, in preference order
+// cuda (NVIDIA) > vaapi (/dev/dri) > qsv > vulkan. The result is cached.
+func (fc *FFmpegConverter) detectHWAccel(log *slog.Logger) string {
+	fc.hwAccelMu.Lock()
+	defer fc.hwAccelMu.Unlock()
+	if fc.hwAccelDone {
+		return fc.hwAccelCached
+	}
+	fc.hwAccelDone = true
+
+	available := map[string]bool{}
+	// #nosec G204 -- ffmpegPath comes from trusted local worker config; args are fixed literals.
+	if out, err := exec.Command(fc.ffmpegPath, "-hide_banner", "-hwaccels").Output(); err == nil {
+		for line := range strings.SplitSeq(string(out), "\n") {
+			fields := strings.Fields(strings.TrimSpace(line))
+			if len(fields) > 0 {
+				available[fields[len(fields)-1]] = true
+			}
+		}
+	}
+
+	_, nvidiaDev := os.Stat("/dev/nvidia0")
+	_, driDev := os.Stat("/dev/dri/renderD128")
+	switch {
+	case nvidiaDev == nil && available[constants.HWAccelCUDA]:
+		fc.hwAccelCached = constants.HWAccelCUDA
+	case driDev == nil && available[constants.HWAccelVAAPI]:
+		fc.hwAccelCached = constants.HWAccelVAAPI
+	case driDev == nil && available[constants.HWAccelQSV]:
+		fc.hwAccelCached = constants.HWAccelQSV
+	case available[constants.HWAccelVulkan]:
+		fc.hwAccelCached = constants.HWAccelVulkan
+	default:
+		fc.hwAccelCached = ""
+	}
+	log.Info("Detected hardware accelerators", "available", available, "selected", fc.hwAccelCached)
+	return fc.hwAccelCached
+}
+
 // buildFFmpegCommand constructs the FFmpeg command arguments
 func (fc *FFmpegConverter) buildFFmpegCommand(
 	job *models.Job,
@@ -244,12 +326,16 @@ func (fc *FFmpegConverter) buildFFmpegCommand(
 	// suppresses the human-oriented status line, which is redrawn with bare
 	// carriage returns and would otherwise run together into one endless line.
 	args := []string{"-nostdin", "-nostats", "-progress", "pipe:2"}
-	if cfg.UseVulkan {
-		// Use Vulkan for hardware decoding
-		args = append(args,
-			"-hwaccel", "vulkan",
-			"-hwaccel_device", "0", // Device index
-		)
+	if hwaccel := fc.resolveHWAccel(cfg, log); hwaccel != "" {
+		args = append(args, "-hwaccel", hwaccel)
+		switch hwaccel {
+		case constants.HWAccelVAAPI, constants.HWAccelQSV:
+			args = append(args, "-hwaccel_device", "/dev/dri/renderD128")
+		case constants.HWAccelVulkan:
+			args = append(args, "-hwaccel_device", "0") // Device index
+		case constants.HWAccelCUDA:
+			// no -hwaccel_device needed; ffmpeg picks the default GPU
+		}
 	}
 
 	args = append(args, "-i", job.SourcePath)
@@ -295,6 +381,16 @@ func (fc *FFmpegConverter) getVideoCodec(codec string, useVulkan bool) string {
 func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
+	}
+
+	// Hardware encoders (h264_nvenc, hevc_qsv, h264_vaapi, ...) are passed
+	// through unchanged; mapping them to a software encoder would silently
+	// defeat the whole point of selecting them.
+	lower := strings.ToLower(codec)
+	for _, suffix := range hwEncoderSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return lower
+		}
 	}
 
 	if useVulkan {

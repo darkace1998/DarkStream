@@ -165,26 +165,9 @@ func (s *Server) HandleStreamToken(w http.ResponseWriter, r *http.Request) {
 
 // HandleAuditLog returns recent audit entries. GET /api/audit-log?limit=N
 func (s *Server) HandleAuditLog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil {
-			limit = parsed
-		}
-	}
-	entries, err := s.db.GetAuditLog(limit)
-	if err != nil {
-		slog.Error("Failed to read audit log", "error", err)
-		http.Error(w, "Failed to read audit log", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", contentTypeJSON)
-	if err := json.NewEncoder(w).Encode(map[string]any{"entries": entries}); err != nil {
-		slog.Error("Failed to encode audit log", "error", err)
-	}
+	serveJSONList(w, r, "entries", func(limit int) (any, error) {
+		return s.db.GetAuditLog(limit)
+	})
 }
 
 // actorFromContext extracts the actor for logging/audit purposes.

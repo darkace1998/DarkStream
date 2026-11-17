@@ -28,7 +28,8 @@ const generatedConfigHeader = `# DarkStream master configuration.
 # Environment variables override the values in this file:
 #   DARKSTREAM_SERVER_HOST, DARKSTREAM_SERVER_PORT, DARKSTREAM_API_KEY,
 #   DARKSTREAM_TLS_CERT, DARKSTREAM_TLS_KEY, DARKSTREAM_DB_PATH,
-#   DARKSTREAM_LOG_LEVEL (or LOG_LEVEL), DARKSTREAM_LOG_FORMAT (or LOG_FORMAT)
+#   DARKSTREAM_LOG_LEVEL (or LOG_LEVEL), DARKSTREAM_LOG_FORMAT (or LOG_FORMAT),
+#   DARKSTREAM_WEBHOOK_SECRET
 `
 
 // generatedFile is the subset of MasterConfig written to a generated config
@@ -136,6 +137,9 @@ func ApplyEnvOverrides(cfg *models.MasterConfig) {
 	}
 	if v := os.Getenv("DARKSTREAM_API_KEY"); v != "" {
 		cfg.Server.APIKey = v
+	}
+	if v := os.Getenv("DARKSTREAM_WEBHOOK_SECRET"); v != "" {
+		cfg.Notifications.WebhookSecret = v
 	}
 	if v := os.Getenv("DARKSTREAM_TLS_CERT"); v != "" {
 		cfg.Server.TLSCert = v

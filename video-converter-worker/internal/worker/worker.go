@@ -19,6 +19,8 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-worker/internal/client"
 	"github.com/darkace1998/video-converter-worker/internal/converter"
+
+	"strings"
 )
 
 // progressReportInterval is the minimum time between conversion progress
@@ -485,7 +487,7 @@ func (w *Worker) processJob(job *models.Job) {
 			"duration_seconds", duration.Seconds(),
 			"error", err,
 		)
-		reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error())
+		reportErr := w.masterClient.ReportJobFailed(job.ID, err.Error(), job.LogTail)
 		if reportErr != nil {
 			jobLog.Error("Failed to report job failure to master", "error", reportErr)
 		}
@@ -515,7 +517,7 @@ func (w *Worker) uploadOutput(job *models.Job, outputLocalPath string) error {
 	chunkSize := int64(w.config.Storage.ChunkSize)
 	if chunkSize > 0 {
 		if info, err := os.Stat(outputLocalPath); err == nil && info.Size() > chunkSize {
-			err := w.masterClient.UploadConvertedVideoChunked(job.ID, outputLocalPath, nil)
+			err := w.masterClient.UploadConvertedVideoChunked(job.ID, outputLocalPath, job.LogTail, nil)
 			switch {
 			case err == nil:
 				return nil
@@ -547,6 +549,18 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		return fmt.Errorf("failed to create job cache directory: %w", err)
 	}
 	defer w.cleanupJobCache(jobCacheDir)
+
+	// Tee this job's log into a per-job file so its tail can be shipped to the
+	// master with the completion/failure report (GET /api/job/log on the master).
+	// Defer order matters: the tail is read first (last registered), then the
+	// file is closed, then the cache dir is removed.
+	jobLogPath := filepath.Join(jobCacheDir, "job.log")
+	// #nosec G304 -- jobLogPath is inside the worker's own cache dir, built from the job ID.
+	if lf, lerr := os.Create(jobLogPath); lerr == nil {
+		defer func() { job.LogTail = readLogTail(jobLogPath) }()
+		defer func() { _ = lf.Close() }()
+		log = slog.New(newMultiSlogHandler(log.Handler(), slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
 
 	// Keep the cache cleaner away from this job's files while it is running.
 	if w.cacheManager != nil {
@@ -625,6 +639,10 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		// the config flag alone ("use_vulkan: true" is the default) would make
 		// every job fail on machines without a suitable GPU.
 		UseVulkan: w.config.FFmpeg.UseVulkan && w.vulkanCaps != nil && w.vulkanCaps.Supported,
+		// hw_accel ("auto"/"cuda"/"vaapi"/"qsv"/"vulkan"/"none") controls
+		// hardware decoding in the converter and takes precedence over the
+		// legacy UseVulkan flag.
+		HWAccel: dynamicCfg.HWAccel,
 	}
 
 	log.Info("Using conversion config",
@@ -694,7 +712,8 @@ func (w *Worker) downloadAndVerify(job *models.Job, sourceLocalPath string, log 
 }
 
 // convertWithFallback runs the conversion, reporting throttled progress to the
-// master, and retries once with software encoding if a Vulkan attempt fails.
+// master, and retries once with software encoding if a hardware-accelerated
+// attempt fails.
 func (w *Worker) convertWithFallback(
 	jobCtx context.Context, cancelJob context.CancelFunc,
 	job *models.Job, cfg *models.ConversionConfig, log *slog.Logger,
@@ -715,15 +734,18 @@ func (w *Worker) convertWithFallback(
 	}
 
 	err := w.ffmpegConverter.ConvertVideoContext(jobCtx, job, cfg, progressCallback, log)
-	if err == nil || !cfg.UseVulkan || jobCtx.Err() != nil || errors.Is(err, converter.ErrConversionTimeout) {
+	hwUsed := cfg.UseVulkan || (cfg.HWAccel != "" && !strings.EqualFold(cfg.HWAccel, constants.HWAccelNone))
+	if err == nil || !hwUsed || jobCtx.Err() != nil || errors.Is(err, converter.ErrConversionTimeout) {
 		return err
 	}
 
-	// Detecting a Vulkan device does not guarantee that this FFmpeg build and
+	// Detecting a GPU or hwaccel does not guarantee that this FFmpeg build and
 	// driver can actually encode with it; fall back to software encoding rather
 	// than failing the job.
-	log.Warn("Vulkan conversion failed, retrying with CPU encoding", "error", err)
+	log.Warn("Hardware-accelerated conversion failed, retrying with CPU encoding",
+		"hw_accel", cfg.HWAccel, "error", err)
 	cfg.UseVulkan = false
+	cfg.HWAccel = constants.HWAccelNone
 	if rmErr := os.Remove(job.OutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
 		log.Warn("Failed to remove partial output before CPU retry", "error", rmErr)
 	}

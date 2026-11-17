@@ -128,6 +128,7 @@
             <div class="tab" data-tab="workers">👥 Workers</div>
             <div class="tab" data-tab="locations">📁 Scan Locations</div>
             <div class="tab" data-tab="config">⚙️ Configuration</div>
+            <div class="tab" data-tab="audit">🔍 Audit Log</div>
         </div>
 
         <!-- Queue Tab -->
@@ -479,6 +480,22 @@
             </div>
         </div>
 
+        <!-- Audit Log Tab -->
+        <div id="audit" class="tab-content">
+            <div class="card">
+                <h2>Audit Log <button class="btn btn-primary btn-sm refresh-btn" onclick="auditLog.reload()">🔄 Refresh</button></h2>
+                <p style="color: #888; font-size: 0.85em;">State-changing API calls recorded by the master (actor, action, sanitized detail). Newest first.</p>
+                <table class="table">
+                    <thead>
+                        <tr><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Detail</th></tr>
+                    </thead>
+                    <tbody id="auditBody">
+                        <tr><td colspan="4">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div id="config" class="tab-content">
             <form id="configForm">
                 <div class="grid">
@@ -520,6 +537,18 @@
                                 <option value="slow" {{if eq .Config.Video.Preset "slow"}}selected{{end}}>Slow</option>
                                 <option value="slower" {{if eq .Config.Video.Preset "slower"}}selected{{end}}>Slower</option>
                                 <option value="veryslow" {{if eq .Config.Video.Preset "veryslow"}}selected{{end}}>Veryslow</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="hwAccel">Hardware Acceleration (decode)</label>
+                            <select id="hwAccel" name="hwAccel">
+                                <option value="" {{if eq .Config.Video.HWAccel ""}}selected{{end}}>Legacy (use_vulkan flag)</option>
+                                <option value="auto" {{if eq .Config.Video.HWAccel "auto"}}selected{{end}}>Auto-detect (recommended)</option>
+                                <option value="none" {{if eq .Config.Video.HWAccel "none"}}selected{{end}}>None (software)</option>
+                                <option value="cuda" {{if eq .Config.Video.HWAccel "cuda"}}selected{{end}}>NVIDIA CUDA</option>
+                                <option value="vaapi" {{if eq .Config.Video.HWAccel "vaapi"}}selected{{end}}>VAAPI (Intel/AMD)</option>
+                                <option value="qsv" {{if eq .Config.Video.HWAccel "qsv"}}selected{{end}}>Quick Sync (Intel)</option>
+                                <option value="vulkan" {{if eq .Config.Video.HWAccel "vulkan"}}selected{{end}}>Vulkan</option>
                             </select>
                         </div>
                     </div>
@@ -780,6 +809,37 @@
             return out;
         }
 
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        const auditLog = {
+            reload: async function() {
+                const tbody = document.getElementById('auditBody');
+                try {
+                    const resp = await authorizedFetch('/api/audit-log?limit=200');
+                    const data = await resp.json();
+                    tbody.innerHTML = '';
+                    const entries = data.entries || [];
+                    if (entries.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4">No audit entries yet.</td></tr>';
+                        return;
+                    }
+                    entries.forEach(function(e) {
+                        const tr = document.createElement('tr');
+                        const ts = e.ts ? new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19) : '';
+                        tr.innerHTML = '<td>' + escapeHtml(ts) + '</td><td>' + escapeHtml(e.actor) + '</td><td><code>' + escapeHtml(e.action) + '</code></td><td><code>' + escapeHtml(e.detail || '') + '</code></td>';
+                        tbody.appendChild(tr);
+                    });
+                } catch (err) {
+                    console.error('Failed to load audit log:', err);
+                    tbody.innerHTML = '<tr><td colspan="4">Failed to load audit log.</td></tr>';
+                }
+            }
+        };
+
         async function authorizedFetch(url, options) {
             const opts = options || {};
             opts.headers = authHeaders(opts.headers);
@@ -793,6 +853,7 @@
                 document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
                 this.classList.add('active');
                 document.getElementById(this.dataset.tab).classList.add('active');
+                if (this.dataset.tab === 'audit') { auditLog.reload(); }
             });
         });
 
@@ -813,7 +874,8 @@
                     resolution: document.getElementById('resolution').value,
                     codec: document.getElementById('codec').value,
                     bitrate: document.getElementById('bitrate').value,
-                    preset: document.getElementById('preset').value
+                    preset: document.getElementById('preset').value,
+                    hw_accel: document.getElementById('hwAccel').value
                 },
                 audio: {
                     codec: document.getElementById('audioCodec').value,

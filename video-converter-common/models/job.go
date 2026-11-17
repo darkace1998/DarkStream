@@ -28,6 +28,7 @@ type Job struct {
 	SourceAudioCodec string `json:"source_audio_codec,omitempty"` // e.g., aac, mp3
 	SourceBitrate    int64  `json:"source_bitrate,omitempty"`     // Total bitrate in bits/second
 	SourceFileSize   int64  `json:"source_file_size,omitempty"`   // Source file size in bytes
+	LogTail          string `json:"log_tail,omitempty"`           // last ~16KB of the worker-side job log (ffmpeg output etc.)
 }
 
 // VideoMetadata contains extracted video information from FFprobe
@@ -51,6 +52,11 @@ type ConversionConfig struct {
 	AudioCodec       string `json:"audio_codec"`   // aac
 	AudioBitrate     string `json:"audio_bitrate"` // 128k
 	OutputFormat     string `json:"output_format"` // mp4, mkv, webm, avi
+	// HWAccel selects ffmpeg decode hardware acceleration: "", "auto", "none",
+	// "cuda" (NVIDIA), "vaapi" (Intel/AMD via /dev/dri), "qsv" (Intel),
+	// "vulkan". "auto" picks the first available. Combine with a hardware
+	// encoder codec (e.g. h264_nvenc, h264_qsv, h264_vaapi) for full HW pipelines.
+	HWAccel string `json:"hw_accel,omitempty"`
 }
 
 // WorkerHeartbeat contains status information sent periodically from workers to the master.

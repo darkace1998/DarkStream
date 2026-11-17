@@ -186,6 +186,108 @@ func (t *Tracker) CreateJob(job *models.Job) error {
 	return nil
 }
 
+// maxLogTailSize caps how much of a worker-side job log is stored per job.
+const maxLogTailSize = 64 << 10 // 64 KiB
+
+// SetJobLogTail stores the (already truncated) worker-side log tail on the
+// job, if the job exists. Best-effort: errors are logged, not returned, so a
+// log write can never fail a job transition.
+func (t *Tracker) SetJobLogTail(jobID, tail string) {
+	if tail == "" {
+		return
+	}
+	if len(tail) > maxLogTailSize {
+		tail = tail[len(tail)-maxLogTailSize:]
+	}
+	if _, err := t.db.Exec(`UPDATE jobs SET log_tail = ? WHERE id = ?`, tail, jobID); err != nil {
+		slog.Warn("Failed to store job log tail", "job_id", jobID, "error", err)
+	}
+}
+
+// PruneJobsOlderThan removes finished jobs (completed/failed/cancelled) whose
+// completion time is older than the cutoff. Pending/processing jobs are never
+// touched. Orphaned job_progress rows are removed as well. Returns the number
+// of deleted jobs.
+func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
+	result, err := t.db.Exec(`
+		DELETE FROM jobs
+		WHERE status IN ('completed', 'failed', 'cancelled')
+		  AND COALESCE(completed_at, created_at) < ?
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune old jobs: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get deleted row count: %w", err)
+	}
+	if _, err := t.db.Exec(`DELETE FROM job_progress WHERE job_id NOT IN (SELECT id FROM jobs)`); err != nil {
+		slog.Warn("Failed to remove orphaned job progress rows", "error", err)
+	}
+	return int(rowsAffected), nil
+}
+
+// BackupDatabase writes a consistent online backup of the database to destPath
+// using VACUUM INTO (safe with WAL while the master is running).
+func (t *Tracker) BackupDatabase(destPath string) error {
+	// #nosec G201 -- destPath is a server-generated path, not user input
+	_, err := t.db.Exec(`VACUUM INTO ?`, destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create database backup: %w", err)
+	}
+	return nil
+}
+
+// WebhookDelivery records the outcome of one webhook delivery.
+type WebhookDelivery struct {
+	ID         int64     `json:"id"`
+	TS         time.Time `json:"ts"`
+	Event      string    `json:"event"`
+	JobID      string    `json:"job_id"`
+	URL        string    `json:"url"`
+	Attempts   int       `json:"attempts"`
+	StatusCode int       `json:"status_code"`
+	Error      string    `json:"error,omitempty"`
+}
+
+// RecordWebhookDelivery stores a webhook delivery outcome. Best-effort.
+func (t *Tracker) RecordWebhookDelivery(event, jobID, url string, attempts, statusCode int, deliveryErr error) {
+	errStr := ""
+	if deliveryErr != nil {
+		errStr = deliveryErr.Error()
+	}
+	if _, err := t.db.Exec(`
+		INSERT INTO webhook_deliveries (ts, event, job_id, url, attempts, status_code, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, time.Now(), event, jobID, url, attempts, statusCode, errStr); err != nil {
+		slog.Warn("Failed to record webhook delivery", "event", event, "job_id", jobID, "error", err)
+	}
+}
+
+// ListWebhookDeliveries returns the most recent deliveries, newest first.
+func (t *Tracker) ListWebhookDeliveries(limit int) ([]WebhookDelivery, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := t.db.Query(`
+		SELECT id, ts, event, COALESCE(job_id, ''), url, attempts, COALESCE(status_code, 0), COALESCE(error, '')
+		FROM webhook_deliveries ORDER BY id DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webhook deliveries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []WebhookDelivery
+	for rows.Next() {
+		var d WebhookDelivery
+		if err := rows.Scan(&d.ID, &d.TS, &d.Event, &d.JobID, &d.URL, &d.Attempts, &d.StatusCode, &d.Error); err != nil {
+			return nil, fmt.Errorf("failed to scan webhook delivery: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // GetJobByID retrieves a job by its ID
 func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 	var job models.Job
@@ -199,7 +301,8 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 			COALESCE(source_checksum, ''), COALESCE(output_checksum, ''),
 			COALESCE(source_width, 0), COALESCE(source_height, 0),
 			COALESCE(source_video_codec, ''), COALESCE(source_audio_codec, ''),
-			COALESCE(source_bitrate, 0), COALESCE(source_file_size, 0)
+			COALESCE(source_bitrate, 0), COALESCE(source_file_size, 0),
+			COALESCE(log_tail, '')
 		FROM jobs WHERE id = ?
 	`, jobID).Scan(&job.ID, &job.SourcePath, &job.OutputPath, &job.Status, &job.Priority, &job.CreatedAt,
 		&job.WorkerID, &job.RetryCount, &job.MaxRetries,
@@ -208,7 +311,7 @@ func (t *Tracker) GetJobByID(jobID string) (*models.Job, error) {
 		&job.SourceChecksum, &job.OutputChecksum,
 		&job.SourceWidth, &job.SourceHeight,
 		&job.SourceVideoCodec, &job.SourceAudioCodec,
-		&job.SourceBitrate, &job.SourceFileSize)
+		&job.SourceBitrate, &job.SourceFileSize, &job.LogTail)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan job row: %w", err)
@@ -1520,7 +1623,8 @@ func (t *Tracker) initSchema() error {
 		output_size INTEGER,
 		created_at TIMESTAMP NOT NULL,
 		source_checksum TEXT,
-		output_checksum TEXT
+		output_checksum TEXT,
+		log_tail TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS workers (
@@ -1589,10 +1693,22 @@ func (t *Tracker) initSchema() error {
 		detail TEXT
 	);
 
+	CREATE TABLE IF NOT EXISTS webhook_deliveries (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts TIMESTAMP NOT NULL,
+		event TEXT NOT NULL,
+		job_id TEXT,
+		url TEXT NOT NULL,
+		attempts INTEGER NOT NULL,
+		status_code INTEGER,
+		error TEXT
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_source_path ON jobs(source_path);
 	CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
 	CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+	CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts ON webhook_deliveries(ts);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
@@ -1632,6 +1748,31 @@ func (t *Tracker) initSchema() error {
 		return fmt.Errorf("failed to migrate video metadata columns: %w", err)
 	}
 
+	// Add log_tail column if it doesn't exist (migration)
+	err = t.migrateLogTailColumn()
+	if err != nil {
+		return fmt.Errorf("failed to migrate log_tail column: %w", err)
+	}
+
+	return nil
+}
+
+// migrateLogTailColumn adds the log_tail column to jobs if it doesn't exist.
+func (t *Tracker) migrateLogTailColumn() error {
+	var columnExists int
+	err := t.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='log_tail'
+	`).Scan(&columnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for log_tail column: %w", err)
+	}
+	if columnExists == 0 {
+		slog.Info("Adding log_tail column to jobs table")
+		_, err := t.db.Exec(`ALTER TABLE jobs ADD COLUMN log_tail TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add log_tail column: %w", err)
+		}
+	}
 	return nil
 }
 

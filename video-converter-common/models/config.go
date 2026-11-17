@@ -24,6 +24,10 @@ type ConversionSettings struct {
 	AudioCodec       string `json:"audio_codec"   yaml:"audio_codec"`
 	AudioBitrate     string `json:"audio_bitrate" yaml:"audio_bitrate"`
 	OutputFormat     string `json:"output_format" yaml:"output_format"` // mp4, mkv, webm, avi
+	// HWAccel selects ffmpeg decode hardware acceleration: "", "auto", "none",
+	// "cuda", "vaapi", "qsv", "vulkan". Pair with a hardware encoder codec
+	// (h264_nvenc, h264_qsv, h264_vaapi) for a full hardware pipeline.
+	HWAccel string `json:"hw_accel,omitempty" yaml:"hw_accel"`
 }
 
 // Hash modes for scan locations (ScanLocation.HashMode).
@@ -77,11 +81,22 @@ type MasterConfig struct {
 		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
 		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
 		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
+		// RetentionDays auto-prunes completed/failed/cancelled jobs older than N
+		// days (daily). 0 (default) = keep forever; pruning is also available
+		// on demand via POST /api/jobs/prune.
+		RetentionDays int `yaml:"retention_days"`
+		// BackupDir is where GET /api/admin/backup writes online backups
+		// (VACUUM INTO). Defaults to the database file's directory.
+		BackupDir string `yaml:"backup_dir"`
 	} `yaml:"database"`
 
 	Notifications struct {
 		WebhookURL string   `yaml:"webhook_url"`
 		Events     []string `yaml:"events"`
+		// WebhookSecret, when set, signs every delivery with an
+		// X-Darkstream-Signature: sha256=<hex HMAC-SHA256 of the body> header
+		// so receivers can verify the payload is really from this master.
+		WebhookSecret string `yaml:"webhook_secret"`
 	} `yaml:"notifications"`
 
 	Conversion ConversionSettings `yaml:"conversion"`

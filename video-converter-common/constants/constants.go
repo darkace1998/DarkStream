@@ -64,6 +64,28 @@ const (
 	PresetSlow   = "slow"
 )
 
+// HTTP header names exchanged between master and worker, in canonical MIME
+// form (Go canonicalizes header keys on write; names are case-insensitive on
+// the wire per RFC 9110).
+const (
+	HeaderLogTail          = "X-Darkstream-Log-Tail"
+	HeaderWebhookEvent     = "X-Darkstream-Event"
+	HeaderWebhookDelivery  = "X-Darkstream-Delivery"
+	HeaderWebhookTimestamp = "X-Darkstream-Timestamp"
+	HeaderWebhookSignature = "X-Darkstream-Signature"
+)
+
+// hw_accel values for ConversionSettings.HWAccel; they map 1:1 to ffmpeg
+// -hwaccel names ("auto"/"none" are worker-side meta values).
+const (
+	HWAccelAuto   = "auto"
+	HWAccelNone   = "none"
+	HWAccelCUDA   = "cuda"
+	HWAccelVAAPI  = "vaapi"
+	HWAccelQSV    = "qsv"
+	HWAccelVulkan = "vulkan"
+)
+
 // Log levels
 const (
 	LogLevelDebug = "debug"

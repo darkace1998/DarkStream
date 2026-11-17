@@ -184,7 +184,14 @@ func New(tracker *db.Tracker, addr string, configMgr *config.Manager, cfg *model
 		workerTokens: workerTokens,
 		allowedDirs:  allowedDirs,
 		metrics:      metrics.New(),
-		notifier:     notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
+		notifier: notifier.NewWebhookNotifier(
+			cfg.Notifications.WebhookURL,
+			cfg.Notifications.Events,
+			cfg.Notifications.WebhookSecret,
+			func(event, jobID string, attempts, statusCode int, err error) {
+				tracker.RecordWebhookDelivery(event, jobID, cfg.Notifications.WebhookURL, attempts, statusCode, err)
+			},
+		),
 		done:         make(chan struct{}),
 		chunkUploads: make(map[string]*chunkUploadState),
 	}
@@ -255,6 +262,9 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/scan-locations", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleScanLocations))))
 	mux.HandleFunc("/api/stream-token", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleStreamToken))))
 	mux.HandleFunc("/api/audit-log", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleAuditLog))))
+	mux.HandleFunc("/api/job/log", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetJobLog))))
+	mux.HandleFunc("/api/admin/backup", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleBackup))))
+	mux.HandleFunc("/api/webhook-deliveries", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleWebhookDeliveries))))
 	mux.HandleFunc("/api/worker/upload-chunk", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadChunk))))
 
 	go s.chunkUploadJanitor()
