@@ -110,11 +110,16 @@ func New(cfg *models.WorkerConfig) (*Worker, error) {
 	masterClient := client.New(cfg.Worker.MasterURL, cfg.Worker.ID, vulkanCaps != nil && vulkanCaps.Supported)
 	masterClient.SetTransferTimeouts(cfg.Storage.DownloadTimeout, cfg.Storage.UploadTimeout)
 	masterClient.SetBandwidthLimit(cfg.Storage.BandwidthLimit)
+	if cfg.Storage.ChunkSize > 0 {
+		masterClient.SetChunkSize(int64(cfg.Storage.ChunkSize))
+	}
 	masterClient.SetEnableResumeDownload(cfg.Storage.EnableResumeDownload)
 	masterClient.SetAPIKey(cfg.Worker.APIKey)
+	masterClient.SetToken(cfg.Worker.Token)
 	masterClient.SetMaxJobs(cfg.Worker.Concurrency)
 	configFetcher := client.NewConfigFetcher(cfg.Worker.MasterURL)
 	configFetcher.SetAPIKey(cfg.Worker.APIKey)
+	configFetcher.SetToken(cfg.Worker.Token)
 	validator := converter.NewValidator()
 
 	// Initialize cache manager
@@ -502,6 +507,28 @@ func (w *Worker) processJob(job *models.Job) {
 //
 // Errors are wrapped using fmt.Errorf and may originate from underlying subsystems (FFmpeg, filesystem).
 // Callers should inspect the error chain if they need to distinguish between error types.
+// uploadOutput uploads the converted file to the master. When chunk_size is
+// configured and the output is larger than one chunk, it uses the parallel
+// chunked-upload endpoint; masters without that endpoint (older versions)
+// transparently fall back to the single-stream multipart upload.
+func (w *Worker) uploadOutput(job *models.Job, outputLocalPath string) error {
+	chunkSize := int64(w.config.Storage.ChunkSize)
+	if chunkSize > 0 {
+		if info, err := os.Stat(outputLocalPath); err == nil && info.Size() > chunkSize {
+			err := w.masterClient.UploadConvertedVideoChunked(job.ID, outputLocalPath, nil)
+			switch {
+			case err == nil:
+				return nil
+			case errors.Is(err, client.ErrChunkedUploadUnsupported):
+				slog.Warn("Master does not support chunked uploads, falling back to single-stream upload", "job_id", job.ID)
+			default:
+				return err
+			}
+		}
+	}
+	return w.masterClient.UploadConvertedVideoWithMetadata(job.ID, outputLocalPath, job)
+}
+
 func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 	// jobCtx is cancelled when the master stops assigning this job to us, which
 	// terminates a running conversion instead of finishing work nobody wants.
@@ -625,9 +652,11 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		return errJobAbandoned
 	}
 
-	// Upload converted video to master, along with the source metadata
+	// Upload converted video to master, along with the source metadata.
+	// Large outputs go out as parallel chunks when chunk_size is configured;
+	// older masters without the chunk endpoint fall back to single-stream.
 	log.Info("Uploading converted video", "local_path", outputLocalPath)
-	err = w.masterClient.UploadConvertedVideoWithMetadata(job.ID, outputLocalPath, job)
+	err = w.uploadOutput(job, outputLocalPath)
 	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}

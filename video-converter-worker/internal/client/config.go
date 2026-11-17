@@ -38,6 +38,13 @@ type ConfigFetcher struct {
 	fetching        bool            // Prevents concurrent fetch operations
 	ctx             context.Context // optional; aborts retry backoff on shutdown
 	apiKey          string          // optional; sent as a Bearer token when set
+	token           string          // optional per-worker bearer token; preferred over apiKey
+}
+
+// SetToken sets a per-worker bearer token (from the master's
+// server.worker_tokens map), preferred over the API key.
+func (cf *ConfigFetcher) SetToken(token string) {
+	cf.token = token
 }
 
 // SetAPIKey sets the API key sent with config requests. The master protects
@@ -207,6 +214,9 @@ func (cf *ConfigFetcher) fetchConfigAttempt() (*models.ConversionSettings, error
 	cf.mu.RLock()
 	ctx := cf.ctx
 	apiKey := cf.apiKey
+	if cf.token != "" {
+		apiKey = cf.token
+	}
 	cf.mu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()

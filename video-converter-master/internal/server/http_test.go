@@ -141,7 +141,7 @@ func TestGetStatus(t *testing.T) {
 	}
 
 	ct := rec.Header().Get("Content-Type")
-	if ct != "application/json" {
+	if ct != contentTypeJSON {
 		t.Errorf("Content-Type = %q, want \"application/json\"", ct)
 	}
 }
@@ -630,7 +630,7 @@ func TestUpdateJobPriority(t *testing.T) {
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/job/priority", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentTypeJSON)
 	w := httptest.NewRecorder()
 
 	// Call handler directly, skipping auth middleware since we test that separately
@@ -1011,7 +1011,7 @@ func TestSubmitJob(t *testing.T) {
 	// Test case 1: Successful job submission
 	reqBody := `{"source_path": "test_submit.mp4"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentTypeJSON)
 	rw := httptest.NewRecorder()
 
 	srv.HandleJob(rw, req)
@@ -1029,7 +1029,7 @@ func TestSubmitJob(t *testing.T) {
 
 	// Test case 2: Job already exists
 	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentTypeJSON)
 	rw = httptest.NewRecorder()
 
 	srv.HandleJob(rw, req)
@@ -1041,7 +1041,7 @@ func TestSubmitJob(t *testing.T) {
 	// Test case 3: Invalid path traversal
 	reqBody = `{"source_path": "../test_submit.mp4"}`
 	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentTypeJSON)
 	rw = httptest.NewRecorder()
 
 	srv.HandleJob(rw, req)
@@ -1053,7 +1053,7 @@ func TestSubmitJob(t *testing.T) {
 	// Test case 4: File does not exist
 	reqBody = `{"source_path": "non_existent.mp4"}`
 	req = httptest.NewRequest(http.MethodPost, "/api/job", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentTypeJSON)
 	rw = httptest.NewRecorder()
 
 	srv.HandleJob(rw, req)

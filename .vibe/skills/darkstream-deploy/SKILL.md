@@ -57,3 +57,17 @@ Bump `.release-version` (semver, e.g. `v0.6.0`) on main together with a matching
 `CHANGELOG.md` section (Keep a Changelog); `release.yaml` validates both, creates the
 annotated tag + GitHub Release, and dispatches the Docker image build. Don't push tags
 by hand to trigger image builds.
+
+## Subagent models (repo convention)
+
+When delegating to subagents, spawn the named agent configs from
+`~/.vibe/agents/` — they pin the model aliases below:
+
+| Role | `config_name` at spawn | model alias (`active_model`) | backend model |
+|---|---|---|---|
+| Building / implementing | `mistral-large-4-high` | `mistral-large-4` | `mistral-large-4` (Mistral API) |
+| Review / testing | `glm-5-3-high` | `glm-5-3` | `zai-glm-5-3` (Mistral API) |
+
+Everything else runs on the session's default model. Note: named configs only
+resolve after a `/reload` (or a fresh session) if `~/.vibe/agents/*.toml` was
+created after this session started.

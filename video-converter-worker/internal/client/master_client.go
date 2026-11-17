@@ -64,8 +64,10 @@ type MasterClient struct {
 	downloadTimeout      time.Duration
 	uploadTimeout        time.Duration
 	bandwidthLimit       int64 // bytes per second (0 = unlimited)
+	chunkSize            int64 // chunk size in bytes for chunked uploads (0 = disabled)
 	enableResumeDownload bool
 	apiKey               string
+	token                string          // per-worker bearer token; preferred over apiKey when set
 	ctx                  context.Context // optional; used to abort retry backoff on shutdown
 	maxJobs              int             // concurrency reported to the master for load balancing
 }
@@ -117,6 +119,26 @@ func (mc *MasterClient) SetAPIKey(apiKey string) {
 	mc.apiKey = apiKey
 }
 
+// SetToken sets a per-worker bearer token (from the master's
+// server.worker_tokens map). It takes precedence over the API key.
+func (mc *MasterClient) SetToken(token string) {
+	mc.token = token
+}
+
+// credential returns the bearer credential to present: the per-worker token
+// when set, otherwise the master API key.
+func (mc *MasterClient) credential() string {
+	if mc.token != "" {
+		return mc.token
+	}
+	return mc.apiKey
+}
+
+// hasCredential reports whether any bearer credential is configured.
+func (mc *MasterClient) hasCredential() bool {
+	return mc.token != "" || mc.apiKey != ""
+}
+
 // SetTransferTimeouts sets the download and upload timeouts
 func (mc *MasterClient) SetTransferTimeouts(downloadTimeout, uploadTimeout time.Duration) {
 	mc.downloadTimeout = downloadTimeout
@@ -135,7 +157,7 @@ func (mc *MasterClient) SetEnableResumeDownload(enable bool) {
 
 // GetNextJob requests the next available job from the master
 func (mc *MasterClient) GetNextJob() (*models.Job, error) {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return nil, err
 	}
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-job", url.Values{
@@ -154,8 +176,8 @@ func (mc *MasterClient) GetNextJob() (*models.Job, error) {
 	}
 
 	// Add authentication header if API key is set
-	if mc.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	if cred := mc.credential(); cred != "" {
+		req.Header.Set("Authorization", "Bearer "+cred)
 	}
 
 	resp, err := mc.client.Do(req)
@@ -198,7 +220,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 		limit = 20
 	}
 
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return nil, err
 	}
 	url, err := utils.BuildURL(mc.baseURL, "/api/worker/next-jobs", url.Values{
@@ -218,8 +240,8 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 	}
 
 	// Add authentication header if API key is set
-	if mc.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	if cred := mc.credential(); cred != "" {
+		req.Header.Set("Authorization", "Bearer "+cred)
 	}
 
 	resp, err := mc.client.Do(req)
@@ -264,7 +286,7 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
 	}
 	payload := map[string]any{
@@ -313,7 +335,7 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 //
 //nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
 	}
 	payload := map[string]any{
@@ -359,7 +381,7 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 
 // SendHeartbeat sends a heartbeat to the master
 func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		slog.Error("Refusing to send heartbeat", "error", err)
 		return
 	}
@@ -409,7 +431,7 @@ func (mc *MasterClient) SendHeartbeat(hb *models.WorkerHeartbeat) {
 // being processed by this worker any more; every other problem is transient,
 // logged, and reported as nil so a flaky connection never aborts a conversion.
 func (mc *MasterClient) ReportJobProgress(progress *models.JobProgress) error {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		slog.Error("Refusing to send job progress", "error", err)
 		return nil
 	}
@@ -753,8 +775,8 @@ func (mc *MasterClient) UploadConvertedVideoWithProgress(jobID, filePath string,
 
 // addAuthHeader adds the Authorization header to a request if API key is set
 func (mc *MasterClient) addAuthHeader(req *http.Request) {
-	if mc.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+mc.apiKey)
+	if cred := mc.credential(); cred != "" {
+		req.Header.Set("Authorization", "Bearer "+cred)
 	}
 }
 
@@ -762,7 +784,7 @@ func (mc *MasterClient) addAuthHeader(req *http.Request) {
 //
 //nolint:gocognit,cyclop // File download with resume support and progress tracking is inherently complex
 func (mc *MasterClient) downloadSourceVideoAttempt(jobID, outputPath string, progressCallback ProgressCallback) error {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
 	}
 	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/download-video", url.Values{paramJobID: []string{jobID}})
@@ -978,7 +1000,7 @@ func (mc *MasterClient) writeUploadBody(
 
 // uploadConvertedVideoAttempt performs a single upload attempt with optional progress tracking
 func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, progressCallback ProgressCallback, metadata *models.Job) error {
-	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
+	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
 	}
 	// Open the file

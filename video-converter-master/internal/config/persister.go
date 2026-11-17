@@ -23,6 +23,7 @@ type yamlScanLocation struct {
 	OutputBase       string   `yaml:"output_base"`
 	Engines          int      `yaml:"engines"`
 	HashAlgo         string   `yaml:"hash_algo"`
+	HashMode         string   `yaml:"hash_mode"`
 	ScanInterval     string   `yaml:"scan_interval"`
 	EnableWatch      bool     `yaml:"enable_watch"`
 	VideoExtensions  []string `yaml:"video_extensions"`
@@ -65,6 +66,7 @@ func (p *Persister) UpdateScanLocations(locations []models.ScanLocation) error {
 			OutputBase:       loc.OutputBase,
 			Engines:          loc.Engines,
 			HashAlgo:         loc.HashAlgo,
+			HashMode:         loc.HashMode,
 			ScanInterval:     durationString(loc.ScanInterval),
 			EnableWatch:      loc.EnableWatch,
 			VideoExtensions:  loc.VideoExtensions,

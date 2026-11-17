@@ -73,12 +73,38 @@ When no `api_key` is configured, the scan-locations and server-settings
 endpoints accept unauthenticated requests; the master logs a warning at startup
 in that case.
 
+### Readiness probe semantics
+
+`GET /readyz` returns 503 unless the SQLite database answers a ping **and**,
+when scan locations are configured, at least one of them is running. A master
+with zero locations configured (API/CLI-only use) is ready as soon as the DB
+answers. This keeps a master whose locations all failed out of Service
+endpoints in Kubernetes (see `deploy/k8s/`).
+
 ### `server` (Maps to `MasterConfig.Server`)
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
 *   `api_key`: (Optional) Require workers and CLI to authenticate with this Bearer token.
+*   `worker_tokens`: (Optional) Map of `worker_id` → per-worker bearer token. A token is
+    accepted **only** on `/api/worker/*` routes and the actor is recorded as
+    `worker:<id>` in the audit log, so you can tell workers apart. The master
+    `api_key` keeps working everywhere.
 *   `tls_cert`: Path to TLS certificate file (enables HTTPS when set).
 *   `tls_key`: Path to TLS private key file.
+
+### Security & audit endpoints
+
+```
+POST /api/stream-token    # issue a 5-minute HMAC-signed token for SSE endpoints
+GET  /api/audit-log?limit=N   # recent audit entries, newest first
+```
+
+The Web UI's SSE streams (`/api/stats/stream`, `/api/job/progress/stream`) accept
+`?token=<stream-token>` instead of `?api_key=...`, so the long-lived master key
+never appears in URLs, browser history, or access logs. State-changing API calls
+(config updates, queue pause/resume, job cancel/retry/requeue/priority, worker
+admin, chunked uploads) are recorded in the `audit_log` table with the
+authenticated actor and are queryable via `/api/audit-log`.
 
 ### `scanner` (Maps to `MasterConfig.Scanner`)
 *   `root_path`: Directory to scan for source video files.
@@ -116,6 +142,7 @@ POST   /api/scan-locations?scan_now=<id>    # trigger an immediate scan
 | `root_path` / `output_base` | Source tree and output tree for this location |
 | `engines` | Parallel scan workers for this location (1-64, default 4) — match to the disk |
 | `hash_algo` | `sha256` (default) or `sha1`. SHA-1 is faster and less CPU-intensive; workers infer the algorithm from the checksum length, so `sha1` works end-to-end for download verification |
+| `hash_mode` | `full` (default) hashes every changed video during the scan; `skip` never reads file contents at scan time (no source checksum, no content dedup) and relies on size+mtime change detection — fastest option for huge libraries on slow disks |
 | `scan_interval` | Periodic rescan interval (e.g. `5m`); `0` = startup/watch events only |
 | `enable_watch` | fsnotify watcher for instant pickup of new files |
 | `video_extensions` | Extensions to convert; everything else is skipped without stat/hash I/O |
@@ -209,7 +236,16 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `download_timeout`: Local override for download timeout.
 *   `upload_timeout`: Local override for upload timeout.
 *   `cache_path`: Local directory for caching source and converted videos during processing.
-*   `chunk_size`: Size for chunked streaming (currently unused).
+*   `chunk_size`: Chunk size in bytes for parallel chunked uploads of converted
+    videos. `0` (default) = single-stream multipart upload; any value > 0 enables
+    chunked upload with that chunk size (capped server-side at 256 MiB). The worker
+    sends up to 4 chunks in parallel to `POST /api/worker/upload-chunk`; the master
+    writes them at their offsets into a `.part` file and finalizes once complete;
+    overlapping ranges are rejected before anything is written, so a rejected
+    chunk never corrupts the `.part` file. The upload is audited once at
+    completion (action `worker.upload-video`, same as a single-stream upload),
+    not per chunk. If the master is older and lacks the endpoint, the worker
+    automatically falls back to the single-stream multipart upload.
 *   `max_cache_size`: Local override for maximum cache size.
 *   `cache_cleanup_age`: Age after which cached files are cleaned up (e.g., `24h`).
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).

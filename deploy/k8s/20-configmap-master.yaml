@@ -1,0 +1,86 @@
+# Master configuration. Mounted at /etc/darkstream/config.yaml.
+# server.api_key is injected from the Secret via env (DARKSTREAM_SERVER_API_KEY)
+# in the Deployment; worker_tokens below must match the worker Secret tokens.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: darkstream-master-config
+  namespace: darkstream
+data:
+  config.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      # api_key is set via the DARKSTREAM_SERVER_API_KEY env var (Secret).
+      worker_tokens:
+        worker-1: "REPLACE_WITH_WORKER_TOKEN_1"
+    logging:
+      level: "info"
+      format: "json"
+      # In Kubernetes, log to stdout and let the cluster log pipeline ship it.
+      output_path: ""
+    database:
+      path: "/data/darkstream.db"
+      max_open_connections: 25
+      max_idle_connections: 5
+      conn_max_lifetime: 3600
+      conn_max_idle_time: 600
+    scanner:
+      # Multiple scan locations, each with its own engine pool and watcher.
+      locations:
+        - id: "media-movies"
+          name: "Movies"
+          root_path: "/media/movies"
+          output_base: "/media/converted"
+          engines: 4
+          hash_algo: "sha256"        # sha256 or sha1 (faster, less CPU)
+          hash_mode: "full"          # full = hash files; skip = trust size+mtime, never read file contents
+          scan_interval: "5m"
+          enable_watch: true
+          video_extensions: [".mp4", ".mkv", ".avi", ".webm", ".mov", ".m4v", ".ts"]
+          recursive_depth: -1
+          skip_hidden_files: true
+          skip_hidden_dirs: true
+        - id: "media-tv"
+          name: "TV Shows"
+          root_path: "/media/tv"
+          output_base: "/media/converted"
+          engines: 8
+          hash_algo: "sha1"
+          hash_mode: "full"
+          scan_interval: "10m"
+          enable_watch: true
+          video_extensions: [".mp4", ".mkv", ".avi", ".webm", ".mov", ".m4v", ".ts"]
+          recursive_depth: -1
+          skip_hidden_files: true
+          skip_hidden_dirs: true
+    monitoring:
+      job_timeout: "2h"
+      worker_health_interval: "30s"
+      failed_job_retry_interval: "1m"
+    conversion:
+      target_resolution: "1920x1080"
+      codec: "h264"
+      bitrate: "5M"
+      preset: "fast"
+      audio_codec: "aac"
+      audio_bitrate: "128k"
+      output_format: "mp4"
+    worker_defaults:
+      concurrency: 3
+      heartbeat_interval: "30s"
+      job_check_interval: "5s"
+      job_timeout: "2h"
+      max_api_requests_per_min: 120
+      max_backoff_interval: "30s"
+      initial_backoff_interval: "1s"
+      download_timeout: "30m"
+      upload_timeout: "30m"
+      max_cache_size: 10737418240
+      cache_cleanup_age: "24h"
+      bandwidth_limit: 0
+      enable_resume_download: true
+      use_vulkan: true
+      ffmpeg_timeout: "2h"
+      log_level: "info"
+      log_format: "json"

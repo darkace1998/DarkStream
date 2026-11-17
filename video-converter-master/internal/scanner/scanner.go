@@ -35,6 +35,7 @@ type ScanOptions struct {
 	ReplaceSource    bool                                // Replace source file with output (output path = source path)
 	DetectDuplicates bool                                // Track file hashes to detect duplicates
 	HashAlgo         string                              // sha256 (default) or sha1 — sha1 is faster and less CPU-intensive
+	HashMode         string                              // "full" (default) hashes files; "skip" never reads file contents (no source checksum, no content dedup)
 	Priority         int                                 // Default priority for jobs created by this scanner (0-10; negative = normal (5))
 	FileStore        FileStore                           // Optional store enabling unchanged-file skip
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
@@ -275,6 +276,20 @@ func (s *Scanner) checksumUnlessHandled(fullPath string, fileInfo os.FileInfo, o
 	algo = opts.HashAlgo
 	if algo == "" {
 		algo = utils.HashAlgoSHA256
+	}
+
+	// hash_mode=skip: trust size+mtime change detection and never read the
+	// file at scan time. The job is created without a source checksum (the
+	// worker then skips download verification) and content-hash duplicate
+	// detection is disabled.
+	if opts.HashMode == models.HashModeSkip {
+		// Record size+mtime only; never read the file contents.
+		if opts.FileStore != nil {
+			if storeErr := opts.FileStore.UpsertFileScanState(fullPath, fileInfo.Size(), fileInfo.ModTime().UnixNano(), "", models.HashModeSkip); storeErr != nil {
+				slog.Warn("Failed to store file scan state", "path", fullPath, "error", storeErr)
+			}
+		}
+		return "", models.HashModeSkip, false
 	}
 
 	// Change detection: if size and mtime match the stored record, reuse the

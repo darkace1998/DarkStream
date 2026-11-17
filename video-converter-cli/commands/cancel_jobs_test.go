@@ -44,7 +44,7 @@ func TestCancelJobsSuccess(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the cancel-jobs command
-	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, "--limit", "50"}
+	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, flagLimit, "50"}
 	CancelJobs(args)
 
 	// Verify log output contains success message
@@ -75,7 +75,7 @@ func TestCancelJobsNoJobs(t *testing.T) {
 	slog.SetDefault(logger)
 
 	// Call the cancel-jobs command
-	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, "--limit", "50"}
+	args := []string{flagMasterURL, server.URL, flagStatus, statusPending, flagLimit, "50"}
 	CancelJobs(args)
 
 	// Verify log output contains success message

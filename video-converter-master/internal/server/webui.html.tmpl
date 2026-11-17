@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DarkStream - Video Converter Dashboard</title>
+    <style>
+        a { color: #4fc3f7; }
+        a:hover { color: #81d4fa; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        h1 { color: #00d9ff; margin-bottom: 10px; }
+        h2 { color: #00d9ff; margin: 20px 0 15px 0; font-size: 1.3em; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .version { color: #888; font-size: 0.9em; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+        .card { background: #16213e; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; color: #aaa; font-size: 0.9em; }
+        input, select { width: 100%; padding: 10px 12px; border: 1px solid #333; border-radius: 4px; background: #0f0f23; color: #fff; font-size: 1em; }
+        input:focus, select:focus { outline: none; border-color: #00d9ff; }
+        select { cursor: pointer; }
+        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; transition: all 0.2s; margin-right: 5px; }
+        .btn-primary { background: #00d9ff; color: #000; font-weight: bold; }
+        .btn-primary:hover { background: #00b8d4; }
+        .btn-danger { background: #dc3545; color: #fff; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-sm { padding: 5px 10px; font-size: 0.8em; }
+        .btn:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .status { padding: 10px 15px; border-radius: 4px; margin-bottom: 20px; }
+        .status-success { background: #1b4332; color: #95d5b2; }
+        .status-error { background: #5c2323; color: #f8d7da; }
+        .status-info { background: #1e3a5f; color: #89cff0; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9em; }
+        .table th, .table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #333; }
+        .table th { color: #aaa; font-weight: normal; font-size: 0.85em; }
+        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
+        .badge-online { background: #1b4332; color: #95d5b2; }
+        .badge-offline { background: #5c2323; color: #f8d7da; }
+        .badge-pending { background: #2d4a6f; color: #89cff0; }
+        .badge-processing { background: #614a1f; color: #ffc107; }
+        .badge-completed { background: #1b4332; color: #95d5b2; }
+        .badge-failed { background: #5c2323; color: #f8d7da; }
+        .badge-success { background: #1b4332; color: #95d5b2; }
+        .meta { color: #666; font-size: 0.85em; }
+        .tabs { display: flex; border-bottom: 2px solid #333; margin-bottom: 20px; }
+        .tab { padding: 12px 24px; cursor: pointer; color: #888; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .tab:hover { color: #00d9ff; }
+        .tab.active { color: #00d9ff; border-bottom-color: #00d9ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: #16213e; border-radius: 8px; padding: 15px; text-align: center; }
+        .stat-value { font-size: 2em; color: #00d9ff; font-weight: bold; }
+        .stat-label { color: #888; font-size: 0.85em; }
+        .no-data { color: #888; font-style: italic; padding: 30px; text-align: center; }
+        .loading { display: none; }
+        .loading.show { display: inline-block; margin-left: 10px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { width: 20px; height: 20px; border: 2px solid #333; border-top-color: #00d9ff; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+        .progress-bar { background: #333; border-radius: 4px; height: 6px; overflow: hidden; }
+        .progress-fill { background: #00d9ff; height: 100%; transition: width 0.3s; }
+        .truncate { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .refresh-btn { float: right; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>🎬 DarkStream Dashboard</h1>
+                <span class="version">Video Converter System</span>
+            </div>
+            <div class="meta" style="display: flex; align-items: center; gap: 15px;">
+                <div id="queue-status-container">
+                    <span id="queue-status-badge" class="badge badge-success" style="padding: 5px 10px; font-size: 0.9em; margin-right: 10px;">Queue Active</span>
+                    <button id="toggle-queue-btn" class="btn btn-sm" style="background: #e6a23c; color: #fff;" onclick="toggleQueue()">Pause Queue</button>
+                </div>
+                Config Version: {{.Config.Version}} | <span id="live-indicator">Live 🟢</span>
+            </div>
+        </div>
+
+        <!-- Stats Overview -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-pending">{{.Stats.Pending}}</div>
+                <div class="stat-label">Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-processing">{{.Stats.Processing}}</div>
+                <div class="stat-label">Processing</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-completed">{{.Stats.Completed}}</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-failed">{{.Stats.Failed}}</div>
+                <div class="stat-label">Failed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-workers">{{.Stats.Workers}}</div>
+                <div class="stat-label">Workers</div>
+            </div>
+        </div>
+
+        <div id="status" class="status" style="display: none;"></div>
+
+        {{if .APIKeyRequired}}
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>🔐 Admin Access</h2>
+            <div class="form-group">
+                <label for="apiKeyInput">API Key</label>
+                <input id="apiKeyInput" type="password" placeholder="Enter master API key" autocomplete="current-password" />
+            </div>
+            <button class="btn btn-primary" type="button" onclick="saveApiKey()">Save Key</button>
+            <button class="btn btn-danger" type="button" onclick="clearApiKey()">Clear</button>
+            <span class="meta">Stored locally in this browser.</span>
+        </div>
+        {{end}}
+
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <div class="tab active" data-tab="queue">📋 Job Queue</div>
+            <div class="tab" data-tab="processing">⚙️ Processing</div>
+            <div class="tab" data-tab="history">📜 History</div>
+            <div class="tab" data-tab="workers">👥 Workers</div>
+            <div class="tab" data-tab="locations">📁 Scan Locations</div>
+            <div class="tab" data-tab="config">⚙️ Configuration</div>
+        </div>
+
+        <!-- Queue Tab -->
+        <div id="queue" class="tab-content active">
+            <div class="card">
+                <h2>Pending Jobs <button class="btn btn-danger btn-sm refresh-btn" onclick="cancelAllPending()">Cancel All Pending</button></h2>
+                <table class="table"{{if not .PendingJobs}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Source</th>
+                            <th>Priority</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pending-jobs">
+                        {{range .PendingJobs}}
+                        <tr>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
+                            <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
+                            <td><span class="badge badge-pending">{{.Priority}}</span></td>
+                            <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="updatePriority('{{.ID}}', {{.Priority}})">Priority</button>
+                                <button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <div class="no-data"{{if .PendingJobs}} style="display: none;"{{end}}>No pending jobs in queue</div>
+            </div>
+        </div>
+
+        <!-- Processing Tab -->
+        <div id="processing" class="tab-content">
+            <div class="card">
+                <h2>Currently Processing</h2>
+                <table class="table"{{if not .ProcessingJobs}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Source</th>
+                            <th>Worker</th>
+                            <th>Progress</th>
+                            <th>Started</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="processing-jobs">
+                        {{range .ProcessingJobs}}
+                        <tr>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
+                            <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
+                            <td>{{.WorkerID}}</td>
+                            <td>
+                                <div class="progress-bar" style="width: 100px;">
+                                    <div class="progress-fill" style="width: 0%;" id="progress-{{.ID}}"></div>
+                                </div>
+                            </td>
+                            <td>{{if .StartedAt}}{{.StartedAt.Format "15:04:05"}}{{end}}</td>
+                            <td><button class="btn btn-danger btn-sm" onclick="cancelJob('{{.ID}}')">Cancel</button></td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <div class="no-data"{{if .ProcessingJobs}} style="display: none;"{{end}}>No jobs currently processing</div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="history" class="tab-content">
+            <div class="card">
+                <h2>Recent Jobs (Last 50)
+                    <button class="btn btn-danger btn-sm refresh-btn" onclick="pruneJobs('all')" style="margin-left: 10px;">Clear Completed & Failed</button>
+                    <button class="btn btn-danger btn-sm refresh-btn" onclick="retryAllFailed()">Retry All Failed</button>
+                </h2>
+                <table class="table"{{if not .RecentJobs}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Source</th>
+                            <th>Status</th>
+                            <th>Worker</th>
+                            <th>Duration</th>
+                            <th>Completed</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recent-jobs">
+                        {{range .RecentJobs}}
+                        <tr>
+                            <td><a href="/ui/job?id={{.ID}}"><code>{{.ID}}</code></a></td>
+                            <td class="truncate" title="{{.SourcePath}}">{{.SourcePath}}</td>
+                            <td><span class="badge {{if eq .Status "completed"}}badge-completed{{else if eq .Status "failed"}}badge-failed{{else}}badge-pending{{end}}">{{.Status}}</span></td>
+                            <td>{{.WorkerID}}</td>
+                            <td>{{if .SourceDuration}}{{printf "%.0f" .SourceDuration}}s{{else}}-{{end}}</td>
+                            <td>{{if .CompletedAt}}{{.CompletedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
+                            <td>
+                                {{if eq .Status "failed"}}<button class="btn btn-primary btn-sm" onclick="retryJob('{{.ID}}')">Retry</button>{{end}}
+                                {{if or (eq .Status "completed") (eq .Status "failed") (eq .Status "cancelled")}}
+                                <button class="btn btn-secondary btn-sm" onclick="requeueJob('{{.ID}}')">Re-queue</button>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <div class="no-data"{{if .RecentJobs}} style="display: none;"{{end}}>No recent jobs</div>
+            </div>
+        </div>
+
+        <!-- Workers Tab -->
+        <div id="workers" class="tab-content">
+            <div class="card">
+                <h2>🔗 Connect New Workers</h2>
+                <p style="color: #aaa; margin-bottom: 15px;">Workers can connect to this master using the following command:</p>
+                <div style="background: #0f0f23; padding: 15px; border-radius: 4px; font-family: monospace; color: #00d9ff; margin-bottom: 20px;">
+                    worker -url {{.MasterURL}}
+                </div>
+                <p style="color: #888; font-size: 0.85em;">Workers will automatically receive their configuration from the master. Use the "Configure" button to set per-worker settings.</p>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h2>👥 Connected Workers</h2>
+                <table class="table"{{if not .Workers}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>Worker ID</th>
+                            <th>Hostname</th>
+                            <th>GPU</th>
+                            <th>Active Jobs</th>
+                            <th>CPU</th>
+                            <th>Memory</th>
+                            <th>Status</th>
+                            <th>Last Seen</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workers-list">
+                        {{range .Workers}}
+                        <tr>
+                            <td><code>{{.WorkerID}}</code></td>
+                            <td>{{.Hostname}}</td>
+                            <td>{{.GPU}}</td>
+                            <td>{{.ActiveJobs}}</td>
+                            <td>{{printf "%.1f" .CPUUsage}}%</td>
+                            <td>{{printf "%.1f" .MemoryUsage}}%</td>
+                            <td><span class="badge {{if .IsOnline}}badge-online{{else}}badge-offline{{end}}">{{if .IsOnline}}Online{{else}}Offline{{end}}</span></td>
+                            <td>{{.LastHeartbeat.Format "15:04:05"}}</td>
+                            <td><button class="btn btn-primary btn-sm" onclick="openWorkerSettings('{{.WorkerID}}')">⚙️ Configure</button></td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <div class="no-data"{{if .Workers}} style="display: none;"{{end}}>No workers connected</div>
+            </div>
+        </div>
+
+        <!-- Worker Settings Modal -->
+        <div id="workerModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #16213e; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                <h2 style="margin-bottom: 20px;">⚙️ Worker Settings: <span id="modalWorkerId" style="color: #00d9ff;"></span></h2>
+                <form id="workerSettingsForm">
+                    <input type="hidden" id="wsWorkerId" />
+                    <div class="grid">
+                        <div>
+                            <div class="form-group">
+                                <label for="wsConcurrency">Concurrency</label>
+                                <input type="number" id="wsConcurrency" min="1" max="16" value="3" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsHeartbeat">Heartbeat Interval (s)</label>
+                                <input type="number" id="wsHeartbeat" min="5" max="300" value="30" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsJobCheck">Job Check Interval (s)</label>
+                                <input type="number" id="wsJobCheck" min="1" max="60" value="5" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsJobTimeout">Job Timeout (s)</label>
+                                <input type="number" id="wsJobTimeout" min="60" max="86400" value="7200" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsUseVulkan">Use Vulkan GPU</label>
+                                <select id="wsUseVulkan">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="form-group">
+                                <label for="wsDownloadTimeout">Download Timeout (s)</label>
+                                <input type="number" id="wsDownloadTimeout" min="60" max="86400" value="1800" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsUploadTimeout">Upload Timeout (s)</label>
+                                <input type="number" id="wsUploadTimeout" min="60" max="86400" value="1800" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsMaxCacheSize">Max Cache Size (bytes)</label>
+                                <input type="number" id="wsMaxCacheSize" min="0" value="10737418240" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wsLogLevel">Log Level</label>
+                                <select id="wsLogLevel">
+                                    <option value="debug">Debug</option>
+                                    <option value="info" selected>Info</option>
+                                    <option value="warn">Warn</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="wsBandwidthLimit">Bandwidth Limit (bytes/s)</label>
+                                <input type="number" id="wsBandwidthLimit" min="0" value="0" />
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+                        <button type="button" class="btn btn-danger" onclick="resetWorkerSettings()">🔄 Reset to Defaults</button>
+                        <button type="button" class="btn" style="background: #555;" onclick="closeWorkerModal()">Cancel</button>
+                    </div>
+                </form>
+                <div id="workerModalStatus" class="status" style="display: none; margin-top: 15px;"></div>
+            </div>
+        </div>
+
+        <!-- Configuration Tab -->
+        <!-- Scan Locations Tab -->
+        <div id="locations" class="tab-content">
+            <div class="card">
+                <h2>Scan Locations <button class="btn btn-primary btn-sm refresh-btn" onclick="location.reload()">🔄 Refresh</button></h2>
+                <p style="color: #888; font-size: 0.85em;">Each location is scanned by its own pool of <em>engines</em> parallel workers. Files whose size and modification time are unchanged since the last scan are skipped without being re-read. Locations persist to the config file.</p>
+                <table class="table"{{if not .Locations}} style="display: none;"{{end}}>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Source Root</th>
+                            <th>Output Base</th>
+                            <th>Engines</th>
+                            <th>Hash</th>
+                            <th>Interval</th>
+                            <th>Watch</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Locations}}
+                        <tr>
+                            <td>{{.ID}}</td>
+                            <td>{{.Name}}</td>
+                            <td><code>{{.RootPath}}</code></td>
+                            <td><code>{{.OutputBase}}</code></td>
+                            <td>{{.Engines}}</td>
+                            <td>{{.HashAlgo}}</td>
+                            <td>{{.ScanInterval}}</td>
+                            <td>{{if .EnableWatch}}yes{{else}}no{{end}}</td>
+                            <td>{{.EffectivePriority}}</td>
+                            <td>{{if .Running}}<span style="color:#4caf50;">running</span>{{else}}<span style="color:#f44336;">stopped</span>{{end}}</td>
+                            <td>
+                                <button class="btn btn-primary btn-sm" onclick="scanLocationNow('{{.ID}}')">▶ Scan now</button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteLocation('{{.ID}}')">🗑 Remove</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                {{if not .Locations}}<p>No scan locations configured yet. Add one below.</p>{{end}}
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h2>Add Scan Location</h2>
+                <form id="locationForm">
+                    <div class="grid">
+                        <div class="card">
+                            <h2>Paths</h2>
+                            <div class="form-group">
+                                <label for="locId">ID (slug)</label>
+                                <input type="text" id="locId" placeholder="movies" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locName">Name</label>
+                                <input type="text" id="locName" placeholder="Movies library" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locRoot">Source Root Path</label>
+                                <input type="text" id="locRoot" placeholder="/mnt/storage/videos" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locOutput">Output Base Path</label>
+                                <input type="text" id="locOutput" placeholder="/mnt/storage/converted" required />
+                            </div>
+                            <div class="form-group">
+                                <label for="locExtensions">Video Extensions (comma-separated, empty = default)</label>
+                                <input type="text" id="locExtensions" placeholder=".mp4,.mkv,.mov" />
+                            </div>
+                        </div>
+                        <div class="card">
+                            <h2>Scanning</h2>
+                            <div class="form-group">
+                                <label for="locEngines">Scan Engines (parallel workers)</label>
+                                <input type="number" id="locEngines" value="4" min="1" max="64" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locHashAlgo">Hash Algorithm</label>
+                                <select id="locHashAlgo">
+                                    <option value="sha256">SHA-256 (default, strongest)</option>
+                                    <option value="sha1">SHA-1 (faster, less CPU)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="locInterval">Scan Interval (seconds, 0 = watch/startup only)</label>
+                                <input type="number" id="locInterval" value="300" min="0" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locWatch">Watch filesystem (fsnotify)</label>
+                                <select id="locWatch">
+                                    <option value="true" selected>Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="locPriority">Default Job Priority (0-10)</label>
+                                <input type="number" id="locPriority" value="5" min="0" max="10" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locDepth">Recursive Depth (-1 = unlimited)</label>
+                                <input type="number" id="locDepth" value="-1" min="-1" />
+                            </div>
+                            <div class="form-group">
+                                <label for="locDedup">Detect duplicate files</label>
+                                <select id="locDedup">
+                                    <option value="true" selected>Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" id="saveLocationBtn">💾 Save Location</button>
+                        <div class="status" id="locationStatus" style="display:none;"></div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="config" class="tab-content">
+            <form id="configForm">
+                <div class="grid">
+                    <div class="card">
+                        <h2>Video Settings</h2>
+                        <div class="form-group">
+                            <label for="resolution">Resolution</label>
+                            <select id="resolution" name="resolution">
+                                <option value="1920x1080" {{if eq .Config.Video.Resolution "1920x1080"}}selected{{end}}>1920x1080 (1080p)</option>
+                                <option value="1280x720" {{if eq .Config.Video.Resolution "1280x720"}}selected{{end}}>1280x720 (720p)</option>
+                                <option value="854x480" {{if eq .Config.Video.Resolution "854x480"}}selected{{end}}>854x480 (480p)</option>
+                                <option value="640x360" {{if eq .Config.Video.Resolution "640x360"}}selected{{end}}>640x360 (360p)</option>
+                                <option value="3840x2160" {{if eq .Config.Video.Resolution "3840x2160"}}selected{{end}}>3840x2160 (4K)</option>
+                                <option value="2560x1440" {{if eq .Config.Video.Resolution "2560x1440"}}selected{{end}}>2560x1440 (1440p)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="codec">Video Codec</label>
+                            <select id="codec" name="codec">
+                                <option value="h264" {{if eq .Config.Video.Codec "h264"}}selected{{end}}>H.264 (AVC)</option>
+                                <option value="h265" {{if eq .Config.Video.Codec "h265"}}selected{{end}}>H.265 (HEVC)</option>
+                                <option value="vp9" {{if eq .Config.Video.Codec "vp9"}}selected{{end}}>VP9</option>
+                                <option value="av1" {{if eq .Config.Video.Codec "av1"}}selected{{end}}>AV1</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="bitrate">Video Bitrate</label>
+                            <input type="text" id="bitrate" name="bitrate" value="{{.Config.Video.Bitrate}}" placeholder="e.g., 5M, 8M, 2000k" />
+                        </div>
+                        <div class="form-group">
+                            <label for="preset">Encoding Preset</label>
+                            <select id="preset" name="preset">
+                                <option value="ultrafast" {{if eq .Config.Video.Preset "ultrafast"}}selected{{end}}>Ultrafast</option>
+                                <option value="superfast" {{if eq .Config.Video.Preset "superfast"}}selected{{end}}>Superfast</option>
+                                <option value="veryfast" {{if eq .Config.Video.Preset "veryfast"}}selected{{end}}>Veryfast</option>
+                                <option value="faster" {{if eq .Config.Video.Preset "faster"}}selected{{end}}>Faster</option>
+                                <option value="fast" {{if eq .Config.Video.Preset "fast"}}selected{{end}}>Fast</option>
+                                <option value="medium" {{if eq .Config.Video.Preset "medium"}}selected{{end}}>Medium</option>
+                                <option value="slow" {{if eq .Config.Video.Preset "slow"}}selected{{end}}>Slow</option>
+                                <option value="slower" {{if eq .Config.Video.Preset "slower"}}selected{{end}}>Slower</option>
+                                <option value="veryslow" {{if eq .Config.Video.Preset "veryslow"}}selected{{end}}>Veryslow</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Audio &amp; Output</h2>
+                        <div class="form-group">
+                            <label for="audioCodec">Audio Codec</label>
+                            <select id="audioCodec" name="audioCodec">
+                                <option value="aac" {{if eq .Config.Audio.Codec "aac"}}selected{{end}}>AAC</option>
+                                <option value="mp3" {{if eq .Config.Audio.Codec "mp3"}}selected{{end}}>MP3</option>
+                                <option value="opus" {{if eq .Config.Audio.Codec "opus"}}selected{{end}}>Opus</option>
+                                <option value="vorbis" {{if eq .Config.Audio.Codec "vorbis"}}selected{{end}}>Vorbis</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="audioBitrate">Audio Bitrate</label>
+                            <input type="text" id="audioBitrate" name="audioBitrate" value="{{.Config.Audio.Bitrate}}" placeholder="e.g., 128k, 192k, 320k" />
+                        </div>
+                        <div class="form-group">
+                            <label for="format">Container Format</label>
+                            <select id="format" name="format">
+                                <option value="mp4" {{if eq .Config.Output.Format "mp4"}}selected{{end}}>MP4</option>
+                                <option value="mkv" {{if eq .Config.Output.Format "mkv"}}selected{{end}}>MKV</option>
+                                <option value="webm" {{if eq .Config.Output.Format "webm"}}selected{{end}}>WebM</option>
+                                <option value="avi" {{if eq .Config.Output.Format "avi"}}selected{{end}}>AVI</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <h2 style="margin-top: 30px;">⚙️ Worker Settings</h2>
+                <div class="grid">
+                    <div class="card">
+                        <h2>Processing</h2>
+                        <div class="form-group">
+                            <label for="concurrency">Concurrent Jobs per Worker</label>
+                            <input type="number" id="concurrency" name="concurrency" value="{{.Config.Worker.Concurrency}}" min="1" max="16" />
+                        </div>
+                        <div class="form-group">
+                            <label for="heartbeatInterval">Heartbeat Interval (seconds)</label>
+                            <input type="number" id="heartbeatInterval" name="heartbeatInterval" value="{{.Config.Worker.HeartbeatInterval}}" min="5" max="300" />
+                        </div>
+                        <div class="form-group">
+                            <label for="jobCheckInterval">Job Check Interval (seconds)</label>
+                            <input type="number" id="jobCheckInterval" name="jobCheckInterval" value="{{.Config.Worker.JobCheckInterval}}" min="1" max="60" />
+                        </div>
+                        <div class="form-group">
+                            <label for="jobTimeout">Job Timeout (seconds)</label>
+                            <input type="number" id="jobTimeout" name="jobTimeout" value="{{.Config.Worker.JobTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="ffmpegTimeout">FFmpeg Timeout (seconds)</label>
+                            <input type="number" id="ffmpegTimeout" name="ffmpegTimeout" value="{{.Config.Worker.FFmpegTimeout}}" min="60" max="86400" />
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Transfers &amp; Storage</h2>
+                        <div class="form-group">
+                            <label for="downloadTimeout">Download Timeout (seconds)</label>
+                            <input type="number" id="downloadTimeout" name="downloadTimeout" value="{{.Config.Worker.DownloadTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="uploadTimeout">Upload Timeout (seconds)</label>
+                            <input type="number" id="uploadTimeout" name="uploadTimeout" value="{{.Config.Worker.UploadTimeout}}" min="60" max="86400" />
+                        </div>
+                        <div class="form-group">
+                            <label for="maxCacheSize">Max Cache Size (bytes)</label>
+                            <input type="number" id="maxCacheSize" name="maxCacheSize" value="{{.Config.Worker.MaxCacheSize}}" min="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="bandwidthLimit">Bandwidth Limit (bytes/s, 0=unlimited)</label>
+                            <input type="number" id="bandwidthLimit" name="bandwidthLimit" value="{{.Config.Worker.BandwidthLimit}}" min="0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="cacheCleanupAge">Cache Cleanup Age (seconds)</label>
+                            <input type="number" id="cacheCleanupAge" name="cacheCleanupAge" value="{{.Config.Worker.CacheCleanupAge}}" min="3600" max="604800" />
+                        </div>
+                        <div class="form-group">
+                            <label for="enableResumeDownload">Resume Downloads</label>
+                            <select id="enableResumeDownload" name="enableResumeDownload">
+                                <option value="true" {{if .Config.Worker.EnableResumeDownload}}selected{{end}}>Enabled</option>
+                                <option value="false" {{if not .Config.Worker.EnableResumeDownload}}selected{{end}}>Disabled</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Hardware &amp; Logging</h2>
+                        <div class="form-group">
+                            <label for="useVulkan">Use Vulkan GPU Acceleration</label>
+                            <select id="useVulkan" name="useVulkan">
+                                <option value="true" {{if .Config.Worker.UseVulkan}}selected{{end}}>Enabled</option>
+                                <option value="false" {{if not .Config.Worker.UseVulkan}}selected{{end}}>Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="logLevel">Log Level</label>
+                            <select id="logLevel" name="logLevel">
+                                <option value="debug" {{if eq .Config.Worker.LogLevel "debug"}}selected{{end}}>Debug</option>
+                                <option value="info" {{if eq .Config.Worker.LogLevel "info"}}selected{{end}}>Info</option>
+                                <option value="warn" {{if eq .Config.Worker.LogLevel "warn"}}selected{{end}}>Warn</option>
+                                <option value="error" {{if eq .Config.Worker.LogLevel "error"}}selected{{end}}>Error</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="logFormat">Log Format</label>
+                            <select id="logFormat" name="logFormat">
+                                <option value="json" {{if eq .Config.Worker.LogFormat "json"}}selected{{end}}>JSON</option>
+                                <option value="text" {{if eq .Config.Worker.LogFormat "text"}}selected{{end}}>Text</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="maxAPIRequestsPerMin">Max API Requests/Minute</label>
+                            <input type="number" id="maxAPIRequestsPerMin" name="maxAPIRequestsPerMin" value="{{.Config.Worker.MaxAPIRequestsPerMin}}" min="1" max="1000" />
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="btn btn-primary" id="saveBtn">💾 Save Configuration</button>
+                    <div class="loading" id="loading"><span class="spinner"></span></div>
+                </div>
+            </form>
+
+            <h2 style="margin-top: 30px;">🖥️ Server Settings (persisted)</h2>
+            <p style="color: #888; font-size: 0.85em;">
+                These settings are written to the config file{{if .ServerSettings.ConfigFile}} (<code>{{.ServerSettings.ConfigFile}}</code>){{end}}
+                and apply after the master restarts. If no config file exists, one is generated automatically on startup.
+            </p>
+            <form id="serverSettingsForm">
+                <div class="grid">
+                    <div class="card">
+                        <h2>Server</h2>
+                        <div class="form-group">
+                            <label for="srvHost">Listen Host</label>
+                            <input type="text" id="srvHost" name="srvHost" value="{{.ServerSettings.Host}}" placeholder="0.0.0.0" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvPort">Listen Port</label>
+                            <input type="number" id="srvPort" name="srvPort" value="{{.ServerSettings.Port}}" min="1" max="65535" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvApiKey">API Key (empty = keep current value)</label>
+                            <input type="password" id="srvApiKey" name="srvApiKey" value="{{.ServerSettings.APIKey}}" autocomplete="off" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvTlsCert">TLS Certificate Path (enables HTTPS)</label>
+                            <input type="text" id="srvTlsCert" name="srvTlsCert" value="{{.ServerSettings.TLSCert}}" placeholder="/etc/darkstream/cert.pem" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvTlsKey">TLS Private Key Path</label>
+                            <input type="text" id="srvTlsKey" name="srvTlsKey" value="{{.ServerSettings.TLSKey}}" placeholder="/etc/darkstream/key.pem" />
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>Storage &amp; Logging</h2>
+                        <div class="form-group">
+                            <label for="srvDbPath">Database Path</label>
+                            <input type="text" id="srvDbPath" name="srvDbPath" value="{{.ServerSettings.DatabasePath}}" placeholder="./jobs.db" />
+                        </div>
+                        <div class="form-group">
+                            <label for="srvLogLevel">Master Log Level</label>
+                            <select id="srvLogLevel" name="srvLogLevel">
+                                <option value="debug" {{if eq .ServerSettings.LogLevel "debug"}}selected{{end}}>Debug</option>
+                                <option value="info" {{if eq .ServerSettings.LogLevel "info"}}selected{{end}}>Info</option>
+                                <option value="warn" {{if eq .ServerSettings.LogLevel "warn"}}selected{{end}}>Warn</option>
+                                <option value="error" {{if eq .ServerSettings.LogLevel "error"}}selected{{end}}>Error</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="srvLogFormat">Master Log Format</label>
+                            <select id="srvLogFormat" name="srvLogFormat">
+                                <option value="json" {{if eq .ServerSettings.LogFormat "json"}}selected{{end}}>JSON</option>
+                                <option value="text" {{if eq .ServerSettings.LogFormat "text"}}selected{{end}}>Text</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <button type="submit" class="btn btn-primary" id="saveServerBtn">💾 Save Server Settings</button>
+                    <div class="status" id="serverSettingsStatus" style="display:none;"></div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const apiKeyStorageKey = 'darkstreamAdminApiKey';
+        const apiKeyCookieName = 'darkstream_api_key';
+
+        function loadApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            if (!input) {
+                return;
+            }
+            const saved = localStorage.getItem(apiKeyStorageKey) || '';
+            input.value = saved;
+        }
+
+        function saveApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            if (!input) {
+                return;
+            }
+            const value = input.value.trim();
+            if (value) {
+                localStorage.setItem(apiKeyStorageKey, value);
+            } else {
+                localStorage.removeItem(apiKeyStorageKey);
+            }
+            setApiKeyCookie(value);
+            // Reload so the server renders the (now authorised) job and worker data
+            location.reload();
+        }
+
+        function clearApiKey() {
+            localStorage.removeItem(apiKeyStorageKey);
+            setApiKeyCookie('');
+            const input = document.getElementById('apiKeyInput');
+            if (input) {
+                input.value = '';
+            }
+            location.reload();
+        }
+
+        // Page navigations cannot carry an Authorization header, so the key is
+        // mirrored into a same-site cookie that only the HTML pages accept.
+        function setApiKeyCookie(value) {
+            const secure = location.protocol === 'https:' ? '; Secure' : '';
+            if (value) {
+                document.cookie = apiKeyCookieName + '=' + encodeURIComponent(value) + '; path=/; SameSite=Strict; max-age=31536000' + secure;
+            } else {
+                document.cookie = apiKeyCookieName + '=; path=/; SameSite=Strict; max-age=0' + secure;
+            }
+        }
+
+        // Keys saved before the cookie existed: mirror once, then reload
+        (function() {
+            const saved = localStorage.getItem(apiKeyStorageKey);
+            const hasCookie = document.cookie.split('; ').some(function(c) { return c.indexOf(apiKeyCookieName + '=') === 0; });
+            if (saved && !hasCookie && !sessionStorage.getItem('darkstreamCookieSynced')) {
+                sessionStorage.setItem('darkstreamCookieSynced', '1');
+                setApiKeyCookie(saved);
+                location.reload();
+            }
+        })();
+
+        function authHeaders(headers) {
+            const out = {};
+            if (headers) {
+                Object.keys(headers).forEach(function(key) {
+                    out[key] = headers[key];
+                });
+            }
+            const apiKey = localStorage.getItem(apiKeyStorageKey);
+            if (apiKey) {
+                out.Authorization = 'Bearer ' + apiKey;
+            }
+            return out;
+        }
+
+        async function authorizedFetch(url, options) {
+            const opts = options || {};
+            opts.headers = authHeaders(opts.headers);
+            return fetch(url, opts);
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+                document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+                this.classList.add('active');
+                document.getElementById(this.dataset.tab).classList.add('active');
+            });
+        });
+
+        loadApiKey();
+
+        // Config form submission
+        document.getElementById('configForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('saveBtn');
+            const loading = document.getElementById('loading');
+            const status = document.getElementById('status');
+            
+            btn.disabled = true;
+            loading.classList.add('show');
+            
+            const config = {
+                video: {
+                    resolution: document.getElementById('resolution').value,
+                    codec: document.getElementById('codec').value,
+                    bitrate: document.getElementById('bitrate').value,
+                    preset: document.getElementById('preset').value
+                },
+                audio: {
+                    codec: document.getElementById('audioCodec').value,
+                    bitrate: document.getElementById('audioBitrate').value
+                },
+                output: { format: document.getElementById('format').value },
+                worker: {
+                    concurrency: parseInt(document.getElementById('concurrency').value) || 3,
+                    heartbeat_interval: parseInt(document.getElementById('heartbeatInterval').value) || 30,
+                    job_check_interval: parseInt(document.getElementById('jobCheckInterval').value) || 5,
+                    job_timeout: parseInt(document.getElementById('jobTimeout').value) || 7200,
+                    max_api_requests_per_min: parseInt(document.getElementById('maxAPIRequestsPerMin').value) || 60,
+                    download_timeout: parseInt(document.getElementById('downloadTimeout').value) || 1800,
+                    upload_timeout: parseInt(document.getElementById('uploadTimeout').value) || 1800,
+                    max_cache_size: parseInt(document.getElementById('maxCacheSize').value) || 10737418240,
+                    cache_cleanup_age: parseInt(document.getElementById('cacheCleanupAge').value) || 86400,
+                    bandwidth_limit: parseInt(document.getElementById('bandwidthLimit').value) || 0,
+                    enable_resume_download: document.getElementById('enableResumeDownload').value === 'true',
+                    use_vulkan: document.getElementById('useVulkan').value === 'true',
+                    ffmpeg_timeout: parseInt(document.getElementById('ffmpegTimeout').value) || 7200,
+                    log_level: document.getElementById('logLevel').value,
+                    log_format: document.getElementById('logFormat').value
+                }
+            };
+            
+            try {
+                const resp = await authorizedFetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const data = await resp.json();
+                status.className = resp.ok ? 'status status-success' : 'status status-error';
+                status.textContent = resp.ok ? 'Configuration saved!' : 'Error: ' + (data.error || 'Unknown error');
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+            }
+            
+            status.style.display = 'block';
+            btn.disabled = false;
+            loading.classList.remove('show');
+            setTimeout(function() { status.style.display = 'none'; }, 3000);
+        });
+
+        // Server settings form submission (persisted to the config file, restart required)
+        document.getElementById('serverSettingsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('saveServerBtn');
+            const status = document.getElementById('serverSettingsStatus');
+
+            btn.disabled = true;
+
+            const settings = {
+                host: document.getElementById('srvHost').value.trim(),
+                port: parseInt(document.getElementById('srvPort').value, 10),
+                api_key: document.getElementById('srvApiKey').value,
+                tls_cert: document.getElementById('srvTlsCert').value.trim(),
+                tls_key: document.getElementById('srvTlsKey').value.trim(),
+                database_path: document.getElementById('srvDbPath').value.trim(),
+                log_level: document.getElementById('srvLogLevel').value,
+                log_format: document.getElementById('srvLogFormat').value
+            };
+
+            try {
+                const resp = await authorizedFetch('/api/server-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                const data = await resp.json();
+                status.className = resp.ok ? 'status status-success' : 'status status-error';
+                if (resp.ok) {
+                    status.textContent = data.message || 'Server settings saved to the config file. Restart the master to apply.';
+                } else if (data.errors && data.errors.length) {
+                    status.textContent = 'Error: ' + data.errors.map(function(e) { return e.field + ': ' + e.message; }).join('; ');
+                } else {
+                    status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+            }
+
+            status.style.display = 'block';
+            btn.disabled = false;
+            setTimeout(function() { status.style.display = 'none'; }, 6000);
+        });
+
+        // Scan locations
+        document.getElementById('locationForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('saveLocationBtn');
+            const status = document.getElementById('locationStatus');
+            btn.disabled = true;
+
+            const priorityVal = parseInt(document.getElementById('locPriority').value, 10);
+            const extRaw = document.getElementById('locExtensions').value.trim();
+            const extensions = extRaw === '' ? [] : extRaw.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+
+            const loc = {
+                id: document.getElementById('locId').value.trim(),
+                name: document.getElementById('locName').value.trim(),
+                root_path: document.getElementById('locRoot').value.trim(),
+                output_base: document.getElementById('locOutput').value.trim(),
+                video_extensions: extensions,
+                engines: parseInt(document.getElementById('locEngines').value, 10) || 4,
+                hash_algo: document.getElementById('locHashAlgo').value,
+                scan_interval_sec: parseInt(document.getElementById('locInterval').value, 10) || 0,
+                enable_watch: document.getElementById('locWatch').value === 'true',
+                priority: isNaN(priorityVal) ? 5 : priorityVal,
+                recursive_depth: parseInt(document.getElementById('locDepth').value, 10),
+                detect_duplicates: document.getElementById('locDedup').value === 'true',
+                skip_hidden_files: true,
+                skip_hidden_dirs: true,
+                replace_source: false,
+                min_file_size: 0,
+                max_file_size: 0
+            };
+
+            try {
+                const resp = await authorizedFetch('/api/scan-locations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loc)
+                });
+                const data = await resp.json();
+                status.className = resp.ok ? 'status status-success' : 'status status-error';
+                if (resp.ok) {
+                    status.textContent = data.message || 'Scan location saved.';
+                    setTimeout(function() { location.reload(); }, 800);
+                } else if (data.errors && data.errors.length) {
+                    status.textContent = 'Error: ' + data.errors.map(function(e) { return e.field + ': ' + e.message; }).join('; ');
+                } else {
+                    status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+            }
+            status.style.display = 'block';
+            btn.disabled = false;
+        });
+
+        async function deleteLocation(id) {
+            if (!confirm('Remove scan location "' + id + '"? Its jobs stay in the queue.')) return;
+            try {
+                const resp = await authorizedFetch('/api/scan-locations?id=' + encodeURIComponent(id), { method: 'DELETE' });
+                if (resp.ok) { location.reload(); } else { alert('Failed to remove location'); }
+            } catch (err) { alert('Network error: ' + err.message); }
+        }
+
+        async function scanLocationNow(id) {
+            try {
+                const resp = await authorizedFetch('/api/scan-locations?scan_now=' + encodeURIComponent(id), { method: 'POST' });
+                if (!resp.ok) { alert('Failed to trigger scan'); }
+            } catch (err) { alert('Network error: ' + err.message); }
+        }
+
+        // Update job priority
+        async function updatePriority(jobId, currentPriority) {
+            const newPriorityStr = prompt('Enter new priority for job ' + jobId + ' (0-10):', currentPriority);
+            if (newPriorityStr === null) return;
+
+            const newPriority = parseInt(newPriorityStr, 10);
+            if (isNaN(newPriority) || newPriority < 0 || newPriority > 10) {
+                alert('Invalid priority. Must be a number between 0 and 10.');
+                return;
+            }
+
+            try {
+                const resp = await authorizedFetch('/api/job/priority', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_id: jobId, priority: newPriority })
+                });
+
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    const data = await resp.json().catch(() => ({}));
+                    alert('Failed to update priority: ' + (data.error || resp.statusText));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Cancel single job
+        async function cancelJob(jobId) {
+            if (!confirm('Cancel job ' + jobId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/job/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to cancel job');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Prune jobs
+        async function pruneJobs(status) {
+            let msg = 'Are you sure you want to clear ' + status + ' jobs?';
+            if (status === 'all') {
+                msg = 'Are you sure you want to clear all completed, failed and cancelled jobs?';
+            }
+            if (!confirm(msg)) return;
+
+            try {
+                const response = await authorizedFetch('/api/jobs/prune?status=' + status, {
+                    method: 'DELETE'
+                });
+                if (!response.ok) {
+                    throw new Error('Request failed with status ' + response.status);
+                }
+                const data = await response.json();
+                alert('Cleared ' + data.deleted_count + ' jobs');
+                window.location.reload();
+            } catch (error) {
+                console.error('Error pruning jobs:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // Cancel all pending
+        async function cancelAllPending() {
+            if (!confirm('Cancel ALL pending jobs?')) return;
+            try {
+                const resp = await authorizedFetch('/api/jobs/cancel?status=pending', { method: 'POST' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    alert('Cancelled ' + data.cancelled_count + ' jobs');
+                    location.reload();
+                } else {
+                    alert('Failed to cancel jobs');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function retryJob(jobId) {
+            if (!confirm('Retry job ' + jobId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/job/retry?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to retry job');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function requeueJob(jobId) {
+            if (!confirm('Re-queue job ' + jobId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/job/requeue?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to re-queue job');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function retryAllFailed() {
+            if (!confirm('Retry ALL failed jobs?')) return;
+            try {
+                const resp = await authorizedFetch('/api/retry', { method: 'POST' });
+                if (resp.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to retry jobs');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Fetch a short-lived signed token for SSE streams, so the long-lived
+        // API key never appears in the URL (it would leak into access logs).
+        let streamTokenPromise = null;
+        function getStreamToken() {
+            if (!streamTokenPromise) {
+                streamTokenPromise = authorizedFetch('/api/stream-token', { method: 'POST' })
+                    .then(function(resp) { return resp.ok ? resp.json() : null; })
+                    .then(function(data) { return data ? data.token : null; })
+                    .catch(function() { streamTokenPromise = null; return null; });
+            }
+            return streamTokenPromise;
+        }
+
+        // Connect to stats stream for real-time updates
+        async function connectStatsStream() {
+            let url = '/api/stats/stream';
+            const token = await getStreamToken();
+            if (token) {
+                url += '?token=' + encodeURIComponent(token);
+            } else {
+                const apiKey = localStorage.getItem(apiKeyStorageKey);
+                if (apiKey) {
+                    url += '?api_key=' + encodeURIComponent(apiKey);
+                }
+            }
+            const evtSource = new EventSource(url);
+
+            // The server emits named "stats" events; onmessage only receives unnamed ones.
+            evtSource.addEventListener('stats', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Update stats
+                    if (data.stats.pending !== undefined) document.getElementById('stat-pending').textContent = data.stats.pending;
+                    if (data.stats.processing !== undefined) document.getElementById('stat-processing').textContent = data.stats.processing;
+                    if (data.stats.completed !== undefined) document.getElementById('stat-completed').textContent = data.stats.completed;
+                    if (data.stats.failed !== undefined) document.getElementById('stat-failed').textContent = data.stats.failed;
+                    if (data.stats.workers !== undefined) document.getElementById('stat-workers').textContent = data.stats.workers;
+
+                    // Update queue status
+                    if (data.stats.queue_paused !== undefined) {
+                        const isPaused = data.stats.queue_paused;
+                        window.isQueuePaused = isPaused;
+                        const badge = document.getElementById('queue-status-badge');
+                        const btn = document.getElementById('toggle-queue-btn');
+                        if (isPaused) {
+                            badge.textContent = 'Queue Paused';
+                            badge.className = 'badge badge-failed';
+                            btn.textContent = 'Resume Queue';
+                            btn.style.background = '#67c23a';
+                        } else {
+                            badge.textContent = 'Queue Active';
+                            badge.className = 'badge badge-success';
+                            btn.textContent = 'Pause Queue';
+                            btn.style.background = '#e6a23c';
+                        }
+                    }
+
+                    function createElement(tag, opts = {}) {
+                        const el = document.createElement(tag);
+                        // Compare against undefined/null so legitimate falsy values (0) still render
+                        if (opts.text !== undefined && opts.text !== null) el.textContent = String(opts.text);
+                        if (opts.className) el.className = opts.className;
+                        if (opts.title) el.title = opts.title;
+                        if (opts.href) el.setAttribute('href', opts.href);
+                        if (opts.onclick) el.onclick = opts.onclick;
+                        if (opts.innerHTML) el.innerHTML = opts.innerHTML; // only for static UI bits, not data
+                        if (typeof opts.style === 'string') {
+                            el.style.cssText = opts.style;
+                        } else if (opts.style) {
+                            for (let key in opts.style) {
+                                el.style[key] = opts.style[key];
+                            }
+                        }
+                        return el;
+                    }
+
+                    // Show the table when it has rows, otherwise the "no data" note next to it
+                    function toggleEmptyState(tbody, rowCount) {
+                        const table = tbody.closest('table');
+                        if (!table) return;
+                        table.style.display = rowCount > 0 ? '' : 'none';
+                        const note = table.nextElementSibling;
+                        if (note && note.classList.contains('no-data')) {
+                            note.style.display = rowCount > 0 ? 'none' : '';
+                        }
+                    }
+
+                    // Update pending jobs table
+                    if (data.pending_jobs && document.getElementById('pending-jobs')) {
+                        const tbody = document.getElementById('pending-jobs');
+                        tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.pending_jobs.length);
+                        data.pending_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            const createdAt = new Date(job.created_at).toLocaleString();
+                            const prio = job.priority !== undefined ? job.priority : 5;
+
+                            const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
+                            const codeId = createElement('code', {text: job.id});
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+
+                            const tdPrio = createElement('td');
+                            const badgePrio = createElement('span', {text: prio, className: 'badge badge-pending'});
+                            tdPrio.appendChild(badgePrio);
+
+                            const tdCreated = createElement('td', {text: createdAt});
+
+                            const tdActions = createElement('td');
+                            const btnPrio = createElement('button', {text: 'Priority', className: 'btn btn-primary btn-sm'});
+                            btnPrio.onclick = () => updatePriority(job.id, prio);
+
+                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                            btnCancel.onclick = () => cancelJob(job.id);
+
+                            tdActions.appendChild(btnPrio);
+                            tdActions.appendChild(document.createTextNode(' '));
+                            tdActions.appendChild(btnCancel);
+
+                            tr.append(tdId, tdSource, tdPrio, tdCreated, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update processing jobs table
+                    if (data.processing_jobs && document.getElementById('processing-jobs')) {
+                        const tbody = document.getElementById('processing-jobs');
+                        tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.processing_jobs.length);
+                        data.processing_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            let startedAt = '';
+                            if (job.started_at) {
+                                startedAt = new Date(job.started_at).toLocaleTimeString();
+                            }
+
+                            const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
+                            const codeId = createElement('code', {text: job.id});
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+                            const tdWorker = createElement('td', {text: job.worker_id || ''});
+
+                            const tdProg = createElement('td');
+                            const progBar = createElement('div', {className: 'progress-bar', style: {width: '100px'}});
+                            const progFill = createElement('div', {className: 'progress-fill', style: {width: (job.progress || 0) + '%'}});
+                            progBar.appendChild(progFill);
+                            tdProg.appendChild(progBar);
+
+                            const tdStarted = createElement('td', {text: startedAt});
+
+                            const tdActions = createElement('td');
+                            const btnCancel = createElement('button', {text: 'Cancel', className: 'btn btn-danger btn-sm'});
+                            btnCancel.onclick = () => cancelJob(job.id);
+                            tdActions.appendChild(btnCancel);
+
+                            tr.append(tdId, tdSource, tdWorker, tdProg, tdStarted, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update recent jobs table
+                    if (data.recent_jobs && document.getElementById('recent-jobs')) {
+                        const tbody = document.getElementById('recent-jobs');
+                        tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.recent_jobs.length);
+                        data.recent_jobs.forEach(job => {
+                            const tr = document.createElement('tr');
+                            let statusClass = 'badge-pending';
+                            if (job.status === 'completed') statusClass = 'badge-completed';
+                            else if (job.status === 'failed') statusClass = 'badge-failed';
+
+                            let completedAt = '-';
+                            if (job.completed_at) {
+                                completedAt = new Date(job.completed_at).toLocaleString();
+                            }
+
+                            const tdId = createElement('td');
+                            const aId = createElement('a', {href: '/ui/job?id=' + job.id});
+                            const codeId = createElement('code', {text: job.id});
+                            aId.appendChild(codeId);
+                            tdId.appendChild(aId);
+
+                            const tdSource = createElement('td', {text: job.source_path, className: 'truncate', title: job.source_path});
+
+                            const tdStatus = createElement('td');
+                            const badgeStatus = createElement('span', {text: job.status, className: 'badge ' + statusClass});
+                            tdStatus.appendChild(badgeStatus);
+
+                            const tdWorker = createElement('td', {text: job.worker_id || ''});
+                            const tdDuration = createElement('td', {text: job.source_duration ? Math.round(job.source_duration) + 's' : '-'});
+                            const tdCompleted = createElement('td', {text: completedAt});
+
+                            const tdActions = createElement('td');
+                            if (job.status === 'failed') {
+                                const btnRetry = createElement('button', {text: 'Retry', className: 'btn btn-primary btn-sm'});
+                                btnRetry.onclick = () => retryJob(job.id);
+                                tdActions.appendChild(btnRetry);
+                                tdActions.appendChild(document.createTextNode(' '));
+                            }
+                            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                                const btnRequeue = createElement('button', {text: 'Re-queue', className: 'btn btn-secondary btn-sm'});
+                                btnRequeue.onclick = () => requeueJob(job.id);
+                                tdActions.appendChild(btnRequeue);
+                            }
+
+                            tr.append(tdId, tdSource, tdStatus, tdWorker, tdDuration, tdCompleted, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    // Update workers table
+                    if (data.workers && document.getElementById('workers-list')) {
+                        const tbody = document.getElementById('workers-list');
+                        tbody.innerHTML = '';
+                        toggleEmptyState(tbody, data.workers.length);
+                        data.workers.forEach(worker => {
+                            const tr = document.createElement('tr');
+                            const statusBadge = worker.is_online ? 'badge-online' : 'badge-offline';
+                            const statusText = worker.is_online ? 'Online' : 'Offline';
+                            let lastSeen = '-';
+                            if (worker.last_seen) {
+                                lastSeen = new Date(worker.last_seen).toLocaleTimeString();
+                            }
+
+                            const tdId = createElement('td');
+                            const codeId = createElement('code', {text: worker.worker_id});
+                            tdId.appendChild(codeId);
+
+                            const tdHost = createElement('td', {text: worker.hostname || ''});
+                            const tdGpu = createElement('td', {text: worker.gpu || ''});
+                            const tdJobs = createElement('td', {text: worker.active_jobs || 0});
+                            const tdCpu = createElement('td', {text: (worker.cpu_usage || 0).toFixed(1) + '%'});
+                            const tdMem = createElement('td', {text: (worker.memory_usage || 0).toFixed(1) + '%'});
+
+                            const tdStatus = createElement('td');
+                            const badgeStatus = createElement('span', {text: statusText, className: 'badge ' + statusBadge});
+                            tdStatus.appendChild(badgeStatus);
+
+                            const tdSeen = createElement('td', {text: lastSeen});
+
+                            const tdActions = createElement('td');
+                            const btnConfig = createElement('button', {text: '⚙️ Configure', className: 'btn btn-primary btn-sm'});
+                            btnConfig.onclick = () => openWorkerSettings(worker.worker_id);
+                            tdActions.appendChild(btnConfig);
+
+                            if (worker.status !== 'offline') {
+                                if (worker.status === 'paused') {
+                                    const btnResume = createElement('button', {text: '▶️ Resume', className: 'btn btn-success btn-sm', style: 'margin-left: 5px;'});
+                                    btnResume.onclick = () => resumeWorker(worker.worker_id);
+                                    tdActions.appendChild(btnResume);
+                                } else {
+                                    const btnPause = createElement('button', {text: '⏸️ Pause', className: 'btn btn-warning btn-sm', style: 'margin-left: 5px;'});
+                                    btnPause.onclick = () => pauseWorker(worker.worker_id);
+                                    tdActions.appendChild(btnPause);
+                                }
+                            }
+
+                            const btnRemove = createElement('button', {text: '🗑️ Remove', className: 'btn btn-danger btn-sm', style: 'margin-left: 5px;'});
+                            btnRemove.onclick = () => removeWorker(worker.worker_id);
+                            tdActions.appendChild(btnRemove);
+
+                            tr.append(tdId, tdHost, tdGpu, tdJobs, tdCpu, tdMem, tdStatus, tdSeen, tdActions);
+                            tbody.appendChild(tr);
+                        });
+                    }
+                } catch (err) {
+                    console.error('Failed to parse SSE data:', err);
+                }
+            });
+
+            evtSource.onerror = function() {
+                const indicator = document.getElementById('live-indicator');
+                if (indicator) {
+                    indicator.textContent = 'Disconnected 🔴';
+                }
+            };
+
+            evtSource.onopen = function() {
+                const indicator = document.getElementById('live-indicator');
+                if (indicator) {
+                    indicator.textContent = 'Live 🟢';
+                }
+            };
+        }
+
+        connectStatsStream();
+
+        // Queue status functions
+        async function toggleQueue() {
+            const isPaused = window.isQueuePaused || false;
+            const endpoint = isPaused ? '/api/queue/resume' : '/api/queue/pause';
+            const action = isPaused ? 'resume' : 'pause';
+
+            if (!confirm('Are you sure you want to ' + action + ' the global job queue?')) return;
+
+            try {
+                const resp = await authorizedFetch(endpoint, { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to ' + action + ' queue: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Worker admin functions
+        async function pauseWorker(workerId) {
+            if (!confirm('Pause worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker/pause?worker_id=' + encodeURIComponent(workerId), { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to pause worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function resumeWorker(workerId) {
+            if (!confirm('Resume worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker/resume?worker_id=' + encodeURIComponent(workerId), { method: 'POST' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to resume worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function removeWorker(workerId) {
+            if (!confirm('Remove worker ' + workerId + '?')) return;
+            try {
+                const resp = await authorizedFetch('/api/worker?worker_id=' + encodeURIComponent(workerId), { method: 'DELETE' });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    alert('Failed to remove worker: ' + txt);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Worker settings modal functions
+        async function openWorkerSettings(workerId) {
+            document.getElementById('modalWorkerId').textContent = workerId;
+            document.getElementById('wsWorkerId').value = workerId;
+            document.getElementById('workerModal').style.display = 'block';
+            
+            try {
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId));
+                if (resp.ok) {
+                    const settings = await resp.json();
+                    document.getElementById('wsConcurrency').value = settings.concurrency || 3;
+                    document.getElementById('wsHeartbeat').value = settings.heartbeat_interval || 30;
+                    document.getElementById('wsJobCheck').value = settings.job_check_interval || 5;
+                    document.getElementById('wsJobTimeout').value = settings.job_timeout || 7200;
+                    document.getElementById('wsUseVulkan').value = settings.use_vulkan ? 'true' : 'false';
+                    document.getElementById('wsDownloadTimeout').value = settings.download_timeout || 1800;
+                    document.getElementById('wsUploadTimeout').value = settings.upload_timeout || 1800;
+                    document.getElementById('wsMaxCacheSize').value = settings.max_cache_size || 10737418240;
+                    document.getElementById('wsLogLevel').value = settings.log_level || 'info';
+                    document.getElementById('wsBandwidthLimit').value = settings.bandwidth_limit || 0;
+                }
+            } catch (err) {
+                console.error('Failed to load worker settings:', err);
+            }
+        }
+
+        function closeWorkerModal() {
+            document.getElementById('workerModal').style.display = 'none';
+        }
+
+        document.getElementById('workerSettingsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const workerId = document.getElementById('wsWorkerId').value;
+            const status = document.getElementById('workerModalStatus');
+            
+            const settings = {
+                worker_id: workerId,
+                concurrency: parseInt(document.getElementById('wsConcurrency').value) || 3,
+                heartbeat_interval: parseInt(document.getElementById('wsHeartbeat').value) || 30,
+                job_check_interval: parseInt(document.getElementById('wsJobCheck').value) || 5,
+                job_timeout: parseInt(document.getElementById('wsJobTimeout').value) || 7200,
+                max_api_requests_per_min: 60,
+                download_timeout: parseInt(document.getElementById('wsDownloadTimeout').value) || 1800,
+                upload_timeout: parseInt(document.getElementById('wsUploadTimeout').value) || 1800,
+                max_cache_size: parseInt(document.getElementById('wsMaxCacheSize').value) || 10737418240,
+                cache_cleanup_age: 86400,
+                bandwidth_limit: parseInt(document.getElementById('wsBandwidthLimit').value) || 0,
+                enable_resume_download: true,
+                use_vulkan: document.getElementById('wsUseVulkan').value === 'true',
+                ffmpeg_timeout: 7200,
+                log_level: document.getElementById('wsLogLevel').value,
+                log_format: 'json'
+            };
+            
+            try {
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                if (resp.ok) {
+                    status.className = 'status status-success';
+                    status.textContent = 'Worker settings saved! The worker will use these settings on next config refresh.';
+                    status.style.display = 'block';
+                    setTimeout(function() { closeWorkerModal(); }, 2000);
+                } else {
+                    const data = await resp.json();
+                    status.className = 'status status-error';
+                    status.textContent = 'Error: ' + (data.error || 'Failed to save settings');
+                    status.style.display = 'block';
+                }
+            } catch (err) {
+                status.className = 'status status-error';
+                status.textContent = 'Network error: ' + err.message;
+                status.style.display = 'block';
+            }
+        });
+
+        async function resetWorkerSettings() {
+            const workerId = document.getElementById('wsWorkerId').value;
+            if (!confirm('Reset settings for ' + workerId + ' to defaults?')) return;
+            
+            try {
+                const resp = await authorizedFetch('/api/worker/settings?worker_id=' + encodeURIComponent(workerId), {
+                    method: 'DELETE'
+                });
+                if (resp.ok) {
+                    const status = document.getElementById('workerModalStatus');
+                    status.className = 'status status-success';
+                    status.textContent = 'Worker settings reset to defaults!';
+                    status.style.display = 'block';
+                    setTimeout(function() { closeWorkerModal(); }, 2000);
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
