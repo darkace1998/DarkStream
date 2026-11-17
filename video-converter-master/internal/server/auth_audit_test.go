@@ -58,7 +58,7 @@ func TestStreamTokenIssueAndValidate(t *testing.T) {
 func TestAuthenticateAPICall(t *testing.T) {
 	srv := newTestServer(t)
 	srv.apiKey = testAPIKey
-	srv.workerTokens = map[string]string{"worker-1": "worker-secret"}
+	srv.workerTokens = map[string]string{testWorkerID: "worker-secret"}
 
 	workerReq := httptest.NewRequest(http.MethodGet, "/api/worker/jobs", nil)
 	workerReq.Header.Set("Authorization", "Bearer worker-secret")

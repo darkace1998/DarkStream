@@ -24,6 +24,8 @@ func (s *Server) UploadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditRequest(r, "worker.upload-video")
+
 	// Get job_id from query parameters
 	jobID := r.URL.Query().Get(fieldJobID)
 	if !validateJobID(jobID) {

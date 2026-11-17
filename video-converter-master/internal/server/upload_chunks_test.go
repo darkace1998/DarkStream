@@ -97,11 +97,12 @@ func TestUploadChunkOutOfOrderAndDuplicate(t *testing.T) {
 	require.Equal(t, int64(8), updated.OutputSize)
 	require.NotEmpty(t, updated.OutputChecksum)
 
-	// Audit entry recorded.
+	// Exactly one audit row for the whole chunked upload (not one per chunk),
+	// using the same action as the single-stream upload path.
 	entries, err := srv.db.GetAuditLog(10)
 	require.NoError(t, err)
-	require.NotEmpty(t, entries)
-	require.Equal(t, "worker.upload-chunk", entries[0].Action)
+	require.Len(t, entries, 1)
+	require.Equal(t, "worker.upload-video", entries[0].Action)
 }
 
 func TestUploadChunkGapNotCompleteUntilFilled(t *testing.T) {
@@ -202,4 +203,88 @@ func TestUploadChunkOutputPathOutsideAllowedDirs(t *testing.T) {
 
 	code, _ := postChunk(t, srv, job.ID, 0, 4, []byte("aaaa"))
 	require.Equal(t, http.StatusForbidden, code)
+}
+
+// A rejected overlapping chunk must not leave any bytes in the .part file.
+func TestUploadChunkRejectedOverlapWritesNothing(t *testing.T) {
+	srv, job, outDir := newChunkTestServer(t, "job-nw")
+
+	code, _ := postChunk(t, srv, job.ID, 0, 8, []byte("aaaa"))
+	require.Equal(t, http.StatusOK, code)
+
+	// Overlapping range -> 400.
+	code, _ = postChunk(t, srv, job.ID, 2, 8, []byte("bbbb"))
+	require.Equal(t, http.StatusBadRequest, code)
+
+	// The .part file must still contain only the first chunk (rest zeros).
+	part, err := os.ReadFile(filepath.Join(outDir, "converted.mp4.part"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("aaaa\x00\x00\x00\x00"), part)
+
+	// Same offset but different length is also rejected before writing.
+	code, _ = postChunk(t, srv, job.ID, 0, 8, []byte("aa"))
+	require.Equal(t, http.StatusBadRequest, code)
+	part, err = os.ReadFile(filepath.Join(outDir, "converted.mp4.part"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("aaaa\x00\x00\x00\x00"), part)
+
+	// Completing range still works and assembles the correct file.
+	code, resp := postChunk(t, srv, job.ID, 4, 8, []byte("bbbb"))
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, resp.Complete)
+	content, err := os.ReadFile(filepath.Join(outDir, "converted.mp4"))
+	require.NoError(t, err)
+	require.Equal(t, "aaaabbbb", string(content))
+}
+
+// The presented worker token must belong to the worker the job was assigned
+// to (job.WorkerID), not just to the worker_id query parameter.
+func TestUploadChunkBoundToJobWorkerID(t *testing.T) {
+	srv := newTestServer(t)
+	srv.apiKey = testAPIKey
+	srv.workerTokens = map[string]string{testWorkerID: "tok-1", "worker-2": "tok-2"}
+
+	outDir := t.TempDir()
+	srv.AddAllowedDirs(outDir)
+
+	newJob := func(id, workerID string) *models.Job {
+		job := &models.Job{
+			ID:         id,
+			SourcePath: filepath.Join(t.TempDir(), "source.mp4"),
+			OutputPath: filepath.Join(outDir, id+".mp4"),
+			Status:     statusPending,
+			Priority:   5,
+			MaxRetries: 3,
+		}
+		require.NoError(t, srv.db.CreateJob(job))
+		claimed, err := srv.db.ClaimNextPendingJob(context.Background(), workerID)
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		return claimed
+	}
+
+	handler := srv.authMiddleware(srv.UploadChunk)
+	post := func(jobID, token, workerID string) *httptest.ResponseRecorder {
+		url := fmt.Sprintf("/api/worker/upload-chunk?job_id=%s&worker_id=%s&offset=0&total_size=4", jobID, workerID)
+		req := httptest.NewRequest(http.MethodPost, url, strings.NewReader("aaaa"))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		return rec
+	}
+
+	// Job assigned to worker-2, but worker-1's token presented (query claims
+	// worker-1): the query binding passes, the job binding must reject.
+	jobOther := newJob("job-other", "worker-2")
+	rec := post(jobOther.ID, "tok-1", testWorkerID)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	// Job assigned to worker-1, worker-1's token: allowed.
+	jobMine := newJob("job-mine", testWorkerID)
+	rec = post(jobMine.ID, "tok-1", testWorkerID)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// Master API key is not bound to any worker and may complete any job.
+	rec = post(jobOther.ID, testAPIKey, "worker-2")
+	require.NotEqual(t, http.StatusForbidden, rec.Code)
 }

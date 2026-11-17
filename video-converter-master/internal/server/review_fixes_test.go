@@ -88,7 +88,7 @@ func TestScanLocationValidationRejectsSkipWithReplaceSource(t *testing.T) {
 func TestWorkerTokenBoundToWorkerID(t *testing.T) {
 	srv := newTestServer(t)
 	srv.apiKey = testAPIKey
-	srv.workerTokens = map[string]string{"worker-1": "tok-1"}
+	srv.workerTokens = map[string]string{testWorkerID: "tok-1"}
 
 	handler := srv.authMiddleware(srv.GetNextJob)
 

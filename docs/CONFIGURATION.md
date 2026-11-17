@@ -240,9 +240,12 @@ See `video-converter-worker/config.yaml.example` for a complete example.
     videos. `0` (default) = single-stream multipart upload; any value > 0 enables
     chunked upload with that chunk size (capped server-side at 256 MiB). The worker
     sends up to 4 chunks in parallel to `POST /api/worker/upload-chunk`; the master
-    writes them at their offsets into a `.part` file and finalizes once complete. If
-    the master is older and lacks the endpoint, the worker automatically falls back
-    to the single-stream multipart upload.
+    writes them at their offsets into a `.part` file and finalizes once complete;
+    overlapping ranges are rejected before anything is written, so a rejected
+    chunk never corrupts the `.part` file. The upload is audited once at
+    completion (action `worker.upload-video`, same as a single-stream upload),
+    not per chunk. If the master is older and lacks the endpoint, the worker
+    automatically falls back to the single-stream multipart upload.
 *   `max_cache_size`: Local override for maximum cache size.
 *   `cache_cleanup_age`: Age after which cached files are cleaned up (e.g., `24h`).
 *   `bandwidth_limit`: Limit network bandwidth usage (bytes per second, 0 = unlimited).

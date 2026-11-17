@@ -50,8 +50,6 @@ type chunkUploadState struct {
 // when the received byte count reaches total_size the file is renamed into
 // place and the job is completed exactly like a single-stream upload.
 func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
-	s.auditRequest(r, "worker.upload-chunk")
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -68,6 +66,12 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	job, validatedPath, ok := s.resolveChunkTarget(w, jobID)
 	if !ok {
+		return
+	}
+
+	// The token must belong to the worker the job was assigned to, otherwise
+	// any valid worker token could complete another worker's job.
+	if !s.checkWorkerBinding(w, r, job.WorkerID) {
 		return
 	}
 
@@ -136,6 +140,9 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	s.finalizeUploadedJob(job, validatedPath, outputChecksum, nil)
 	s.recordJobCompletion(job)
+	// One audit row per completed upload (not per chunk), same action as the
+	// single-stream upload path.
+	s.auditRequest(r, "worker.upload-video")
 	slog.Info("Chunked upload completed", fieldJobID, jobID, "size", totalSize, "checksum", outputChecksum, "output", validatedPath)
 
 	w.Header().Set("Content-Type", contentTypeJSON)
@@ -255,10 +262,27 @@ func (s *Server) sweepIdleChunkUploads(now time.Time) {
 }
 
 // writeChunk writes one chunk at its offset and reports whether the upload is
-// now complete (received bytes == total, no gaps).
+// now complete (received bytes == total, no gaps). The range is validated
+// before the file is touched, so a rejected chunk never leaves bytes in the
+// .part file.
 func (st *chunkUploadState) writeChunk(offset int64, chunk []byte) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+
+	end := offset + int64(len(chunk))
+	for off, length := range st.offsets {
+		if off == offset {
+			if length == int64(len(chunk)) {
+				// Idempotent retransmission of an already-received range:
+				// nothing to write, just report current progress.
+				return st.completeLocked(), nil
+			}
+			return false, fmt.Errorf("%w: offset %d retransmitted with length %d, already have %d", errChunkOverlap, offset, len(chunk), length)
+		}
+		if offset < off+length && off < end {
+			return false, fmt.Errorf("%w: [%d,%d) intersects [%d,%d)", errChunkOverlap, offset, end, off, off+length)
+		}
+	}
 
 	f, err := os.OpenFile(st.partPath, os.O_WRONLY, 0o600) // #nosec G703 G304 -- st.partPath derives from job.OutputPath, which resolveChunkTarget validated against the allowed directories
 	if err != nil {
@@ -270,22 +294,17 @@ func (st *chunkUploadState) writeChunk(offset int64, chunk []byte) (bool, error)
 		return false, err
 	}
 
-	end := offset + int64(len(chunk))
-	for off, length := range st.offsets {
-		if off != offset && offset < off+length && off < end {
-			return false, fmt.Errorf("%w: [%d,%d) intersects [%d,%d)", errChunkOverlap, offset, end, off, off+length)
-		}
-	}
 	st.lastActivity = time.Now()
+	st.offsets[offset] = int64(len(chunk))
+	st.received += int64(len(chunk))
+	return st.completeLocked(), nil
+}
 
-	if _, dup := st.offsets[offset]; !dup {
-		st.offsets[offset] = int64(len(chunk))
-		st.received += int64(len(chunk))
-	}
-
-	// Complete only when every byte [0,total) is covered exactly once.
+// completeLocked reports whether every byte [0,total) is covered exactly once.
+// The caller must hold st.mu.
+func (st *chunkUploadState) completeLocked() bool {
 	if st.received < st.total {
-		return false, nil
+		return false
 	}
 	offs := make([]int64, 0, len(st.offsets))
 	for off := range st.offsets {
@@ -295,11 +314,11 @@ func (st *chunkUploadState) writeChunk(offset int64, chunk []byte) (bool, error)
 	covered := int64(0)
 	for _, off := range offs {
 		if off != covered { // gap or overlap
-			return false, nil
+			return false
 		}
 		covered += st.offsets[off]
 	}
-	return covered == st.total, nil
+	return covered == st.total
 }
 
 // progress returns the received byte count (called with state lock held or not;
