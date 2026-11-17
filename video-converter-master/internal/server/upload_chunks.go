@@ -169,6 +169,7 @@ func (s *Server) getChunkState(job *models.Job, outputPath string, totalSize int
 		return st, nil
 	}
 
+	// #nosec G703 -- outputPath was validated against the allowed directories in resolveChunkTarget
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
@@ -338,7 +339,7 @@ func (st *chunkUploadState) finalize() error {
 	if err := os.Rename(st.partPath, finalPath); err != nil {
 		return err
 	}
-	// #nosec G302 -- final output keeps 0644, same as single-stream uploads (uploads.go)
+	// #nosec G302 G703 -- final output keeps 0644, same as single-stream uploads (uploads.go); path validated in resolveChunkTarget
 	if err := os.Chmod(finalPath, 0o644); err != nil {
 		return err
 	}
