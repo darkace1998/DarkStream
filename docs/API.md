@@ -444,6 +444,76 @@ Pauses the global job queue. When paused, no workers will be assigned new jobs.
 ### `POST /api/queue/resume`
 Resumes the global job queue. Workers will once again be assigned new jobs.
 
+### `GET /api/scan-locations`
+Lists all configured scan locations with their runtime status (running or stopped).
+
+**Response (200 OK):**
+```json
+{
+  "locations": [
+    {
+      "id": "movies",
+      "name": "Movies",
+      "root_path": "/data/videos",
+      "output_base": "/data/converted",
+      "engines": 4,
+      "hash_algo": "sha256",
+      "scan_interval": 3600000000000,
+      "enable_watch": true,
+      "priority": 5,
+      "running": true
+    }
+  ]
+}
+```
+*Note: `priority` is the default job priority for files from this location (0 = low, 10 = high; omitted = 5). It is absent when unset. The endpoint requires no extra permissions but is protected by the API key when one is configured.*
+
+### `POST /api/scan-locations`
+Creates or updates (upserts by `id`) a scan location. The location starts scanning immediately and is persisted to the config file.
+
+**Body (JSON):**
+```json
+{
+  "id": "movies",
+  "name": "Movies",
+  "root_path": "/data/videos",
+  "output_base": "/data/converted",
+  "engines": 4,
+  "hash_algo": "sha256",
+  "scan_interval_sec": 3600,
+  "enable_watch": true,
+  "priority": 5
+}
+```
+*Notes: `id` must be 1-64 chars of `[a-zA-Z0-9_-]`; `root_path` must be an existing directory; `engines` 1-64; `priority` 0-10 (omitted = 5, 0 = low); `scan_interval_sec` 0 = startup/watch events only; `hash_algo` `sha256` (default) or `sha1`. Validation errors return `400` with a field-level `errors` array.*
+
+### `DELETE /api/scan-locations?id=<id>`
+Stops and removes a scan location. Its queued jobs stay in the database. The change is persisted to the config file.
+
+### `POST /api/scan-locations?scan_now=<id>`
+Triggers an immediate scan of the given location in the background. If a scan for that location is already running, the request is a no-op (`200` either way). Returns `404` for unknown ids.
+
+### `GET /api/server-settings`
+Returns the current effective server settings plus the path of the config file they are persisted to, and a note that changes require a restart (`restart_required: true`).
+
+### `POST /api/server-settings`
+Persists server settings to the config file. The running process is not reconfigured; a restart applies the changes.
+
+**Body (JSON):**
+```json
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "api_key": "secret",
+  "tls_cert": "",
+  "tls_key": "",
+  "database_path": "./data/jobs.db",
+  "log_level": "info",
+  "log_format": "json"
+}
+```
+*Notes: `port` must be 1-65535; `tls_cert` and `tls_key` must be set together; `log_level` one of `debug`, `info`, `warn`, `error`; `log_format` one of `json`, `text`. **Merge semantics:** any field left empty/zero keeps its current value from the config file, so a partial payload cannot silently clear the API key or TLS paths. To clear a setting, edit the config file.*
+
 ### `GET /api/workers`
 Lists all active registered workers.
 

@@ -36,7 +36,7 @@ type ScanOptions struct {
 	DetectDuplicates bool                                // Track file hashes to detect duplicates
 	HashAlgo         string                              // sha256 (default) or sha1 — sha1 is faster and less CPU-intensive
 	HashMode         string                              // "full" (default) hashes files; "skip" never reads file contents (no source checksum, no content dedup)
-	Priority         int                                 // Default priority for jobs created by this scanner (0-10)
+	Priority         int                                 // Default priority for jobs created by this scanner (0-10; negative = normal (5))
 	FileStore        FileStore                           // Optional store enabling unchanged-file skip
 	DuplicateChecker func(checksum string) (bool, error) // Optional callback to check for duplicates in an external system (e.g. database)
 	// KnownOutputChecker optionally reports whether a file with this checksum was
@@ -98,6 +98,7 @@ func New(rootPath string, extensions []string, outputBase string) *Scanner {
 			SkipHiddenDirs:   true, // Skip hidden directories by default
 			ReplaceSource:    false,
 			DetectDuplicates: false,
+			Priority:         -1, // negative = normal (5); lets 0 be a valid low priority
 		},
 		seenHashes: make(map[string]string),
 	}
@@ -237,8 +238,8 @@ func (s *Scanner) ProcessFile(fullPath string) (*models.Job, error) {
 	}
 
 	priority := opts.Priority
-	if priority == 0 {
-		priority = 5 // Default priority (normal)
+	if priority < 0 {
+		priority = 5 // Default priority (normal) when the scanner has none set
 	}
 
 	job := &models.Job{

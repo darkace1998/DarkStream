@@ -72,10 +72,9 @@ func TestUpdateServerSettings_ValidationErrors(t *testing.T) {
 	srv, _ := newTestServerWithPersister(t)
 
 	cases := map[string]string{
-		"bad port":        `{"host":"0.0.0.0","port":0,"database_path":"./jobs.db","log_level":"info","log_format":"json"}`,
+		"bad port":        `{"host":"0.0.0.0","port":99999,"database_path":"./jobs.db","log_level":"info","log_format":"json"}`,
 		"tls half set":    `{"host":"0.0.0.0","port":8080,"tls_cert":"/c.pem","database_path":"./jobs.db","log_level":"info","log_format":"json"}`,
 		"bad log level":   `{"host":"0.0.0.0","port":8080,"database_path":"./jobs.db","log_level":"verbose","log_format":"json"}`,
-		"empty db path":   `{"host":"0.0.0.0","port":8080,"database_path":"","log_level":"info","log_format":"json"}`,
 		"host whitespace": `{"host":"0.0.0.0 x","port":8080,"database_path":"./jobs.db","log_level":"info","log_format":"json"}`,
 	}
 	for name, body := range cases {
@@ -89,6 +88,32 @@ func TestUpdateServerSettings_ValidationErrors(t *testing.T) {
 			require.NotEmpty(t, resp["errors"])
 		})
 	}
+}
+
+// TestUpdateServerSettings_PartialUpdateKeepsCurrent guards the merge
+// semantics: empty/zero fields in a partial payload keep the current
+// effective value instead of wiping it.
+func TestUpdateServerSettings_PartialUpdateKeepsCurrent(t *testing.T) {
+	srv, path := newTestServerWithPersister(t)
+
+	// Set an API key with a full payload first.
+	body := `{"host":"0.0.0.0","port":8080,"api_key":"sekret","database_path":"./jobs.db","log_level":"info","log_format":"json"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/server-settings", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.HandleServerSettings(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	// Partial update: only the port. The API key must survive.
+	req = httptest.NewRequest(http.MethodPost, "/api/server-settings", strings.NewReader(`{"port":9090}`))
+	rec = httptest.NewRecorder()
+	srv.HandleServerSettings(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	cfg, err := config.LoadMasterConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, 9090, cfg.Server.Port)
+	require.Equal(t, "sekret", cfg.Server.APIKey, "partial update must not clear the API key")
+	require.Equal(t, "0.0.0.0", cfg.Server.Host)
 }
 
 func TestUpdateServerSettings_NoPersister(t *testing.T) {

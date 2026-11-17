@@ -37,7 +37,7 @@ type scanLocationRequest struct {
 	SkipHiddenDirs   bool     `json:"skip_hidden_dirs"`
 	ReplaceSource    bool     `json:"replace_source"`
 	DetectDuplicates bool     `json:"detect_duplicates"`
-	Priority         int      `json:"priority"`
+	Priority         *int     `json:"priority,omitempty"`
 }
 
 // HandleScanLocations routes the scan-locations API:
@@ -132,9 +132,9 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Scan location saved", "id", loc.ID, "root", loc.RootPath, "engines", loc.Engines, "hash_algo", loc.HashAlgo)
 	w.Header().Set("Content-Type", contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"ok":       true,
-		"location": loc,
-		"message":  "Scan location saved. It is active now and persisted to the config file.",
+		"ok":         true,
+		"location":   loc,
+		fieldMessage: "Scan location saved. It is active now and persisted to the config file.",
 	}); err != nil {
 		slog.Error("Failed to encode scan location response", "error", err)
 	}
@@ -260,10 +260,14 @@ func validateScanTuning(loc *models.ScanLocation, add func(field, msg string)) {
 	if loc.RecursiveDepth == 0 {
 		loc.RecursiveDepth = -1
 	}
-	if loc.Priority < 0 || loc.Priority > 10 {
+	switch {
+	case loc.Priority == nil:
+		// Omitted priority means the default (normal); an explicit 0 is a
+		// valid low priority and must be preserved.
+		p := constants.JobPriorityNormal
+		loc.Priority = &p
+	case *loc.Priority < 0 || *loc.Priority > 10:
 		add("priority", "must be between 0 and 10")
-	} else if loc.Priority == 0 {
-		loc.Priority = constants.JobPriorityNormal
 	}
 	if loc.Name == "" {
 		loc.Name = loc.ID

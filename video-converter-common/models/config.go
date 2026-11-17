@@ -4,6 +4,8 @@ package models
 import (
 	"fmt"
 	"time"
+
+	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // LoggingSettings defines logging configuration used by both Master and Worker
@@ -130,7 +132,19 @@ type ScanLocation struct {
 	SkipHiddenDirs   bool          `json:"skip_hidden_dirs"  yaml:"skip_hidden_dirs"`
 	ReplaceSource    bool          `json:"replace_source"    yaml:"replace_source"`
 	DetectDuplicates bool          `json:"detect_duplicates" yaml:"detect_duplicates"`
-	Priority         int           `json:"priority"          yaml:"priority"` // default job priority for files from this location (0-10)
+	// Priority is the default job priority for files from this location
+	// (0 = low, 10 = high). It is a pointer so that "omitted" can be
+	// distinguished from an explicit 0; nil means normal (5).
+	Priority *int `json:"priority,omitempty" yaml:"priority,omitempty"`
+}
+
+// EffectivePriority returns the location's default job priority, falling back
+// to JobPriorityNormal when Priority is unset.
+func (l ScanLocation) EffectivePriority() int {
+	if l.Priority == nil {
+		return constants.JobPriorityNormal
+	}
+	return *l.Priority
 }
 
 // DefaultScanLocationEngines is the default number of parallel scan workers per location.
@@ -140,6 +154,7 @@ const DefaultScanLocationEngines = 4
 // the Locations list and fills in per-location defaults. It is idempotent.
 func (c *MasterConfig) NormalizeScanLocations() {
 	s := &c.Scanner
+	normalPriority := constants.JobPriorityNormal
 	if len(s.Locations) == 0 && s.RootPath != "" {
 		s.Locations = []ScanLocation{{
 			ID:               "default",
@@ -156,7 +171,7 @@ func (c *MasterConfig) NormalizeScanLocations() {
 			SkipHiddenDirs:   s.SkipHiddenDirs,
 			ReplaceSource:    s.ReplaceSource,
 			DetectDuplicates: s.DetectDuplicates,
-			Priority:         5,
+			Priority:         &normalPriority,
 		}}
 	}
 	for i := range s.Locations {
@@ -185,8 +200,8 @@ func (c *MasterConfig) NormalizeScanLocations() {
 		if loc.RecursiveDepth == 0 {
 			loc.RecursiveDepth = -1
 		}
-		if loc.Priority == 0 {
-			loc.Priority = 5
+		if loc.Priority == nil {
+			loc.Priority = &normalPriority
 		}
 	}
 }

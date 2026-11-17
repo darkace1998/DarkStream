@@ -6,8 +6,10 @@ FROM ubuntu:24.04 AS builder
 # Note: libx11-dev/libwayland-dev are needed alongside libvulkan-dev because
 # golang-vulkan-api v1.2.0 compiles Xlib/Wayland surface (WSI) bindings on Linux.
 # Note: the master module requires Go >= 1.26 (transitively via prometheus/client_golang),
-# and builds run with GOPROXY=direct, which cannot auto-download a newer toolchain,
-# so the installed toolchain must already satisfy every module's go directive.
+# and builds run with GOPROXY=direct first (avoiding proxy certificate issues), falling
+# back to the public module proxy when a direct VCS fetch fails, so transient fetch
+# errors do not break image builds. The installed toolchain must already satisfy every
+# module's go directive either way.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
@@ -38,8 +40,10 @@ WORKDIR /build
 COPY . .
 
 # Build the three main components with CGO enabled for SQLite
-# Use direct access to repositories bypassing proxy to avoid certificate issues
-ENV GOSUMDB=off GOPROXY=direct
+# Try direct VCS access first (bypasses proxy certificate issues), then fall
+# back to the public module proxy so a single flaky direct fetch does not fail
+# the whole image build.
+ENV GOSUMDB=off GOPROXY=direct,https://proxy.golang.org
 RUN cd video-converter-master && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-master -ldflags="-s -w" .
 

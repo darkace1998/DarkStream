@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -202,5 +204,76 @@ func TestScanDirectoryParallel_DuplicateDetection(t *testing.T) {
 	}
 	if stats.Duplicates != 1 {
 		t.Errorf("duplicates = %d, want 1", stats.Duplicates)
+	}
+}
+
+func TestScanDirectoryParallelCtx_LiveContextCompletes(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(t.TempDir(), "out")
+	paths := makeVideoTree(t, root, 10)
+
+	s := newTestPoolScanner(root, output, ScanOptions{})
+	jobs, _, err := s.ScanDirectoryParallelCtx(context.Background(), 4)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(jobs) != len(paths) {
+		t.Errorf("jobs = %d, want %d", len(jobs), len(paths))
+	}
+}
+
+func TestScanDirectoryParallelCtx_CanceledContextAborts(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(t.TempDir(), "out")
+	makeVideoTree(t, root, 10)
+
+	s := newTestPoolScanner(root, output, ScanOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel up front: the scan must abort without doing work
+
+	jobs, _, err := s.ScanDirectoryParallelCtx(ctx, 4)
+	if !errors.Is(err, ErrScanAborted) {
+		t.Errorf("err = %v, want ErrScanAborted", err)
+	}
+	if jobs != nil {
+		t.Errorf("aborted scan returned %d jobs, want nil", len(jobs))
+	}
+}
+
+func TestScanPrioritySemantics(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(t.TempDir(), "out")
+	if err := os.WriteFile(filepath.Join(root, "a.mp4"), []byte("v"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit low priority 0 must be preserved, not rewritten to 5.
+	s := newTestPoolScanner(root, output, ScanOptions{Priority: 0})
+	jobs, _, err := s.ScanDirectoryParallel(1)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Priority != 0 {
+		t.Errorf("priority = %d (jobs=%d), want 0", jobs[0].Priority, len(jobs))
+	}
+
+	// Unset priority (negative) falls back to normal (5).
+	s2 := newTestPoolScanner(root, output, ScanOptions{Priority: -1})
+	jobs2, _, err := s2.ScanDirectoryParallel(1)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(jobs2) != 1 || jobs2[0].Priority != 5 {
+		t.Errorf("priority = %d (jobs=%d), want 5", jobs2[0].Priority, len(jobs2))
+	}
+
+	// A scanner with default options (no SetOptions call) also defaults to 5.
+	s3 := New(root, []string{".mp4"}, output)
+	jobs3, _, err := s3.ScanDirectoryParallel(1)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(jobs3) != 1 || jobs3[0].Priority != 5 {
+		t.Errorf("priority = %d (jobs=%d), want 5", jobs3[0].Priority, len(jobs3))
 	}
 }

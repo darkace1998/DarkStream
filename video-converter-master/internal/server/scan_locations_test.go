@@ -225,6 +225,7 @@ func TestScanLocations_NoManager(t *testing.T) {
 func TestScanLocations_PersistedFileIsHumanReadable(t *testing.T) {
 	_, _, cfgPath := newLocationsTestServer(t)
 	p := config.NewPersister(cfgPath)
+	priority := 5
 	err := p.UpdateScanLocations([]models.ScanLocation{{
 		ID:           "movies",
 		Name:         "Movies",
@@ -234,7 +235,7 @@ func TestScanLocations_PersistedFileIsHumanReadable(t *testing.T) {
 		HashAlgo:     "sha1",
 		ScanInterval: 5 * time.Minute,
 		EnableWatch:  true,
-		Priority:     5,
+		Priority:     &priority,
 	}})
 	require.NoError(t, err)
 
@@ -242,4 +243,40 @@ func TestScanLocations_PersistedFileIsHumanReadable(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "scan_interval: 5m0s")
 	require.Contains(t, string(data), "hash_algo: sha1")
+	require.Contains(t, string(data), "priority: 5")
+}
+
+// TestScanLocations_PriorityZeroIsKept guards the regression where an explicit
+// priority of 0 (low) was silently rewritten to 5.
+func TestScanLocations_PriorityZeroIsKept(t *testing.T) {
+	srv, lm, _ := newLocationsTestServer(t)
+	root := t.TempDir()
+
+	body := fmt.Sprintf(`{"id":"low","name":"Low","root_path":%q,"output_base":%q,"engines":4,"priority":0}`, root, root)
+	req := httptest.NewRequest(http.MethodPost, "/api/scan-locations", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.HandleScanLocations(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	list := lm.List()
+	require.Len(t, list, 1)
+	require.NotNil(t, list[0].Priority)
+	require.Equal(t, 0, *list[0].Priority)
+	require.Equal(t, 0, list[0].EffectivePriority())
+
+	// Omitted priority defaults to normal (5), not 0.
+	body = fmt.Sprintf(`{"id":"normal","name":"Normal","root_path":%q,"output_base":%q,"engines":4}`, root, root)
+	req = httptest.NewRequest(http.MethodPost, "/api/scan-locations", strings.NewReader(body))
+	rec = httptest.NewRecorder()
+	srv.HandleScanLocations(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	list = lm.List()
+	require.Len(t, list, 2)
+	for _, l := range list {
+		if l.ID == "normal" {
+			require.NotNil(t, l.Priority)
+			require.Equal(t, 5, *l.Priority)
+		}
+	}
 }

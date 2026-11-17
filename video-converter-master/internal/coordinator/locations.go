@@ -34,7 +34,11 @@ type locationRuntime struct {
 	scanner *scanner.Scanner
 	watcher *scanner.Watcher
 	cancel  context.CancelFunc
-	running atomic.Bool
+	// ctx is the location's lifecycle context; it is canceled on removal or
+	// shutdown so an in-flight scan aborts promptly.
+	ctx      context.Context //nolint:containedctx // per-location lifecycle context
+	running  atomic.Bool
+	scanning atomic.Bool
 }
 
 // NewLocationManager creates a LocationManager. srv may be nil in tests.
@@ -50,6 +54,10 @@ func NewLocationManager(tracker *db.Tracker, srv *server.Server, rootCtx context
 // StartAll normalizes the config and starts every configured location.
 func (m *LocationManager) StartAll(cfg *models.MasterConfig) {
 	cfg.NormalizeScanLocations()
+	if cfg.Server.APIKey == "" {
+		slog.Warn("No API key configured: the scan-locations and server-settings endpoints accept requests without authentication; anyone who can reach the master can add or remove scan locations",
+			"hint", "set server.api_key in the config file to require authentication")
+	}
 	for _, loc := range cfg.Scanner.Locations {
 		if err := m.Add(loc); err != nil {
 			slog.Error("Failed to start scan location", "id", loc.ID, "error", err)
@@ -85,13 +93,14 @@ func (m *LocationManager) Add(loc models.ScanLocation) error {
 		DetectDuplicates:   loc.DetectDuplicates,
 		HashAlgo:           loc.HashAlgo,
 		HashMode:           loc.HashMode,
-		Priority:           loc.Priority,
+		Priority:           loc.EffectivePriority(),
 		FileStore:          m.db, // *db.Tracker implements scanner.FileStore
 		DuplicateChecker:   m.db.HasJobWithSourceChecksum,
 		KnownOutputChecker: m.db.HasKnownOutputChecksum,
 	})
 
 	ctx, cancel := context.WithCancel(m.rootCtx)
+	rt.ctx = ctx
 	rt.cancel = cancel
 	m.runtimes[loc.ID] = rt
 	m.mu.Unlock()
@@ -195,9 +204,23 @@ func (m *LocationManager) run(rt *locationRuntime, ctx context.Context) {
 }
 
 // scanOnce runs one parallel scan pass of the location and inserts new jobs.
+// Passes never overlap: while a scan is already running for the location, the
+// call returns immediately instead of queueing another full scan. The scan
+// aborts promptly when the location's context is canceled (location removal
+// or shutdown), and an aborted pass inserts nothing.
 func (m *LocationManager) scanOnce(rt *locationRuntime) {
-	jobs, stats, err := rt.scanner.ScanDirectoryParallel(rt.loc.Engines)
+	if !rt.scanning.CompareAndSwap(false, true) {
+		slog.Debug("Scan already in progress, skipping", "location", rt.loc.ID)
+		return
+	}
+	defer rt.scanning.Store(false)
+
+	jobs, stats, err := rt.scanner.ScanDirectoryParallelCtx(rt.ctx, rt.loc.Engines)
 	if err != nil {
+		if errors.Is(err, scanner.ErrScanAborted) {
+			slog.Info("Scan aborted before completion", "location", rt.loc.ID)
+			return
+		}
 		slog.Error("Scan failed", "location", rt.loc.ID, "error", err)
 		return
 	}
