@@ -119,6 +119,9 @@ func (c *Coordinator) SetPersister(p *config.Persister) {
 }
 
 // autoPruneLoop prunes finished jobs older than database.retention_days once at
+// startup and then daily. retention_days is read from the startup config on
+// purpose: it is a server setting persisted to config.yaml and only applied
+// after a restart, so a stale runtime value could never be intentional.
 // startup and then daily, until the coordinator is shut down.
 func (c *Coordinator) autoPruneLoop() {
 	defer c.wg.Done()

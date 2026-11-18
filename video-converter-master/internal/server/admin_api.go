@@ -171,7 +171,10 @@ func (s *Server) HandleBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create backup directory", http.StatusInternalServerError)
 		return
 	}
-	name := fmt.Sprintf("jobs-backup-%s.db", time.Now().UTC().Format("20060102-150405"))
+	// Nanosecond suffix: two backups requested within the same second must not
+	// collide on the same filename (VACUUM INTO fails if the target exists).
+	now := time.Now().UTC()
+	name := fmt.Sprintf("jobs-backup-%s-%d.db", now.Format("20060102-150405"), now.UnixNano())
 	dest := filepath.Join(backupDir, name)
 	if err := s.db.BackupDatabase(dest); err != nil {
 		slog.Error("Backup failed", "dest", dest, "error", err)

@@ -15,6 +15,8 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	// SQLite driver for database/sql
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 // Tracker manages job and worker state in SQLite database
@@ -209,6 +211,11 @@ func (t *Tracker) SetJobLogTail(jobID, tail string) {
 // touched. Orphaned job_progress rows are removed as well. Returns the number
 // of deleted jobs.
 func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
+	// Webhook deliveries are high-volume routine traffic; age them out with
+	// the same retention window so the table cannot grow unbounded.
+	if _, err := t.db.Exec(`DELETE FROM webhook_deliveries WHERE ts < ?`, cutoff); err != nil {
+		slog.Warn("Failed to prune webhook deliveries", "error", err)
+	}
 	result, err := t.db.Exec(`
 		DELETE FROM jobs
 		WHERE status IN ('completed', 'failed', 'cancelled')
@@ -250,12 +257,15 @@ type WebhookDelivery struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-// RecordWebhookDelivery stores a webhook delivery outcome. Best-effort.
-func (t *Tracker) RecordWebhookDelivery(event, jobID, url string, attempts, statusCode int, deliveryErr error) {
+// RecordWebhookDelivery stores a webhook delivery outcome. Best-effort. The
+// URL is stored credential-redacted (userinfo/query stripped) because webhook
+// URLs frequently embed tokens.
+func (t *Tracker) RecordWebhookDelivery(event, jobID, rawURL string, attempts, statusCode int, deliveryErr error) {
 	errStr := ""
 	if deliveryErr != nil {
 		errStr = deliveryErr.Error()
 	}
+	url := utils.RedactURL(rawURL)
 	if _, err := t.db.Exec(`
 		INSERT INTO webhook_deliveries (ts, event, job_id, url, attempts, status_code, error)
 		VALUES (?, ?, ?, ?, ?, ?, ?)

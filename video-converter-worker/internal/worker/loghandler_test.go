@@ -26,9 +26,10 @@ func TestReadLogTailSmallFile(t *testing.T) {
 	}
 }
 
-func TestReadLogTailTruncatesToLast16KiB(t *testing.T) {
+func TestReadLogTailTruncatesToMax(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "job.log")
-	content := strings.Repeat("a", maxJobLogTail-10) + "LAST-CHUNK"
+	// Distinguishable head marker so we can prove the head was cut off.
+	content := "HEAD-MARKER" + strings.Repeat("a", maxJobLogTail) + "LAST-CHUNK"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +40,8 @@ func TestReadLogTailTruncatesToLast16KiB(t *testing.T) {
 	if !strings.HasSuffix(got, "LAST-CHUNK") {
 		t.Error("Tail must keep the END of the log, not the beginning")
 	}
-	if strings.HasPrefix(got, "a") && got[:10] != content[:10] && len(content) > maxJobLogTail {
-		// The head must have been cut off.
-		if got == content {
-			t.Error("Tail equals full content, truncation did not happen")
-		}
+	if strings.Contains(got, "HEAD-MARKER") {
+		t.Error("Head of the log must be cut off when the file exceeds maxJobLogTail")
 	}
 }
 

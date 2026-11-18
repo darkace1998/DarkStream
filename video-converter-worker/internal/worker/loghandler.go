@@ -8,8 +8,10 @@ import (
 )
 
 // maxJobLogTail is how much of a per-job log file is shipped to the master as
-// the job's log tail (the master caps stored tails at 64 KiB).
-const maxJobLogTail = 16 << 10 // 16 KiB
+// the job's log tail (the master caps stored tails at 64 KiB). 7 KiB keeps the
+// X-Darkstream-Log-Tail header line under the default 8k per-header limit of
+// common reverse proxies (nginx large_client_header_buffers).
+const maxJobLogTail = 7 << 10 // 7 KiB
 
 // multiHandler fans a log record out to several slog handlers, so a job's log
 // can go to the worker's normal logger and to the per-job log file at once.

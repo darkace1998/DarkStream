@@ -665,6 +665,11 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
+	// Ship the log tail with the upload: the deferred read at function exit
+	// only runs after uploadOutput, too late for the success path (the
+	// failure path picks it up via processJob after executeJob returns).
+	job.LogTail = readLogTail(jobLogPath)
+
 	// Report progress: starting upload
 	if w.reportProgress(job.ID, 100, 0, "upload") != nil {
 		return errJobAbandoned
@@ -746,6 +751,9 @@ func (w *Worker) convertWithFallback(
 		"hw_accel", cfg.HWAccel, "error", err)
 	cfg.UseVulkan = false
 	cfg.HWAccel = constants.HWAccelNone
+	// A hardware encoder (h264_nvenc, ...) would fail again on CPU; remap to
+	// the matching software codec.
+	cfg.Codec = converter.SoftwareCodecFor(cfg.Codec)
 	if rmErr := os.Remove(job.OutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
 		log.Warn("Failed to remove partial output before CPU retry", "error", rmErr)
 	}

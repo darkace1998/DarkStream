@@ -31,7 +31,7 @@ The `Job` object represents a single video conversion task.
   "source_audio_codec": "aac",
   "source_bitrate": 5000000,
   "source_file_size": 1073741824,
-  "log_tail": "string (optional, last ~16 KiB of the worker's ffmpeg log for this job)"
+  "log_tail": "string (optional, last ~7 KiB of the worker's job log for this job)"
 }
 ```
 
@@ -564,9 +564,10 @@ Validates a configuration payload without applying it.
 
 ## Ops / Admin
 ### `GET /api/job/log?job_id=<id>`
-Returns the stored worker log tail for a job as `text/plain` (the last ~16 KiB of the
-ffmpeg/worker log captured when the job finished or failed). 404 when the job has no
-log stored. Requires the API key when one is configured.
+Returns the stored worker log tail for a job as `text/plain` (the last ~7 KiB of the
+worker-side job log captured when the job finished or failed). 200 with an empty body
+when the job exists but has no stored tail; 404 only for an unknown `job_id`. Requires
+the API key when one is configured.
 
 ### `GET|POST /api/admin/backup?keep=true`
 Creates a consistent online backup of the SQLite job database (`VACUUM INTO`, safe

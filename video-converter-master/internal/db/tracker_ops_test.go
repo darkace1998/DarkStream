@@ -128,6 +128,13 @@ func TestPruneJobsOlderThan(t *testing.T) {
 	mustExec(`UPDATE jobs SET status='failed', worker_id=?, completed_at=?, error_message='boom' WHERE id='prune-failed-old'`, testWorkerID, old)
 	mustExec(`UPDATE jobs SET status='completed', worker_id=?, completed_at=? WHERE id='prune-completed-new'`, testWorkerID, time.Now())
 
+	// An old and a recent webhook delivery: only the old one may be pruned.
+	tracker.RecordWebhookDelivery("completed", "prune-completed-old", "http://hook.local", 1, http.StatusOK, nil)
+	if _, err := tracker.db.Exec(`UPDATE webhook_deliveries SET ts = ? WHERE job_id = 'prune-completed-old'`, old); err != nil {
+		t.Fatalf("age delivery: %v", err)
+	}
+	tracker.RecordWebhookDelivery("failed", "prune-completed-new", "http://hook.local", 1, http.StatusInternalServerError, nil)
+
 	cutoff := time.Now().Add(-24 * time.Hour)
 	deleted, err := tracker.PruneJobsOlderThan(cutoff)
 	if err != nil {
@@ -135,6 +142,13 @@ func TestPruneJobsOlderThan(t *testing.T) {
 	}
 	if deleted != 2 {
 		t.Errorf("Expected 2 pruned jobs, got %d", deleted)
+	}
+	remaining, err := tracker.ListWebhookDeliveries(10)
+	if err != nil {
+		t.Fatalf("ListWebhookDeliveries: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].JobID != "prune-completed-new" {
+		t.Errorf("Expected only the recent webhook delivery to survive pruning, got %+v", remaining)
 	}
 
 	if _, err := tracker.GetJobByID("prune-completed-old"); err == nil {
@@ -160,8 +174,9 @@ func TestWebhookDeliveriesRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = tracker.Close() }()
 
-	tracker.RecordWebhookDelivery("completed", "job-a", "http://example.com/hook", 1, 200, nil)
-	tracker.RecordWebhookDelivery("failed", "job-b", "http://example.com/hook", 3, 500, errTest)
+	tracker.RecordWebhookDelivery("completed", "job-a", "http://example.com/hook", 1, http.StatusOK, nil)
+	// URL with embedded credentials: must be stored redacted.
+	tracker.RecordWebhookDelivery("failed", "job-b", "http://user:secret@example.com/hook?token=abc123", 3, http.StatusInternalServerError, errTest)
 
 	deliveries, err := tracker.ListWebhookDeliveries(10)
 	if err != nil {
@@ -176,6 +191,9 @@ func TestWebhookDeliveriesRoundTrip(t *testing.T) {
 	}
 	if deliveries[0].Attempts != 3 || deliveries[0].StatusCode != http.StatusInternalServerError || deliveries[0].Error != errTest.Error() {
 		t.Errorf("Delivery fields mismatch: %+v", deliveries[0])
+	}
+	if deliveries[0].URL != "http://example.com/hook" {
+		t.Errorf("Webhook URL must be stored redacted, got %q", deliveries[0].URL)
 	}
 	if deliveries[1].Event != "completed" || deliveries[1].StatusCode != http.StatusOK || deliveries[1].Error != "" {
 		t.Errorf("Delivery fields mismatch: %+v", deliveries[1])

@@ -82,3 +82,17 @@ func TestValidateSecureTransport(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://hooks.example.com/services/T00/B00/xxx?token=secret", "https://hooks.example.com/services/T00/B00/xxx"},
+		{"http://user:pass@hook.local/path?a=1", "http://hook.local/path"},
+		{"https://hook.local/plain", "https://hook.local/plain"},
+		{"://bad url", "(unparseable url)"},
+	}
+	for _, tc := range cases {
+		if got := RedactURL(tc.in); got != tc.want {
+			t.Errorf("RedactURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

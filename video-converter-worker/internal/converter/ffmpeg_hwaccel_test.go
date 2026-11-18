@@ -72,11 +72,12 @@ func TestResolveHWAccelAutoDetectsOnce(t *testing.T) {
 	if first != second {
 		t.Errorf("detectHWAccel not cached: first=%q second=%q", first, second)
 	}
-	// On a machine without /dev/nvidia0 or /dev/dri, only vulkan can be picked.
+	// On a machine without /dev/nvidia0 and /dev/dri, vulkan must NOT be
+	// picked either (no device node => every job would pay a failed hw try).
 	if _, err := os.Stat("/dev/nvidia0"); err != nil {
 		if _, err := os.Stat("/dev/dri/renderD128"); err != nil {
-			if first != constants.HWAccelVulkan {
-				t.Errorf("Expected vulkan on this machine, got %q", first)
+			if first != "" {
+				t.Errorf("Expected software (empty) without any GPU device node, got %q", first)
 			}
 		}
 	}
@@ -116,7 +117,26 @@ func TestGetVideoCodecPassesHardwareEncodersThrough(t *testing.T) {
 	}
 
 	// Software codecs are still mapped as before (vulkan off => unchanged here).
-	if got := fc.getVideoCodecWithLogger("h264", false, log); got != "h264" && got != "libx264" {
+	if got := fc.getVideoCodecWithLogger(constants.CodecH264, false, log); got != constants.CodecH264 && got != encoderLibx264 {
 		t.Errorf("software codec mapping changed unexpectedly: %q", got)
+	}
+}
+
+func TestSoftwareCodecFor(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"h264_nvenc", constants.CodecH264},
+		{"hevc_qsv", constants.CodecH265},
+		{"h264_vaapi", constants.CodecH264},
+		{"H264_NVENC", constants.CodecH264},
+		{"h264_amf", constants.CodecH264},
+		{"hevc_videotoolbox", constants.CodecH265},
+		{constants.CodecH264, constants.CodecH264},
+		{encoderLibx264, encoderLibx264},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := SoftwareCodecFor(tc.in); got != tc.want {
+			t.Errorf("SoftwareCodecFor(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

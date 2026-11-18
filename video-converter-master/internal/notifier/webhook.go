@@ -17,6 +17,8 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 
 	"github.com/darkace1998/video-converter-common/constants"
+
+	"github.com/darkace1998/video-converter-common/utils"
 )
 
 const (
@@ -51,6 +53,8 @@ type WebhookNotifier struct {
 	wg     sync.WaitGroup
 	ctx    context.Context
 	cancel context.CancelFunc
+	// logURL is the credential-redacted webhook URL used in log lines.
+	logURL string
 
 	mu     sync.RWMutex
 	closed bool
@@ -87,6 +91,7 @@ func NewWebhookNotifier(webhookURL string, events []string, secret string, recor
 		queue:      make(chan Payload, webhookQueueSize),
 		ctx:        ctx,
 		cancel:     cancel,
+		logURL:     utils.RedactURL(webhookURL),
 	}
 
 	wn.wg.Add(webhookWorkerCount)
@@ -151,13 +156,18 @@ func (wn *WebhookNotifier) deliver(payload Payload) {
 		return
 	}
 
-	deliveryID := fmt.Sprintf("%d-%s", time.Now().UnixNano(), payload.Job.ID)
+	jobID := ""
+	if payload.Job != nil {
+		jobID = payload.Job.ID
+	}
+	deliveryID := fmt.Sprintf("%d-%s", time.Now().UnixNano(), jobID)
 	var lastErr error
 	var lastStatus int
 	for attempt := 1; attempt <= webhookMaxAttempts; attempt++ {
 		if attempt > 1 {
 			// Backoff: 1s, 4s, ... capped, abortable on shutdown.
-			backoff := min(time.Duration(1<<(attempt-2))*time.Second, 30*time.Second)
+			// Backoff 1s, 4s, 16s, ... capped at 30s (attempt 2 -> 1s, 3 -> 4s).
+			backoff := min(time.Duration(1)<<(2*(attempt-2))*time.Second, 30*time.Second)
 			timer := time.NewTimer(backoff)
 			select {
 			case <-wn.ctx.Done():
@@ -166,7 +176,7 @@ func (wn *WebhookNotifier) deliver(payload Payload) {
 				return
 			case <-timer.C:
 			}
-			slog.Info("Retrying webhook delivery", "event", payload.Event, "job_id", payload.Job.ID, "attempt", attempt, "url", wn.webhookURL)
+			slog.Info("Retrying webhook delivery", "event", payload.Event, "job_id", jobID, "attempt", attempt, "url", wn.logURL)
 		}
 
 		req, err := http.NewRequestWithContext(wn.ctx, http.MethodPost, wn.webhookURL, bytes.NewReader(data))
@@ -188,7 +198,7 @@ func (wn *WebhookNotifier) deliver(payload Payload) {
 		resp, err := wn.client.Do(req)
 		if err != nil {
 			lastErr, lastStatus = err, 0
-			slog.Warn("Webhook delivery attempt failed", "attempt", attempt, "error", err, "url", wn.webhookURL, "job_id", payload.Job.ID)
+			slog.Warn("Webhook delivery attempt failed", "attempt", attempt, "error", err, "url", wn.logURL, "job_id", jobID)
 			continue
 		}
 		// Drain before closing so the underlying connection can be reused.
@@ -196,15 +206,21 @@ func (wn *WebhookNotifier) deliver(payload Payload) {
 		_ = resp.Body.Close()
 		lastStatus = resp.StatusCode
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			slog.Info("Successfully delivered webhook", "event", payload.Event, "job_id", payload.Job.ID, "attempts", attempt, "status", resp.StatusCode)
+			slog.Info("Successfully delivered webhook", "event", payload.Event, "job_id", jobID, "attempts", attempt, "status", resp.StatusCode)
 			wn.record(payload, attempt, resp.StatusCode, nil)
 			return
 		}
 		lastErr = fmt.Errorf("non-success status %d", resp.StatusCode)
-		slog.Warn("Webhook delivered but received non-success status", "attempt", attempt, "status", resp.StatusCode, "url", wn.webhookURL, "job_id", payload.Job.ID)
+		slog.Warn("Webhook delivered but received non-success status", "attempt", attempt, "status", resp.StatusCode, "url", wn.logURL, "job_id", jobID)
+		// 4xx (other than 429) means the receiver rejected the payload —
+		// retrying the identical body cannot help, so record and stop.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			wn.record(payload, attempt, resp.StatusCode, lastErr)
+			return
+		}
 	}
 
-	slog.Error("Webhook delivery failed after all attempts", "event", payload.Event, "job_id", payload.Job.ID, "attempts", webhookMaxAttempts, "url", wn.webhookURL, "last_status", lastStatus, "error", lastErr)
+	slog.Error("Webhook delivery failed after all attempts", "event", payload.Event, "job_id", jobID, "attempts", webhookMaxAttempts, "url", wn.logURL, "last_status", lastStatus, "error", lastErr)
 	wn.record(payload, webhookMaxAttempts, lastStatus, lastErr)
 }
 

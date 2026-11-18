@@ -83,7 +83,7 @@ type MasterConfig struct {
 		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
 		// RetentionDays auto-prunes completed/failed/cancelled jobs older than N
 		// days (daily). 0 (default) = keep forever; pruning is also available
-		// on demand via POST /api/jobs/prune.
+		// on demand via DELETE /api/jobs/prune.
 		RetentionDays int `yaml:"retention_days"`
 		// BackupDir is where GET /api/admin/backup writes online backups
 		// (VACUUM INTO). Defaults to the database file's directory.

@@ -205,3 +205,47 @@ func TestWebhookTransportErrorRecorded(t *testing.T) {
 		t.Logf("transport error recorded: %v", rec.err)
 	}
 }
+
+func TestWebhookClientErrorNotRetried(t *testing.T) {
+	var mu sync.Mutex
+	requestCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest) // 400: retrying cannot help
+	}))
+	defer ts.Close()
+
+	wn := NewWebhookNotifier(ts.URL, []string{constants.JobStatusCompleted}, "", nil)
+	defer wn.Shutdown(t.Context())
+
+	rec := deliverSync(t, wn, Payload{Event: constants.JobStatusCompleted, Timestamp: time.Now(), Job: &models.Job{ID: "job-400"}})
+	if rec.attempts != 1 {
+		t.Errorf("4xx must not be retried: expected 1 attempt, got %d", rec.attempts)
+	}
+	if rec.statusCode != http.StatusBadRequest || rec.err == nil {
+		t.Errorf("Expected status 400 with error, got status=%d err=%v", rec.statusCode, rec.err)
+	}
+	mu.Lock()
+	if requestCount != 1 {
+		t.Errorf("Expected exactly 1 HTTP request, got %d", requestCount)
+	}
+	mu.Unlock()
+}
+
+func TestWebhookNilJobPayloadDoesNotPanic(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	wn := NewWebhookNotifier(ts.URL, []string{constants.JobStatusCompleted}, "", nil)
+	defer wn.Shutdown(t.Context())
+
+	// Must not panic on the nil Job in log/delivery-ID paths.
+	rec := deliverSync(t, wn, Payload{Event: constants.JobStatusCompleted, Timestamp: time.Now(), Job: nil})
+	if rec.statusCode != http.StatusOK || rec.jobID != "" {
+		t.Errorf("Expected 200 with empty jobID, got status=%d jobID=%q", rec.statusCode, rec.jobID)
+	}
+}

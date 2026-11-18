@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Master/Worker**: Per-job logs — each worker tees the job's ffmpeg/worker log to disk and
-  uploads the last 16 KiB on completion/failure (`log_tail` on job-complete/job-failed and the
+  uploads the last 7 KiB on completion/failure (`log_tail` on job-complete/job-failed and the
   `X-Darkstream-Log-Tail` upload header); the master stores it (capped at 64 KiB) and serves it
   via `GET /api/job/log?job_id=` and in the job details page ("Worker Log" section).
 - **Master**: Retention & backup — `database.retention_days` auto-prunes

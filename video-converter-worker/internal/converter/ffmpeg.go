@@ -38,6 +38,7 @@ const (
 const (
 	encoderH264Vulkan = "h264_vulkan"
 	encoderLibx264    = "libx264"
+	codecHEVC         = "hevc" // alias accepted alongside constants.CodecH265
 	encoderAAC        = "aac"
 	muxerMP4          = "mp4"
 )
@@ -250,6 +251,23 @@ var hwAccelNames = map[string]bool{
 // through to ffmpeg unchanged instead of being mapped to a software encoder.
 var hwEncoderSuffixes = []string{"_nvenc", "_qsv", "_vaapi", "_vulkan", "_amf", "_videotoolbox"}
 
+// SoftwareCodecFor maps a hardware encoder codec (h264_nvenc, hevc_qsv,
+// h264_vaapi, ...) to its software counterpart (h264, hevc, ...) so a CPU
+// fallback retry does not fail again on the missing hardware encoder.
+// Non-hardware codecs are returned unchanged.
+func SoftwareCodecFor(codec string) string {
+	lower := strings.ToLower(codec)
+	for _, suffix := range hwEncoderSuffixes {
+		if base, ok := strings.CutSuffix(lower, suffix); ok {
+			if base == codecHEVC {
+				base = constants.CodecH265
+			}
+			return base
+		}
+	}
+	return codec
+}
+
 // resolveHWAccel picks the effective -hwaccel value for a conversion:
 // cfg.HWAccel wins when set ("auto" triggers one-time detection); otherwise the
 // legacy UseVulkan flag maps to vulkan. Returns "" for software decoding.
@@ -305,7 +323,9 @@ func (fc *FFmpegConverter) detectHWAccel(log *slog.Logger) string {
 		fc.hwAccelCached = constants.HWAccelVAAPI
 	case driDev == nil && available[constants.HWAccelQSV]:
 		fc.hwAccelCached = constants.HWAccelQSV
-	case available[constants.HWAccelVulkan]:
+	// Vulkan needs an actual device node too; ffmpeg build support alone
+	// would make every job pay a failed hardware attempt.
+	case (driDev == nil || nvidiaDev == nil) && available[constants.HWAccelVulkan]:
 		fc.hwAccelCached = constants.HWAccelVulkan
 	default:
 		fc.hwAccelCached = ""
@@ -397,7 +417,7 @@ func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool,
 		switch codec {
 		case constants.CodecH264, "avc":
 			return encoderH264Vulkan
-		case constants.CodecH265, "hevc":
+		case constants.CodecH265, codecHEVC:
 			return "hevc_vulkan"
 		default:
 			// Fallback to h264_vulkan for unknown codecs
@@ -410,7 +430,7 @@ func (fc *FFmpegConverter) getVideoCodecWithLogger(codec string, useVulkan bool,
 	switch codec {
 	case constants.CodecH264, "avc":
 		return encoderLibx264
-	case constants.CodecH265, "hevc":
+	case constants.CodecH265, codecHEVC:
 		return "libx265"
 	case constants.CodecVP9:
 		return "libvpx-vp9"
@@ -535,6 +555,9 @@ func (fc *FFmpegConverter) trackProgress(
 				if len(tail) > stderrTailLines {
 					tail = tail[1:]
 				}
+				// Route ffmpeg's own output (errors, warnings, stream info)
+				// into the job logger so it lands in the per-job log tail.
+				log.Debug("ffmpeg", "line", trimmed)
 			}
 			continue
 		}
