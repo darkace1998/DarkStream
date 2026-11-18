@@ -40,17 +40,46 @@ WORKDIR /build
 COPY . .
 
 # Build the three main components with CGO enabled for SQLite
-# Try direct VCS access first (bypasses proxy certificate issues), then fall
-# back to the public module proxy so a single flaky direct fetch does not fail
-# the whole image build.
+# Fetch modules direct-from-VCS first (bypasses proxy certificate issues in
+# some environments), with the public module proxy as a second entry. Note
+# that go only falls through the proxy list on 404/410, so a *transient*
+# direct-fetch failure aborts the build - the retrying pre-download step
+# below (including a proxy-only attempt) is what makes this robust.
 ENV GOSUMDB=off GOPROXY=direct,https://proxy.golang.org
-RUN cd video-converter-master && \
+
+# Pre-download every module's dependencies once, with retries, and persist the
+# module/build caches in BuildKit cache mounts (exported via the gha cache
+# backend), so later builds rarely fetch at all. Without this, a transient
+# direct VCS fetch failure surfaces as an unexplained exit code 1 in
+# whichever go build RUN happens to fetch first - which is exactly how the
+# worker and all-in-one image builds died while master and cli built the very
+# same layers successfully in the same workflow run.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for mod in video-converter-master video-converter-worker video-converter-cli; do \
+        ok=0; \
+        for attempt in 1 2 3; do \
+            if [ "$attempt" = "2" ]; then p="https://proxy.golang.org"; else p="$GOPROXY"; fi; \
+            if (cd "$mod" && GOPROXY="$p" go mod download all); then ok=1; break; fi; \
+            echo "go mod download failed for $mod (attempt $attempt/3), retrying in 5s"; \
+            sleep 5; \
+        done; \
+        [ "$ok" = "1" ] || exit 1; \
+    done
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd video-converter-master && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-master -ldflags="-s -w" .
 
-RUN cd video-converter-worker && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd video-converter-worker && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-worker -ldflags="-s -w" .
 
-RUN cd video-converter-cli && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd video-converter-cli && \
     CGO_ENABLED=1 go build -o ../bin/video-converter-cli -ldflags="-s -w" .
 
 # Stage 2: Master service image
