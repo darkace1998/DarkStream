@@ -66,7 +66,9 @@ func TestAuthenticateAPICall(t *testing.T) {
 	masterReq := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
 	masterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 
+	// api_key in the query string is only honored on SSE paths now.
 	queryReq := httptest.NewRequest(http.MethodGet, "/api/jobs?api_key="+testAPIKey, nil)
+	sseQueryReq := httptest.NewRequest(http.MethodGet, "/api/stats/stream?api_key="+testAPIKey, nil)
 
 	workerTokenElsewhere := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
 	workerTokenElsewhere.Header.Set("Authorization", "Bearer worker-secret")
@@ -85,7 +87,8 @@ func TestAuthenticateAPICall(t *testing.T) {
 		wantOK    bool
 	}{
 		{"master key header", masterReq, "master-key", true},
-		{"master key query", queryReq, "master-key", true},
+		{"master key query on non-SSE path rejected", queryReq, "", false},
+		{"master key query on SSE path", sseQueryReq, "master-key", true},
 		{"worker token on worker path", workerReq, "worker:worker-1", true},
 		{"worker token on non-worker path rejected", workerTokenElsewhere, "", false},
 		{"unknown credential rejected", badReq, "", false},

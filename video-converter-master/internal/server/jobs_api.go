@@ -28,6 +28,7 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var progress models.JobProgress
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&progress)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -39,11 +40,10 @@ func (s *Server) JobProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
 		return
 	}
+	if !s.checkWorkerBinding(w, r, progress.WorkerID) {
+		return
+	}
 	if progress.WorkerID == "" {
-		if !s.checkWorkerBinding(w, r, progress.WorkerID) {
-			return
-		}
-
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -511,6 +511,7 @@ func (s *Server) UpdateJobPriority(w http.ResponseWriter, r *http.Request) {
 	// and the media type may carry parameters such as "; charset=utf-8".
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaType == contentTypeJSON && r.ContentLength != 0 {
+		limitBody(w, r)
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -846,6 +847,7 @@ func (s *Server) HandleJob(w http.ResponseWriter, r *http.Request) {
 // submitJob handles the manual creation of a new job
 func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 	var req submitJobRequest
+	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return

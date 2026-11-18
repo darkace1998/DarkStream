@@ -24,6 +24,7 @@ The `Job` object represents a single video conversion task.
   "source_duration": 120.5,
   "output_size": 1073741824,
   "source_checksum": "string",
+  "source_checksum_algo": "sha1|sha256",
   "output_checksum": "string",
   "source_width": 1920,
   "source_height": 1080,
@@ -176,6 +177,13 @@ The `WorkerSettings` object represents per-worker configuration stored in the da
 
 ## Authentication
 
+The master API key is accepted as `Authorization: Bearer <key>` on all routes.
+On SSE routes only (`/api/stats/stream`, `/api/job/progress/stream`), `?api_key=`
+and a short-lived `?token=` (from `POST /api/stream-token`) are also accepted —
+the query-parameter fallback exists only because EventSource cannot set headers.
+Per-worker tokens (`server.worker_tokens`) are accepted only on `/api/worker/*`
+and are bound to the worker_id. 429 responses are JSON with a `Retry-After` header.
+
 Worker API endpoints require authentication using a Bearer token in the `Authorization` header, corresponding to the `api_key` configured in `config.yaml`. Example:
 `Authorization: Bearer <api_key>`
 
@@ -206,7 +214,7 @@ Fetches multiple pending jobs in a single request.
 - `max_jobs` (integer, optional): The worker's concurrency, as for `next-job`.
 
 **Response (200 OK):**
-Returns a JSON array of job objects.
+Returns an envelope object: `{ "jobs": [ ...job objects... ], "count": N }`.
 
 ### `POST /api/worker/job-complete`
 Reports that a job has been successfully completed.
@@ -264,10 +272,9 @@ Uploads the converted video file. Requires `multipart/form-data`.
 **Query Parameters:**
 - `job_id` (string, required): The job ID to upload the converted video for.
 
-The optional `X-Darkstream-Log-Tail` request header (tail of the worker's ffmpeg log)
-is stored on the job and served by `GET /api/job/log`. The chunked variant
-`POST /api/worker/upload-chunk` accepts the same header on every chunk; the last one
-wins.
+The worker ships its per-job log tail separately via `POST /api/worker/job-log`
+(see below) — it deliberately does NOT travel in an HTTP header, because log
+output contains newlines, which are illegal in header values.
 
 
 ### `POST /api/worker/job-progress`
@@ -286,6 +293,33 @@ Updates the conversion progress of a job.
 ```
 
 Returns `409 Conflict` (or `404` if the job no longer exists) when the job is not currently being processed by that worker — for example after it was cancelled or requeued. Workers treat this as the signal to stop working on the job.
+
+### `POST /api/worker/job-log`
+Stores the worker-side log tail for a job (the last ~7 KiB of the job's ffmpeg/worker
+log, sent after conversion and before/with the upload). The tail is in the JSON body —
+never in a header, since multi-line values are rejected by HTTP clients.
+
+**Body (JSON):**
+```json
+{
+  "job_id": "string",
+  "worker_id": "string",
+  "log_tail": "string (multi-line)"
+}
+```
+Responds 204 on success. 400 on invalid input (body capped at 1 MiB), 403 when a
+per-worker token is presented for a different `worker_id` or the job belongs to
+another worker, 404 for an unknown job. The stored tail is served by
+`GET /api/job/log?job_id=`.
+
+### `POST /api/worker/upload-chunk`
+Parallel chunked upload of a converted video: `?job_id=&worker_id=&offset=&total_size=`
+with the raw chunk bytes as the body (single chunk capped at 256 MiB, `total_size`
+capped at 1 TiB). Overlap/gap is validated before any bytes are written; when the
+received byte count reaches `total_size` the `.part` file is finalized (SHA-256),
+renamed into place and the job is marked completed. The worker client sends 4 chunks
+in parallel with retries and falls back to `POST /api/worker/upload-video` on masters
+without this endpoint.
 
 ### `GET /api/worker/config`
 Retrieves worker configuration settings from the master.
@@ -394,6 +428,7 @@ Gets the progress of a specific job.
 Server-Sent Events (SSE) endpoint for real-time job progress updates.
 
 ### `POST /api/retry`
+Accepts an optional `limit` query parameter (default 100) for how many failed jobs to retry.
 Retries all failed jobs.
 
 ### `POST /api/job/retry`
@@ -479,13 +514,14 @@ Lists all configured scan locations with their runtime status (running or stoppe
   ]
 }
 ```
-*Note: `priority` is the default job priority for files from this location (0 = low, 10 = high; omitted = 5). It is absent when unset. The endpoint requires no extra permissions but is protected by the API key when one is configured.*
+*Note: `priority` is the default job priority for files from this location (0 = low, 10 = high; omitted = 5). It is always present; defaults to 5 (normal) when not set. The endpoint requires no extra permissions but is protected by the API key when one is configured.*
 
 ### `POST /api/scan-locations`
 Creates or updates (upserts by `id`) a scan location. The location starts scanning immediately and is persisted to the config file.
 
 **Body (JSON):**
 ```json
+// include "hash_mode": "full"|"skip" (skip = never read file contents at scan time), "replace_source": bool,
 {
   "id": "movies",
   "name": "Movies",
@@ -528,7 +564,7 @@ Persists server settings to the config file. The running process is not reconfig
 *Notes: `port` must be 1-65535; `tls_cert` and `tls_key` must be set together; `log_level` one of `debug`, `info`, `warn`, `error`; `log_format` one of `json`, `text`. **Merge semantics:** any field left empty/zero keeps its current value from the config file, so a partial payload cannot silently clear the API key or TLS paths. To clear a setting, edit the config file.*
 
 ### `GET /api/workers`
-Lists all active registered workers.
+Lists registered workers. By default all known workers are returned; `?active_only=true` restricts the list to recently-seen (active) ones.
 
 ### `POST /api/worker/pause`
 Pauses a specific worker, preventing it from fetching new jobs.
@@ -552,10 +588,10 @@ Removes a specific worker and its configuration from the system.
 Retrieves the master configuration.
 
 ### `POST /api/config`
-Updates the master configuration dynamically.
+Updates the runtime (active) configuration dynamically.
 
 **Body (JSON):**
-Accepts a JSON payload corresponding to the complete or partial master configuration (`server`, `scanner`, `database`, `conversion`, `worker_defaults`, `logging`, `notifications`).
+Accepts a JSON payload with the `ActiveConfig` shape — `video` (`resolution`, `codec`, `bitrate`, `preset`, `hw_accel`), `audio` (`codec`, `bitrate`), `output` (`format`), `worker` (concurrency, timeouts, `use_vulkan`, …), plus `updated_at`/`version`. Server-level settings (`server`, `scanner`, `database`, `logging`, `notifications`) are managed separately via `/api/server-settings`. Validation errors come back as `{ "errors": [{ "field", "message" }] }` with 400.
 
 ### `POST /api/validate-config`
 Validates a configuration payload without applying it.
@@ -578,6 +614,14 @@ audit log as `admin.backup`.
 ### `GET /api/webhook-deliveries?limit=N`
 Lists recent webhook delivery attempts (newest first, default limit 100): event, URL,
 attempt count, final HTTP status, duration and error for each delivery.
+
+### `POST /api/stream-token`
+Issues a short-lived (5-minute) HMAC-signed token for the SSE endpoints, so the
+long-lived API key never appears in a URL: `{ "token": "...", "expires_at": "..." }`.
+
+### `GET /ui/job?job_id=<id>`
+Server-rendered job details page (includes the Worker Log section served from
+`GET /api/job/log`).
 
 ### `GET /api/audit-log?limit=N`
 Lists recent audit-log entries (newest first). Also visible in the Web UI's Audit Log tab.

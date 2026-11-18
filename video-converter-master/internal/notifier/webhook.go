@@ -165,8 +165,8 @@ func (wn *WebhookNotifier) deliver(payload Payload) {
 	var lastStatus int
 	for attempt := 1; attempt <= webhookMaxAttempts; attempt++ {
 		if attempt > 1 {
-			// Backoff: 1s, 4s, ... capped, abortable on shutdown.
-			// Backoff 1s, 4s, 16s, ... capped at 30s (attempt 2 -> 1s, 3 -> 4s).
+			// Backoff 1s, 4s, 16s, ... capped at 30s, abortable on shutdown
+			// (attempt 2 -> 1s, attempt 3 -> 4s).
 			backoff := min(time.Duration(1)<<(2*(attempt-2))*time.Second, 30*time.Second)
 			timer := time.NewTimer(backoff)
 			select {

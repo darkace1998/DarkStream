@@ -296,6 +296,7 @@ func (s *Server) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cfg config.ActiveConfig
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&cfg)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)

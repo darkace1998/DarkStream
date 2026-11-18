@@ -3,6 +3,8 @@ package utils
 import (
 	"strings"
 	"testing"
+
+	"net/url"
 )
 
 func TestValidateSecureTransport(t *testing.T) {
@@ -94,5 +96,43 @@ func TestRedactURL(t *testing.T) {
 		if got := RedactURL(tc.in); got != tc.want {
 			t.Errorf("RedactURL(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestBuildURLPreservesBaseSubpath(t *testing.T) {
+	const (
+		endpointStatus       = "/api/status"
+		wantDarkstreamStatus = "http://host:8080/darkstream/api/status"
+	)
+	cases := []struct {
+		base, endpoint, want string
+	}{
+		{"http://host:8080", endpointStatus, "http://host:8080/api/status"},
+		{"http://host:8080/darkstream", endpointStatus, wantDarkstreamStatus},
+		{"http://host:8080/darkstream/", endpointStatus, wantDarkstreamStatus},
+		{"http://host:8080/darkstream", "api/status", wantDarkstreamStatus},
+	}
+	for _, tc := range cases {
+		got, err := BuildURL(tc.base, tc.endpoint, nil)
+		if err != nil {
+			t.Fatalf("BuildURL(%q, %q): %v", tc.base, tc.endpoint, err)
+		}
+		if got != tc.want {
+			t.Errorf("BuildURL(%q, %q) = %q, want %q", tc.base, tc.endpoint, got, tc.want)
+		}
+	}
+
+	// Query params are encoded.
+	got, err := BuildURL("http://host:8080", "/api/worker/next-job", url.Values{"worker_id": {"a b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "worker_id=a+b") {
+		t.Errorf("query not encoded: %q", got)
+	}
+
+	// Invalid base URL errors.
+	if _, err := BuildURL("://bad", "/x", nil); err == nil {
+		t.Error("expected error for invalid base URL")
 	}
 }

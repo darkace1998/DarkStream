@@ -268,6 +268,13 @@ func SoftwareCodecFor(codec string) string {
 	return codec
 }
 
+// ResolveHWAccel is the exported form of resolveHWAccel for callers that need
+// to know whether a conversion will actually use hardware (e.g. to decide if a
+// software retry is meaningful).
+func (fc *FFmpegConverter) ResolveHWAccel(cfg *models.ConversionConfig) string {
+	return fc.resolveHWAccel(cfg, nil)
+}
+
 // resolveHWAccel picks the effective -hwaccel value for a conversion:
 // cfg.HWAccel wins when set ("auto" triggers one-time detection); otherwise the
 // legacy UseVulkan flag maps to vulkan. Returns "" for software decoding.

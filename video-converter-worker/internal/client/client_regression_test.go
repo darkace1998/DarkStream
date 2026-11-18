@@ -57,7 +57,7 @@ func TestUploadSendsWellFormedMultipart(t *testing.T) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if part.FormName() == "video" {
+			if part.FormName() == testFormFieldVideo {
 				received = string(data)
 			}
 		}
@@ -182,7 +182,7 @@ func TestClientSendsCapacityAndMetadata(t *testing.T) {
 			if part.FormName() == "metadata" {
 				metadata = string(data)
 			}
-			if part.FormName() == "video" && metadata == "" {
+			if part.FormName() == testFormFieldVideo && metadata == "" {
 				http.Error(w, "metadata must precede the video part", http.StatusBadRequest)
 				return
 			}
@@ -204,7 +204,7 @@ func TestClientSendsCapacityAndMetadata(t *testing.T) {
 	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	job := &models.Job{SourceWidth: 1280, SourceVideoCodec: "h264"}
+	job := &models.Job{SourceWidth: 1280, SourceVideoCodec: testCodecH264}
 	if err := mc.uploadConvertedVideoAttempt("job1", path, nil, job); err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}

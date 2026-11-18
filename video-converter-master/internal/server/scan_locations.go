@@ -79,6 +79,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	const maxBodySize = 64 << 10
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var req scanLocationRequest
+	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
@@ -88,7 +89,7 @@ func (s *Server) upsertScanLocation(w http.ResponseWriter, r *http.Request) {
 	if verrs != nil {
 		w.Header().Set("Content-Type", contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]any{"error": "validation failed", fieldErrors: verrs.Errors}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]any{fieldError: "validation failed", fieldErrors: verrs.Errors}); err != nil {
 			slog.Error("Failed to encode validation errors", "error", err)
 		}
 		return

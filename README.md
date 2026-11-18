@@ -110,76 +110,231 @@ A distributed video converter system that:
 ### Multi-Project Layout
 
 ```
-video-converter-ecosystem/
-├── video-converter-common/      # Shared library
-│   ├── go.mod
-│   ├── models/
+DarkStream/
+├── AGENTS.md
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── DISTRIBUTED_FILE_TRANSFER.md
+├── DOCKER.md
+├── Dockerfile
+├── LICENSE
+├── LINTER_CONFIGURATION.md
+├── README.md
+├── TESTING_DISTRIBUTED.md
+├── TESTING_SUMMARY.md
+├── deploy/
+│   └── k8s/
+│       ├── 00-namespace.yaml
+│       ├── 10-secret.yaml
+│       ├── 20-configmap-master.yaml
+│       ├── 21-configmap-worker.yaml
+│       ├── 30-master-deployment.yaml
+│       ├── 40-worker-daemonset.yaml
+│       ├── 50-servicemonitor.yaml
+│       └── README.md
+├── docker/
+│   └── entrypoint-all-in-one.sh
+├── docker-compose.yml
+├── docs/
+│   ├── API.md
+│   ├── API_EXAMPLES.md
+│   ├── ARCHITECTURE.md
+│   ├── CONFIGURATION.md
+│   ├── GETTING_STARTED.md
+│   ├── LOG_ROTATION.md
+│   └── TROUBLESHOOTING.md
+├── go.work
+├── go.work.sum
+├── lint.sh
+├── monitoring/
+│   └── grafana/
+│       └── darkstream-overview.json
+├── scripts/
+│   ├── build.sh
+│   ├── run-race-tests.sh
+│   └── vet.sh
+├── testvideo1.mp4
+├── testvideo2.mp4
+├── todo.md
+├── video-converter-cli/
+│   ├── README.md
+│   ├── cli_test.go
+│   ├── commands/
+│   │   ├── cancel.go
+│   │   ├── cancel_jobs.go
+│   │   ├── cancel_jobs_test.go
+│   │   ├── commands_api_test.go
+│   │   ├── detect.go
+│   │   ├── formatter/
+│   │   │   ├── formatter.go
+│   │   │   └── formatter_test.go
+│   │   ├── http.go
+│   │   ├── http_test.go
 │   │   ├── job.go
-│   │   ├── config.go
+│   │   ├── job_test.go
+│   │   ├── jobs.go
+│   │   ├── master.go
+│   │   ├── priority.go
+│   │   ├── prune.go
+│   │   ├── prune_test.go
+│   │   ├── queue_admin.go
+│   │   ├── queue_admin_test.go
+│   │   ├── requeue.go
+│   │   ├── retry.go
+│   │   ├── runner.go
+│   │   ├── stats.go
+│   │   ├── status.go
+│   │   ├── submit.go
+│   │   ├── validate.go
+│   │   ├── validate_test.go
 │   │   ├── worker.go
-│   │   └── vulkan.go
-│   ├── utils/
-│   │   ├── logging.go
-│   │   └── file.go
+│   │   ├── worker_admin.go
+│   │   └── workers.go
+│   ├── coverage-video-converter-cli.out
+│   ├── go.mod
+│   └── main.go
+├── video-converter-common/
+│   ├── README.md
 │   ├── constants/
 │   │   └── constants.go
-│   └── README.md
-│
-├── video-converter-master/      # Coordinator (Storage Server)
+│   ├── coverage-video-converter-common.out
 │   ├── go.mod
-│   ├── go.sum
-│   ├── main.go
-│   ├── config.yaml
+│   ├── models/
+│   │   ├── config.go
+│   │   ├── config_test.go
+│   │   ├── job.go
+│   │   └── vulkan.go
+│   └── utils/
+│       ├── checksum.go
+│       ├── checksum_algo_test.go
+│       ├── checksum_test.go
+│       ├── file.go
+│       ├── file_security_test.go
+│       ├── file_test.go
+│       ├── logging.go
+│       ├── logging_test.go
+│       ├── url.go
+│       └── url_test.go
+├── video-converter-master/
+│   ├── README.md
+│   ├── config.yaml.example
+│   ├── coverage-video-converter-master.out
+│   ├── go.mod
+│   ├── integration/
+│   │   ├── distributed_test.go
+│   │   ├── file_transfer_test.go
+│   │   └── integration_test.go
 │   ├── internal/
-│   │   ├── scanner/
-│   │   │   └── scanner.go
-│   │   ├── queue/
-│   │   │   └── file_queue.go
-│   │   ├── db/
-│   │   │   └── tracker.go
-│   │   ├── server/
-│   │   │   ├── http.go
-│   │   │   ├── handlers.go
-│   │   │   └── middleware.go
+│   │   ├── config/
+│   │   │   ├── config.go
+│   │   │   ├── config_test.go
+│   │   │   ├── hwaccel_validation_test.go
+│   │   │   ├── load.go
+│   │   │   ├── load_test.go
+│   │   │   ├── manager.go
+│   │   │   ├── manager_test.go
+│   │   │   └── persister.go
 │   │   ├── coordinator/
-│   │   │   └── coordinator.go
-│   │   ├── config/
-│   │   │   └── config.go
-│   │   └── logger/
-│   │       └── logger.go
-│   └── README.md
-│
-├── video-converter-worker/      # Worker (Compute Servers)
-│   ├── go.mod
-│   ├── go.sum
+│   │   │   ├── coordinator.go
+│   │   │   ├── coordinator_test.go
+│   │   │   ├── locations.go
+│   │   │   └── prune_test.go
+│   │   ├── db/
+│   │   │   ├── files_test.go
+│   │   │   ├── tracker.go
+│   │   │   ├── tracker_audit_test.go
+│   │   │   ├── tracker_ops_test.go
+│   │   │   ├── tracker_regression_test.go
+│   │   │   └── tracker_test.go
+│   │   ├── metrics/
+│   │   │   └── metrics.go
+│   │   ├── notifier/
+│   │   │   ├── webhook.go
+│   │   │   ├── webhook_ops_test.go
+│   │   │   └── webhook_test.go
+│   │   ├── scanner/
+│   │   │   ├── pool.go
+│   │   │   ├── pool_test.go
+│   │   │   ├── scanner.go
+│   │   │   ├── scanner_hashmode_test.go
+│   │   │   ├── scanner_output_test.go
+│   │   │   ├── scanner_test.go
+│   │   │   ├── watcher.go
+│   │   │   └── watcher_test.go
+│   │   └── server/
+│   │       ├── admin_api.go
+│   │       ├── auth_audit.go
+│   │       ├── auth_audit_test.go
+│   │       ├── auth_security_test.go
+│   │       ├── health.go
+│   │       ├── http.go
+│   │       ├── http_healthcheck_test.go
+│   │       ├── http_queue_test.go
+│   │       ├── http_regression_test.go
+│   │       ├── http_test.go
+│   │       ├── jobdetails.html.tmpl
+│   │       ├── jobs_api.go
+│   │       ├── middleware.go
+│   │       ├── ops_api_test.go
+│   │       ├── review_fixes_test.go
+│   │       ├── scan_locations.go
+│   │       ├── scan_locations_test.go
+│   │       ├── server_settings.go
+│   │       ├── server_settings_test.go
+│   │       ├── streaming.go
+│   │       ├── upload_chunks.go
+│   │       ├── upload_chunks_test.go
+│   │       ├── uploads.go
+│   │       ├── validate_config_test.go
+│   │       ├── webui.go
+│   │       ├── webui.html.tmpl
+│   │       └── worker_api.go
 │   ├── main.go
-│   ├── config.yaml
-│   ├── internal/
-│   │   ├── converter/
-│   │   │   ├── ffmpeg.go
-│   │   │   ├── vulkan_detector.go
-│   │   │   └── validator.go
-│   │   ├── worker/
-│   │   │   └── worker.go
-│   │   ├── client/
-│   │   │   └── master_client.go
-│   │   ├── config/
-│   │   │   └── config.go
-│   │   └── logger/
-│   │       └── logger.go
-│   └── README.md
-│
-├── video-converter-cli/         # CLI Tool
-│   ├── go.mod
-│   ├── main.go
-│   ├── commands/
-│   │   ├── start.go
-│   │   ├── status.go
-│   │   ├── retry.go
-│   │   ├── cancel.go
-│   │   ├── stats.go
-│   │   └── detect.go
-│   └── README.md
+│   └── master
+└── video-converter-worker/
+    ├── README.md
+    ├── config.yaml.example
+    ├── coverage-video-converter-worker.out
+    ├── go.mod
+    ├── internal/
+    │   ├── client/
+    │   │   ├── chunked_upload.go
+    │   │   ├── chunked_upload_test.go
+    │   │   ├── client_regression_test.go
+    │   │   ├── config.go
+    │   │   ├── joblog_test.go
+    │   │   ├── master_client.go
+    │   │   └── progress_test.go
+    │   ├── config/
+    │   │   ├── config.go
+    │   │   └── config_test.go
+    │   ├── converter/
+    │   │   ├── ffmpeg.go
+    │   │   ├── ffmpeg_hwaccel_test.go
+    │   │   ├── ffmpeg_progress_test.go
+    │   │   ├── ffmpeg_test.go
+    │   │   ├── metadata.go
+    │   │   ├── metadata_test.go
+    │   │   ├── validator.go
+    │   │   ├── validator_test.go
+    │   │   ├── vulkan_detector.go
+    │   │   ├── vulkan_detector_stub.go
+    │   │   └── vulkan_detector_test.go
+    │   └── worker/
+    │       ├── cache_manager.go
+    │       ├── cache_manager_bench_test.go
+    │       ├── cache_manager_test.go
+    │       ├── cache_protect_test.go
+    │       ├── diagnostics.go
+    │       ├── diagnostics_test.go
+    │       ├── loghandler.go
+    │       ├── loghandler_test.go
+    │       ├── sysmetrics.go
+    │       ├── sysmetrics_test.go
+    │       ├── worker.go
+    │       └── worker_test.go
+    ├── main.go
+    └── worker
 ```
 
 ---
@@ -246,6 +401,8 @@ Response (200):
 
 Response (204 No Content): No jobs available
 ```
+
+*Note: the `gpu_available` query parameter is reserved and currently ignored.*
 
 #### 2. Report Job Complete
 ```
@@ -318,8 +475,10 @@ type Job struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	SourceDuration float64    `json:"source_duration"` // seconds
 	OutputSize     int64      `json:"output_size"`     // bytes
-	SourceChecksum string     `json:"source_checksum"` // SHA256 checksum of source file
-	OutputChecksum string     `json:"output_checksum"` // SHA256 checksum of output file
+	SourceChecksum     string `json:"source_checksum"`      // source checksum (algo per location hash_algo: sha1 default, sha256)
+	SourceChecksumAlgo string `json:"source_checksum_algo"` // "sha1" or "sha256"
+	OutputChecksum     string `json:"output_checksum"`      // SHA-256 checksum of output file
+	LogTail            string `json:"log_tail,omitempty"`   // last ~7 KiB of the worker-side job log
 	// Video metadata fields (populated from FFprobe)
 	SourceWidth      int    `json:"source_width,omitempty"`       // Video width in pixels
 	SourceHeight     int    `json:"source_height,omitempty"`      // Video height in pixels
@@ -350,6 +509,7 @@ type ConversionConfig struct {
 	Codec            string `json:"codec"`             // h264
 	Bitrate          string `json:"bitrate"`           // 5M
 	Preset           string `json:"preset"`            // fast, medium, slow
+	HWAccel string `json:"hw_accel,omitempty"` // ffmpeg -hwaccel: auto/none/cuda/vaapi/qsv/vulkan
 	UseVulkan        bool   `json:"use_vulkan"`
 	AudioCodec       string `json:"audio_codec"`   // aac
 	AudioBitrate     string `json:"audio_bitrate"` // 128k
@@ -479,11 +639,12 @@ type WorkerSettings struct {
 ```go
 type MasterConfig struct {
 	Server struct {
-		Port    int    `yaml:"port"`
-		Host    string `yaml:"host"`
-		APIKey  string `yaml:"api_key"`  // API key for worker authentication
-		TLSCert string `yaml:"tls_cert"` // Path to TLS certificate file (enables HTTPS when set)
-		TLSKey  string `yaml:"tls_key"`  // Path to TLS private key file
+		Port         int               `yaml:"port"`
+		Host         string            `yaml:"host"`
+		APIKey       string            `yaml:"api_key"`       // master API key (or DARKSTREAM_API_KEY env)
+		WorkerTokens map[string]string `yaml:"worker_tokens"` // per-worker bearer tokens, accepted only on /api/worker/*
+		TLSCert      string            `yaml:"tls_cert"`      // enables HTTPS when set
+		TLSKey       string            `yaml:"tls_key"`
 	} `yaml:"server"`
 
 	Scanner struct {
@@ -499,6 +660,7 @@ type MasterConfig struct {
 		ReplaceSource    bool          `yaml:"replace_source"`    // Replace source file with output
 		DetectDuplicates bool          `yaml:"detect_duplicates"` // Detect and skip duplicate files
 		EnableWatch      bool          `yaml:"enable_watch"`      // Watch for filesystem changes using fsnotify
+		Locations        []ScanLocation `yaml:"locations"`       // multiple scan locations, each with own engines/hash_mode/replace_source
 	} `yaml:"scanner"`
 
 	Monitoring struct {
@@ -513,11 +675,14 @@ type MasterConfig struct {
 		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
 		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
 		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
+		RetentionDays      int    `yaml:"retention_days"`       // auto-prune terminal jobs older than N days (0 = keep forever)
+		BackupDir          string `yaml:"backup_dir"`          // where /api/admin/backup writes online backups
 	} `yaml:"database"`
 
 	Notifications struct {
-		WebhookURL string   `yaml:"webhook_url"`
-		Events     []string `yaml:"events"`
+		WebhookURL    string   `yaml:"webhook_url"`
+		Events        []string `yaml:"events"`
+		WebhookSecret string   `yaml:"webhook_secret"` // HMAC-signs deliveries (or DARKSTREAM_WEBHOOK_SECRET)
 	} `yaml:"notifications"`
 
 	Conversion ConversionSettings `yaml:"conversion"`
@@ -604,7 +769,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     source_video_codec TEXT,
     source_audio_codec TEXT,
     source_bitrate INTEGER,
-    source_file_size INTEGER
+    source_file_size INTEGER,
+    log_tail TEXT,
+    source_checksum_algo TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -649,11 +816,48 @@ CREATE TABLE IF NOT EXISTS worker_configs (
     updated_at TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS known_outputs (
+    checksum TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS files (
+    path TEXT PRIMARY KEY,
+    hash TEXT,
+    size INTEGER,
+    mod_time TIMESTAMP,
+    scanned_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TIMESTAMP NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TIMESTAMP NOT NULL,
+    event TEXT NOT NULL,
+    job_id TEXT,
+    url TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    status_code INTEGER,
+    error TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
-CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority);
+CREATE INDEX IF NOT EXISTS idx_jobs_source_checksum ON jobs(source_checksum);
+CREATE INDEX IF NOT EXISTS idx_jobs_pending_queue ON jobs(status, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts ON webhook_deliveries(ts);
 ```
 
 ---
@@ -716,6 +920,7 @@ logging:
 
 ```yaml
 worker:
+  token: ""                # per-worker bearer token (or DARKSTREAM_WORKER_TOKEN)
   id: worker-1
   concurrency: 3
   master_url: http://localhost:8080  # REQUIRED - master server URL
@@ -726,6 +931,7 @@ worker:
   max_api_requests_per_min: 60
 
 storage:
+  chunk_size: 268435456   # parallel chunked uploads (256 MiB chunks)
   mount_path: /mnt/storage
   download_timeout: 30m
   upload_timeout: 30m
@@ -760,10 +966,10 @@ logging:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/darkace1998/video-converter-ecosystem.git
-cd video-converter-ecosystem
+git clone https://github.com/darkace1998/DarkStream.git
+cd DarkStream
 
-# 2. Build master (Requires Go 1.24+)
+# 2. Build master (Requires Go 1.26+)
 cd video-converter-master
 go build -o master
 
@@ -783,10 +989,10 @@ cp config.yaml.example config.yaml
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/darkace1998/video-converter-ecosystem.git
-cd video-converter-ecosystem
+git clone https://github.com/darkace1998/DarkStream.git
+cd DarkStream
 
-# 2. Build worker (Requires Go 1.24+)
+# 2. Build worker (Requires Go 1.26+)
 cd video-converter-worker
 go build -o worker
 

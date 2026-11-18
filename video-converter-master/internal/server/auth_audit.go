@@ -66,20 +66,30 @@ func isSSEPath(path string) bool {
 // Accepted credentials: master API key (any route), per-worker token
 // (/api/worker/* only), short-lived stream token (SSE endpoints only).
 func (s *Server) authenticateAPICall(r *http.Request) (string, bool) {
-	if s.apiKey == "" {
+	workerPath := strings.HasPrefix(r.URL.Path, "/api/worker/")
+	// With no master API key configured, worker routes still enforce
+	// per-worker tokens when worker_tokens are set; everything else stays
+	// anonymous (the master logs a startup warning for that case).
+	if s.apiKey == "" && (len(s.workerTokens) == 0 || !workerPath) {
 		return "anonymous", true
 	}
 
-	provided := r.URL.Query().Get("api_key")
+	// The api_key query parameter is only honored on SSE paths (EventSource
+	// cannot set headers); everywhere else the key must come in the
+	// Authorization header so it never lands in URLs/logs.
+	provided := ""
+	if isSSEPath(r.URL.Path) {
+		provided = r.URL.Query().Get("api_key")
+	}
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		provided = strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
 	if provided != "" {
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.apiKey)) == 1 {
+		if s.apiKey != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(s.apiKey)) == 1 {
 			return actorMasterKey, true
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/worker/") {
+		if workerPath {
 			for workerID, token := range s.workerTokens {
 				if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1 {
 					return "worker:" + workerID, true

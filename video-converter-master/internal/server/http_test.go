@@ -425,7 +425,9 @@ func TestGetWorkerConfigRedactsAPIKeyUnlessAuthenticated(t *testing.T) {
 	}
 
 	authReq := httptest.NewRequest(http.MethodGet, "/api/worker/config", nil)
-	authReq = authReq.WithContext(context.WithValue(authReq.Context(), authContextKey{}, true))
+	ctx := context.WithValue(authReq.Context(), authContextKey{}, true)
+	ctx = context.WithValue(ctx, actorContextKey{}, actorMasterKey)
+	authReq = authReq.WithContext(ctx)
 	authRec := httptest.NewRecorder()
 
 	srv.GetWorkerConfig(authRec, authReq)

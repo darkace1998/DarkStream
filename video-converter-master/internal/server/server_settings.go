@@ -83,6 +83,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 	const maxBodySize = 64 << 10 // 64 KiB; server settings are tiny
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var req ServerSettingsRequest
+	limitBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
@@ -102,7 +103,7 @@ func (s *Server) UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"error":     "validation failed",
+			fieldError:  "validation failed",
 			fieldErrors: validationErrs.Errors,
 		}); err != nil {
 			slog.Error("Failed to encode validation errors", "error", err)

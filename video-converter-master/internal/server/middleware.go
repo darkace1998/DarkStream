@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/utils"
+
+	"encoding/json"
 )
 
 func newRateLimiter() *rateLimiter {
@@ -97,6 +99,16 @@ func (rl *rateLimiter) stop() {
 	})
 }
 
+// maxJSONBodyBytes caps every JSON request body so endpoints (which may be
+// unauthenticated in the default no-api_key configuration) cannot be
+// memory-exhausted by huge payloads.
+const maxJSONBodyBytes int64 = 1 << 20 // 1 MiB
+
+// limitBody caps a request body at maxJSONBodyBytes. Call before decoding r.Body.
+func limitBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+}
+
 // rateLimitMiddleware applies rate limiting to endpoints
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +120,10 @@ func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// leave room for that; it only exists to stop runaway clients.
 		if !s.rateLimiter.allow(ip, rateLimitBurst, time.Minute/rateLimitPerMinute) {
 			slog.Warn("Rate limit exceeded", "ip", ip, "path", r.URL.Path)
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			w.Header().Set("Retry-After", "60")
+			w.Header().Set("Content-Type", contentTypeJSON)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{fieldError: "rate limit exceeded"})
 			return
 		}
 
@@ -153,8 +168,9 @@ func (s *Server) authenticateRequest(r *http.Request) bool {
 
 	if authHeader != "" && strings.HasPrefix(authHeader, bearerPrefix) {
 		providedKey = strings.TrimPrefix(authHeader, bearerPrefix)
-	} else {
-		// Fallback to query parameter for EventSource/SSE connections
+	} else if isSSEPath(r.URL.Path) {
+		// Query-parameter fallback only for EventSource/SSE connections,
+		// which cannot set headers; never on regular routes.
 		providedKey = r.URL.Query().Get("api_key")
 	}
 

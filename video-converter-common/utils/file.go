@@ -89,6 +89,18 @@ func ValidatePathWithinBase(basePath, targetPath string) (string, error) {
 	// Clean the target path to resolve .., ., and duplicate separators
 	absTarget = filepath.Clean(absTarget)
 
+	// Resolve symlinks so a link inside the base directory cannot point
+	// outside it. The target itself may not exist yet (uploads), so fall back
+	// to resolving its parent directory.
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absTarget); err == nil {
+		absTarget = resolved
+	} else if resolved, err := filepath.EvalSymlinks(filepath.Dir(absTarget)); err == nil {
+		absTarget = filepath.Join(resolved, filepath.Base(absTarget))
+	}
+
 	// Early detection: Check for explicit ".." components in the original input
 	// This catches obvious path traversal attempts before processing
 	// Note: This is defense in depth - the final validation is done after cleaning

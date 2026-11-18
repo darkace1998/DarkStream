@@ -28,7 +28,7 @@ type Job struct {
 	SourceAudioCodec string `json:"source_audio_codec,omitempty"` // e.g., aac, mp3
 	SourceBitrate    int64  `json:"source_bitrate,omitempty"`     // Total bitrate in bits/second
 	SourceFileSize   int64  `json:"source_file_size,omitempty"`   // Source file size in bytes
-	LogTail          string `json:"log_tail,omitempty"`           // last ~16KB of the worker-side job log (ffmpeg output etc.)
+	LogTail          string `json:"log_tail,omitempty"`           // last ~7 KiB of the worker-side job log (ffmpeg output etc.)
 }
 
 // VideoMetadata contains extracted video information from FFprobe
