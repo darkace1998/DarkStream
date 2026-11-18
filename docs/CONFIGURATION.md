@@ -85,6 +85,8 @@ endpoints in Kubernetes (see `deploy/k8s/`).
 *   `port`: Port to listen on (e.g., `8080`).
 *   `host`: Host interface to bind to (e.g., `0.0.0.0`).
 *   `api_key`: (Optional) Require workers and CLI to authenticate with this Bearer token.
+    Prefer the `DARKSTREAM_API_KEY` environment variable over storing the key in
+    `config.yaml` — see *Secret hygiene* below.
 *   `worker_tokens`: (Optional) Map of `worker_id` → per-worker bearer token. A token is
     accepted **only** on `/api/worker/*` routes and the actor is recorded as
     `worker:<id>` in the audit log, so you can tell workers apart. The master
@@ -105,6 +107,21 @@ never appears in URLs, browser history, or access logs. State-changing API calls
 (config updates, queue pause/resume, job cancel/retry/requeue/priority, worker
 admin, chunked uploads) are recorded in the `audit_log` table with the
 authenticated actor and are queryable via `/api/audit-log`.
+
+### Secret hygiene
+
+Secrets (`server.api_key`, `server.worker_tokens`, `notifications.webhook_secret`) can be
+supplied via environment variables instead of the config file, which keeps them out of
+version control and config-management diffs:
+
+| Variable | Overrides |
+|---|---|
+| `DARKSTREAM_API_KEY` | `server.api_key` |
+| `DARKSTREAM_WEBHOOK_SECRET` | `notifications.webhook_secret` |
+
+Worker tokens can be injected per worker via `DARKSTREAM_WORKER_TOKEN` on the worker side
+(the worker sends it as its bearer credential). If you do keep secrets in `config.yaml`,
+the file is listed in `.gitignore` — never commit it, and prefer file permissions `0600`.
 
 ### `scanner` (Maps to `MasterConfig.Scanner`)
 *   `root_path`: Directory to scan for source video files.
@@ -166,10 +183,22 @@ exported as `darkstream_scanner_scan_duration_seconds` and
 *   `max_idle_connections`: Maximum number of idle connections in the pool (e.g., `5`).
 *   `conn_max_lifetime`: Maximum lifetime of a connection in seconds (0 = unlimited).
 *   `conn_max_idle_time`: Maximum idle time of a connection in seconds (0 = unlimited).
+*   `retention_days`: (Optional) When > 0, the master automatically deletes
+    completed/failed/cancelled jobs older than this many days at startup and then once
+    per day (0 = keep forever).
+*   `backup_dir`: (Optional) Directory for online database backups created via
+    `GET|POST /api/admin/backup` (defaults to the directory of `database.path`).
 
 ### `notifications` (Maps to `MasterConfig.Notifications`)
 *   `webhook_url`: Optional URL to send job event webhooks to.
 *   `events`: List of events to trigger webhooks (e.g., `completed`, `failed`).
+*   `webhook_secret`: (Optional) When set, every delivery carries an
+    `X-Darkstream-Signature: sha256=<HMAC-SHA256 of the raw body>` header so receivers
+    can verify authenticity. Deliveries are retried up to 3 times with exponential
+    backoff (1s, 4s, capped at 30s) on transport errors or non-2xx responses, and each
+    attempt's outcome is recorded in the `webhook_deliveries` table, queryable via
+    `GET /api/webhook-deliveries?limit=N`. Prefer `DARKSTREAM_WEBHOOK_SECRET` over
+    putting the secret in the file.
 
 ### `monitoring`
 *   `job_timeout`: Maximum time a job can be in processing state (default: `2h`).
@@ -185,6 +214,13 @@ exported as `darkstream_scanner_scan_duration_seconds` and
 *   `audio_codec`: Audio codec (e.g., `aac`).
 *   `audio_bitrate`: Audio bitrate (e.g., `128k`).
 *   `output_format`: Output container format (e.g., `mp4`, `mkv`).
+*   `hw_accel`: Hardware decode acceleration handed to ffmpeg's `-hwaccel`:
+    `auto` (detect once per worker: NVIDIA CUDA > VAAPI > QSV > Vulkan, recommended),
+    `cuda`, `vaapi`, `qsv`, `vulkan`, `none` (software), or empty for the legacy
+    `worker_defaults.use_vulkan` behavior. Also selectable in the Web UI Configuration
+    tab. If a hardware-accelerated conversion fails, the worker automatically retries
+    once with software encoding instead of failing the job. Hardware *encoder* codecs
+    (e.g. `h264_nvenc`, `hevc_qsv`, `h264_vaapi`) are passed through to ffmpeg unchanged.
 
 ### `worker_defaults` (Maps to `MasterConfig.WorkerDefaults`)
 *These settings are automatically pushed to workers when they connect.*
@@ -224,6 +260,10 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `concurrency`: Local override for concurrent jobs.
 *   `master_url`: **Required**. URL of the master server (e.g., `http://localhost:8080`).
 *   `api_key`: Must match the master's `api_key` if authentication is enabled.
+    Prefer the `DARKSTREAM_API_KEY` environment variable.
+*   `token`: Per-worker bearer token from the master's `server.worker_tokens` map;
+    takes precedence over `api_key`. Prefer the `DARKSTREAM_WORKER_TOKEN`
+    environment variable (also used for the initial config fetch in `-url` mode).
 *   `heartbeat_interval`: Frequency of worker heartbeats (e.g., `30s`).
 *   `job_check_interval`: Frequency of polling for new jobs (e.g., `5s`).
 *   `job_timeout`: Maximum time allowed for a single job (e.g., `2h`).
@@ -274,3 +314,10 @@ See `video-converter-worker/config.yaml.example` for a complete example.
 *   `audio_codec`: Audio codec (e.g., `aac`).
 *   `audio_bitrate`: Audio bitrate (e.g., `128k`).
 *   `output_format`: Output container format (e.g., `mp4`, `mkv`).
+*   `hw_accel`: Hardware decode acceleration handed to ffmpeg's `-hwaccel`:
+    `auto` (detect once per worker: NVIDIA CUDA > VAAPI > QSV > Vulkan, recommended),
+    `cuda`, `vaapi`, `qsv`, `vulkan`, `none` (software), or empty for the legacy
+    `worker_defaults.use_vulkan` behavior. Also selectable in the Web UI Configuration
+    tab. If a hardware-accelerated conversion fails, the worker automatically retries
+    once with software encoding instead of failing the job. Hardware *encoder* codecs
+    (e.g. `h264_nvenc`, `hevc_qsv`, `h264_vaapi`) are passed through to ffmpeg unchanged.

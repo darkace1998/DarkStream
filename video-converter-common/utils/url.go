@@ -58,3 +58,17 @@ func ValidateSecureTransport(rawURL string, authEnabled bool) error {
 		return fmt.Errorf("refusing to send API key over unsupported URL scheme %q", parsed.Scheme)
 	}
 }
+
+// RedactURL returns raw with userinfo and query string removed, for safe
+// logging/storage of URLs that may embed credentials (webhook URLs often
+// carry ?token=... or user:pass@ parts).
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unparseable url)"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}

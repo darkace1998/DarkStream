@@ -95,13 +95,20 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 	srv.SetLocationManager(locs)
 
 	return &Coordinator{
-		config:   cfg,
-		db:       tracker,
-		locs:     locs,
-		server:   srv,
-		notifier: notifier.NewWebhookNotifier(cfg.Notifications.WebhookURL, cfg.Notifications.Events),
-		ctx:      ctx,
-		cancel:   cancel,
+		config: cfg,
+		db:     tracker,
+		locs:   locs,
+		server: srv,
+		notifier: notifier.NewWebhookNotifier(
+			cfg.Notifications.WebhookURL,
+			cfg.Notifications.Events,
+			cfg.Notifications.WebhookSecret,
+			func(event, jobID string, attempts, statusCode int, err error) {
+				tracker.RecordWebhookDelivery(event, jobID, cfg.Notifications.WebhookURL, attempts, statusCode, err)
+			},
+		),
+		ctx:    ctx,
+		cancel: cancel,
 	}, nil
 }
 
@@ -109,6 +116,38 @@ func New(cfg *models.MasterConfig) (*Coordinator, error) {
 // the /api/server-settings endpoint to persist server settings to disk.
 func (c *Coordinator) SetPersister(p *config.Persister) {
 	c.server.SetPersister(p)
+}
+
+// autoPruneLoop prunes finished jobs older than database.retention_days once at
+// startup and then daily. retention_days is read from the startup config on
+// purpose: it is a server setting persisted to config.yaml and only applied
+// after a restart, so a stale runtime value could never be intentional.
+// startup and then daily, until the coordinator is shut down.
+func (c *Coordinator) autoPruneLoop() {
+	defer c.wg.Done()
+	c.pruneOldJobs()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.pruneOldJobs()
+		}
+	}
+}
+
+func (c *Coordinator) pruneOldJobs() {
+	cutoff := time.Now().AddDate(0, 0, -c.config.Database.RetentionDays)
+	n, err := c.db.PruneJobsOlderThan(cutoff)
+	if err != nil {
+		slog.Error("Auto-prune failed", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("Auto-pruned old jobs", "count", n, "retention_days", c.config.Database.RetentionDays)
+	}
 }
 
 // Start starts the coordinator and all its components
@@ -124,6 +163,12 @@ func (c *Coordinator) Start() error {
 	// Start monitoring failed jobs
 	c.wg.Add(1)
 	go c.monitorFailedJobs()
+
+	// Start the retention auto-pruner (database.retention_days > 0)
+	if c.config.Database.RetentionDays > 0 {
+		c.wg.Add(1)
+		go c.autoPruneLoop()
+	}
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

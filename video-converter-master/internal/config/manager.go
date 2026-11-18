@@ -11,6 +11,8 @@ import (
 
 	"github.com/darkace1998/video-converter-common/constants"
 	"github.com/darkace1998/video-converter-common/models"
+
+	"strings"
 )
 
 // ActiveConfig represents the current active configuration with metadata
@@ -29,6 +31,10 @@ type VideoConfig struct {
 	Codec      string `json:"codec"`
 	Bitrate    string `json:"bitrate"`
 	Preset     string `json:"preset"`
+	// HWAccel selects the ffmpeg -hwaccel decoder: "", "auto", "none",
+	// "cuda", "vaapi", "qsv" or "vulkan". Empty keeps the legacy behavior
+	// driven by worker.use_vulkan.
+	HWAccel string `json:"hw_accel"`
 }
 
 // AudioConfig holds audio-related settings
@@ -101,6 +107,7 @@ func NewManager(jsonPath string, yamlDefaults *models.ConversionSettings, worker
 			Codec:      yamlDefaults.Codec,
 			Bitrate:    yamlDefaults.Bitrate,
 			Preset:     yamlDefaults.Preset,
+			HWAccel:    yamlDefaults.HWAccel,
 		},
 		Audio: AudioConfig{
 			Codec:   yamlDefaults.AudioCodec,
@@ -175,6 +182,7 @@ func (m *Manager) GetConversionSettings() *models.ConversionSettings {
 		AudioCodec:       m.config.Audio.Codec,
 		AudioBitrate:     m.config.Audio.Bitrate,
 		OutputFormat:     m.config.Output.Format,
+		HWAccel:          m.config.Video.HWAccel,
 	}
 }
 
@@ -295,6 +303,13 @@ var (
 		constants.FormatWebM: true, constants.FormatAVI: true,
 	}
 
+	validHWAccels = map[string]bool{
+		"":                    true,
+		constants.HWAccelAuto: true, constants.HWAccelNone: true,
+		constants.HWAccelCUDA: true, constants.HWAccelVAAPI: true,
+		constants.HWAccelQSV: true, constants.HWAccelVulkan: true,
+	}
+
 	validLogLevels = map[string]bool{
 		constants.LogLevelDebug: true, constants.LogLevelInfo: true,
 		constants.LogLevelWarn: true, constants.LogLevelError: true,
@@ -369,6 +384,13 @@ func validateVideoConfig(cfg *ActiveConfig) []ValidationError {
 		errors = append(errors, ValidationError{
 			Field:   "video.preset",
 			Message: "must be one of: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, placebo",
+		})
+	}
+
+	if !validHWAccels[strings.ToLower(strings.TrimSpace(cfg.Video.HWAccel))] {
+		errors = append(errors, ValidationError{
+			Field:   "video.hw_accel",
+			Message: "must be one of: auto, none, cuda, vaapi, qsv, vulkan (or empty for legacy use_vulkan behavior)",
 		})
 	}
 

@@ -19,6 +19,8 @@ import (
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
+
+	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // sleepWithContext waits for d to elapse or ctx to be cancelled, whichever comes
@@ -283,8 +285,6 @@ func (mc *MasterClient) GetNextJobs(limit int) ([]*models.Job, error) {
 }
 
 // ReportJobComplete reports successful job completion to the master
-//
-//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
 func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
@@ -332,9 +332,7 @@ func (mc *MasterClient) ReportJobComplete(jobID string, outputSize int64) error 
 }
 
 // ReportJobFailed reports job failure to the master
-//
-//nolint:dupl // Similar HTTP request pattern, but different payloads and endpoints - extracting common code would reduce clarity
-func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
+func (mc *MasterClient) ReportJobFailed(jobID, errorMsg, logTail string) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.hasCredential()); err != nil {
 		return err
 	}
@@ -342,6 +340,7 @@ func (mc *MasterClient) ReportJobFailed(jobID, errorMsg string) error {
 		paramJobID:      jobID,
 		paramWorkerID:   mc.workerID,
 		"error_message": errorMsg,
+		"log_tail":      logTail,
 	}
 
 	body, err := json.Marshal(payload)
@@ -1050,6 +1049,9 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	}
 
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if metadata != nil && metadata.LogTail != "" {
+		req.Header.Set(constants.HeaderLogTail, metadata.LogTail)
+	}
 
 	// Add authentication header
 	mc.addAuthHeader(req)

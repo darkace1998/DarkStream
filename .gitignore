@@ -27,6 +27,10 @@ video-converter-worker/worker
 *.db-shm
 *.db-wal
 
+# Local runtime config (may contain api_key / webhook_secret — use env vars instead)
+config.yaml
+config.local.yaml
+
 # Logs
 *.log
 

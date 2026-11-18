@@ -54,6 +54,15 @@ func main() {
 		}
 	}
 
+	// Env credentials override whatever the file/remote config provided, so a
+	// per-worker token can be injected without touching config.yaml.
+	if v := os.Getenv("DARKSTREAM_WORKER_TOKEN"); v != "" {
+		cfg.Worker.Token = v
+	}
+	if v := os.Getenv("DARKSTREAM_API_KEY"); v != "" {
+		cfg.Worker.APIKey = v
+	}
+
 	utils.InitLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.OutputPath, "worker_id", cfg.Worker.ID)
 
 	w, err := worker.New(cfg)

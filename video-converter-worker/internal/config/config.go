@@ -27,5 +27,18 @@ func LoadWorkerConfig(path string) (*models.WorkerConfig, error) {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 	}
+	applyEnvOverrides(&cfg)
 	return &cfg, nil
+}
+
+// applyEnvOverrides lets environment variables override credentials from the
+// config file (environment > file > defaults), so secrets never have to live
+// in a committed config.yaml.
+func applyEnvOverrides(cfg *models.WorkerConfig) {
+	if v := os.Getenv("DARKSTREAM_WORKER_TOKEN"); v != "" {
+		cfg.Worker.Token = v
+	}
+	if v := os.Getenv("DARKSTREAM_API_KEY"); v != "" {
+		cfg.Worker.APIKey = v
+	}
 }

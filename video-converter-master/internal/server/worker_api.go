@@ -256,6 +256,7 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		JobID      string `json:"job_id"`
 		WorkerID   string `json:"worker_id"`
 		OutputSize int64  `json:"output_size"`
+		LogTail    string `json:"log_tail"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -296,6 +297,7 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while completing", http.StatusConflict)
 		return
 	}
+	s.db.SetJobLogTail(job.ID, req.LogTail)
 
 	// Record metrics and notify the webhook if configured
 	s.recordJobCompletion(job)
@@ -315,6 +317,7 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		JobID        string `json:"job_id"`
 		WorkerID     string `json:"worker_id"`
 		ErrorMessage string `json:"error_message"`
+		LogTail      string `json:"log_tail"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -355,6 +358,7 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while reporting failure", http.StatusConflict)
 		return
 	}
+	s.db.SetJobLogTail(job.ID, req.LogTail)
 	s.cleanupChunkUpload(job.ID)
 
 	// Record metrics - classify error type
