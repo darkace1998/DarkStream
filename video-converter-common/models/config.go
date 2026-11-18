@@ -135,7 +135,7 @@ type ScanLocation struct {
 	RootPath         string        `json:"root_path"         yaml:"root_path"`
 	OutputBase       string        `json:"output_base"       yaml:"output_base"`
 	Engines          int           `json:"engines"           yaml:"engines"`       // parallel scan workers (default 4)
-	HashAlgo         string        `json:"hash_algo"         yaml:"hash_algo"`     // sha256 (default) or sha1 — faster, less CPU
+	HashAlgo         string        `json:"hash_algo"         yaml:"hash_algo"`     // sha1 (default, fastest) or sha256 — sha256 is hardware-accelerated (SHA-NI/AVX-512/AVX2) when the CPU supports it
 	HashMode         string        `json:"hash_mode"         yaml:"hash_mode"`     // full (default) or skip — skip never reads file contents at scan time
 	ScanInterval     time.Duration `json:"scan_interval"     yaml:"scan_interval"` // 0 = scan only on startup/watch events
 	EnableWatch      bool          `json:"enable_watch"      yaml:"enable_watch"`  // fsnotify watcher for this location
@@ -201,7 +201,7 @@ func (c *MasterConfig) NormalizeScanLocations() {
 			loc.Engines = DefaultScanLocationEngines
 		}
 		if loc.HashAlgo == "" {
-			loc.HashAlgo = "sha256"
+			loc.HashAlgo = "sha1" // default: fastest on CPUs without SHA-NI; pick sha256 explicitly on SHA-NI/AVX CPUs
 		}
 		if loc.HashMode == "" {
 			loc.HashMode = HashModeFull

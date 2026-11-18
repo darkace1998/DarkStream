@@ -89,3 +89,93 @@ func TestVerifyFileSHA256(t *testing.T) {
 		}
 	})
 }
+
+// The SHA-256 implementation is hardware-accelerated (sha256-simd); it must
+// still produce standard digests so hashes stored by older versions and
+// checksums computed by workers/tools remain valid.
+func TestNewHashSHA256MatchesStdlib(t *testing.T) {
+	inputs := [][]byte{
+		{},
+		[]byte("hello world"),
+		make([]byte, 55),      // one block minus padding
+		make([]byte, 64),      // exactly one block
+		make([]byte, 1<<20+1), // spans the read buffer
+	}
+	for i := range inputs {
+		for j := range inputs[i] {
+			inputs[i][j] = byte(i*31 + j)
+		}
+		h, err := NewHash(HashAlgoSHA256)
+		if err != nil {
+			t.Fatalf("NewHash(sha256): %v", err)
+		}
+		h.Write(inputs[i])
+		got := hex.EncodeToString(h.Sum(nil))
+
+		ref := sha256.New()
+		ref.Write(inputs[i])
+		want := hex.EncodeToString(ref.Sum(nil))
+
+		if got != want {
+			t.Errorf("input %d: simd sha256 %s != stdlib %s", i, got, want)
+		}
+	}
+
+	// Explicit algo names and the default must behave the same.
+	for _, algo := range []string{"", "sha256", "SHA256"} {
+		h, err := NewHash(algo)
+		if err != nil {
+			t.Fatalf("NewHash(%q): %v", algo, err)
+		}
+		h.Write([]byte("abc"))
+		if got, want := hex.EncodeToString(h.Sum(nil)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; got != want {
+			t.Errorf("NewHash(%q) digest of \"abc\" = %s, want %s", algo, got, want)
+		}
+	}
+}
+
+// BenchmarkHashSHA256 measures raw hash throughput (MB/s) of the active
+// SHA-256 implementation. On CPUs with SHA-NI/AVX2/AVX-512 this should be
+// well above 500 MB/s; the generic fallback is ~100-200 MB/s.
+func BenchmarkHashSHA256(b *testing.B) {
+	data := make([]byte, 64<<20)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	h, err := NewHash(HashAlgoSHA256)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		h.Reset()
+		if _, err := h.Write(data); err != nil {
+			b.Fatal(err)
+		}
+		_ = h.Sum(nil)
+	}
+}
+
+// BenchmarkHashSHA1 measures raw SHA-1 throughput; on CPUs without SHA-NI
+// this is typically 2-3x the SHA-256 fallback, which is why sha1 is the
+// default hash_algo for scan locations.
+func BenchmarkHashSHA1(b *testing.B) {
+	data := make([]byte, 64<<20)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	h, err := NewHash(HashAlgoSHA1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		h.Reset()
+		if _, err := h.Write(data); err != nil {
+			b.Fatal(err)
+		}
+		_ = h.Sum(nil)
+	}
+}

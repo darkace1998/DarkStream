@@ -201,3 +201,13 @@ func TestJobDetailsTemplateUsesAuthHeaderNotQueryKey(t *testing.T) {
 	require.NotContains(t, string(data), "api_key=")
 	require.Contains(t, string(data), "Authorization")
 }
+
+// --- Web UI must expose replace_source (previously hardcoded to false).
+
+func TestWebUITemplateHasReplaceSourceToggle(t *testing.T) {
+	data, err := os.ReadFile("webui.html.tmpl")
+	require.NoError(t, err)
+	require.Contains(t, string(data), `id="locReplace"`)
+	require.Contains(t, string(data), "replace_source: document.getElementById('locReplace').value === 'true'")
+	require.Contains(t, string(data), "{{if .ReplaceSource}}")
+}

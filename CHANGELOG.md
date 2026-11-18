@@ -31,8 +31,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: `config.yaml` added to `.gitignore`; secret-hygiene guidance (env vars
   `DARKSTREAM_API_KEY` / `DARKSTREAM_WEBHOOK_SECRET` over plaintext config).
 
+- **Docker**: the `all-in-one` image now auto-starts: with no arguments its entrypoint
+  (`docker/entrypoint-all-in-one.sh`) starts the master, waits for `/healthz`, then starts
+  a worker pointed at the in-container master — the worker registers itself via heartbeat,
+  so one container scans `/mnt/storage/videos` and processes jobs end to end. Arguments are
+  still exec'd directly (`docker run <img> ./video-converter-cli --help`). `DARKSTREAM_API_KEY`
+  is injected into the worker config automatically; `DARKSTREAM_WORKER_ID` sets the worker id.
+  A matching `all-in-one` service was added to `docker-compose.yml`, and the master DB now
+  lives on the `/app/db` volume in this image.
+- **Master Web UI**: scan-location form now has a "Replace source file after conversion"
+  toggle (the API field `replace_source` was previously unreachable from the UI), and the
+  locations table shows a Replace column.
+- **Common**: `TestNewHashSHA256MatchesStdlib` proves the accelerated SHA-256 produces
+  byte-identical digests to `crypto/sha256`, plus a throughput benchmark.
+
+### Changed
+- **Master**: `hash_algo` now defaults to `sha1` for new scan locations — SHA-1 has no
+  hardware instruction set, but its software implementation is already ~2.5x faster than
+  the SHA-256 fallback on CPUs without SHA-NI, which is the common case on NAS/ARM
+  boxes. Choose `sha256` explicitly on SHA-NI/AVX CPUs, where the SIMD-accelerated
+  SHA-256 is fastest. Existing configs keep their configured algorithm; workers infer
+  it from the checksum length, so mixed algorithms work end-to-end.
+- **Common**: SHA-256 checksums now use `minio/sha256-simd`, which dispatches at runtime
+  to SHA-NI / AVX-512 / AVX2 assembly (identical digests to standard SHA-256). Scanning
+  large libraries no longer pegs the CPU on machines where Go's pure-Go SHA-256 fallback
+  was the bottleneck; hash reads use a 4 MiB buffer to cut syscall overhead on
+  network/FUSE mounts.
+- **Master**: scan-time duplicate lookups (`jobs.source_checksum`) are now indexed, and
+  the SQLite DSN uses `synchronous=NORMAL` in WAL mode, removing a per-commit fsync per
+  scanned file on slow storage.
+- **Master**: long scans log progress every 30s (`Scan in progress` with
+  processed/hashed/skipped_unchanged counts) in addition to the `Scan started` /
+  `Scan complete` lines.
+
 ### Fixed
 - **Master**: webhook delivery ID used a `%d` verb for a string job ID (go vet).
+
 
 ## [0.7.0] - 2026-11-17
 
