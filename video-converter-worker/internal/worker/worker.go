@@ -682,20 +682,28 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
-	// Best-effort ship of the job log tail on the success path: the upload
-	// itself no longer carries it, and the failure path delivers it via
-	// ReportJobFailed, so without this call the tail is lost on success.
-	if job.LogTail != "" {
-		if reportErr := w.masterClient.ReportJobLog(job.ID, job.LogTail); reportErr != nil {
-			log.Warn("Failed to ship job log tail to master", "error", reportErr)
-		}
-	}
+	// Best-effort ship of the job log tail on the success path (kept in its
+	// own helper so executeJob stays within the cyclop complexity budget).
+	w.shipJobLogTail(job, log)
 
 	// Restore original paths for logging
 	job.SourcePath = originalSourcePath
 	job.OutputPath = originalOutputPath
 
 	return nil
+}
+
+// shipJobLogTail sends the worker-side job log tail to the master on the
+// success path: the upload itself no longer carries it, and the failure
+// path delivers it via ReportJobFailed, so without this call the tail would
+// be lost on success. Best effort: a failed report must not fail the job.
+func (w *Worker) shipJobLogTail(job *models.Job, log *slog.Logger) {
+	if job.LogTail == "" {
+		return
+	}
+	if reportErr := w.masterClient.ReportJobLog(job.ID, job.LogTail); reportErr != nil {
+		log.Warn("Failed to ship job log tail to master", "error", reportErr)
+	}
 }
 
 // downloadAndVerify fetches the job's source video from the master and checks
