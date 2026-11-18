@@ -682,6 +682,15 @@ func (w *Worker) executeJob(job *models.Job, log *slog.Logger) error {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
+	// Best-effort ship of the job log tail on the success path: the upload
+	// itself no longer carries it, and the failure path delivers it via
+	// ReportJobFailed, so without this call the tail is lost on success.
+	if job.LogTail != "" {
+		if reportErr := w.masterClient.ReportJobLog(job.ID, job.LogTail); reportErr != nil {
+			log.Warn("Failed to ship job log tail to master", "error", reportErr)
+		}
+	}
+
 	// Restore original paths for logging
 	job.SourcePath = originalSourcePath
 	job.OutputPath = originalOutputPath

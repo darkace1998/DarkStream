@@ -69,9 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history queries; obsolete indexes are dropped on open.
 - **Master**: `PruneJobsOlderThan` runs in a single transaction on a single
   connection (was one transaction per table across pool connections, which could
-  deadlock under WAL) and now also prunes orphaned `job_progress` rows,
-  `webhook_deliveries`, `audit_log`, and `known_outputs` entries whose job/output
-  no longer exists.
+  deadlock under WAL) and now also removes orphaned `job_progress` rows
+  and ages out `webhook_deliveries` and `audit_log` with the same window.
+  `known_outputs` is deliberately kept forever (it is what prevents
+  already-converted outputs from being re-queued).
 - **Master**: 429 rate-limit responses are now JSON (`{error, retry_after}`) with a
   `Retry-After: 60` header, instead of a bare text body.
 - **Master/Worker**: worker job logs are uploaded via the new
@@ -97,7 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `api_key` is set, `/api/worker/*` routes accept only worker tokens (previously any
   request passed when `api_key` was empty).
 - **Security (Master)**: every JSON-decoding handler now caps request bodies at 1 MiB
-  (`http.MaxBytesReader`) before decoding; oversized bodies get a `413`.
+  (`http.MaxBytesReader`) before decoding; oversized bodies fail to decode and get
+  a `400`.
 - **Security (Master)**: chunked-upload `total_size` is capped at 1 TiB and
   `ValidatePathWithinBase` now resolves symlinks (base and target) before the
   prefix check, so a symlink inside an allowed directory cannot point outside it.

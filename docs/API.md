@@ -385,9 +385,7 @@ Returns detailed statistics, including active workers and system metrics.
 Lists jobs with filtering.
 
 **Query Parameters:**
-- `status` (string, optional): Filter by job sta
-Returns job counts by status and `queue_paused` (not worker counts).
-tus (e.g., `pending`, `processing`, `completed`, `failed`).
+- `status` (string, optional): Filter by job status (e.g., `pending`, `processing`, `completed`, `failed`).
 - `limit` (integer, optional): Maximum number of jobs to return.
 
 *Note: This endpoint does not support an `offset` parameter for pagination.*
@@ -566,7 +564,7 @@ Persists server settings to the config file. The running process is not reconfig
 *Notes: `port` must be 1-65535; `tls_cert` and `tls_key` must be set together; `log_level` one of `debug`, `info`, `warn`, `error`; `log_format` one of `json`, `text`. **Merge semantics:** any field left empty/zero keeps its current value from the config file, so a partial payload cannot silently clear the API key or TLS paths. To clear a setting, edit the config file.*
 
 ### `GET /api/workers`
-Lists all active registered workers.
+Lists registered workers. By default all known workers are returned; `?active_only=true` restricts the list to recently-seen (active) ones.
 
 ### `POST /api/worker/pause`
 Pauses a specific worker, preventing it from fetching new jobs.
@@ -574,9 +572,7 @@ Pauses a specific worker, preventing it from fetching new jobs.
 **Query Parameters:**
 - `worker_id` (string, required): The ID of the worker to pause.
 
-### `PO
-By default all known workers are returned; `?active_only=true` restricts to recently-seen (active) ones.
-ST /api/worker/resume`
+### `POST /api/worker/resume`
 Resumes a paused worker, allowing it to fetch new jobs again.
 
 **Query Parameters:**

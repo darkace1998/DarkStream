@@ -388,7 +388,7 @@ This repository contains multiple Go modules working together. Instead of hardco
 
 #### 1. Get Next Job
 ```
-GET /api/worker/next-job?worker_id=worker-1&gpu_available (reserved, currently ignored)=true
+GET /api/worker/next-job?worker_id=worker-1&gpu_available=true
 
 Response (200):
 {
@@ -401,6 +401,8 @@ Response (200):
 
 Response (204 No Content): No jobs available
 ```
+
+*Note: the `gpu_available` query parameter is reserved and currently ignored.*
 
 #### 2. Report Job Complete
 ```
@@ -668,28 +670,19 @@ type MasterConfig struct {
 	} `yaml:"monitoring"`
 
 	Database struct {
-		Path          string `yaml:"path"`
-		RetentionDays int    `yaml:"retention_days"` // auto-prune terminal jobs older than N days (0 = keep forever)
-		BackupDir     string `yaml:"backup_dir"`     // where /api/admin/backup writes online backups
+		Path               string `yaml:"path"`
+		MaxOpenConnections int    `yaml:"max_open_connections"` // Maximum number of open connections to the database
+		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
+		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
+		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
+		RetentionDays      int    `yaml:"retention_days"`       // auto-prune terminal jobs older than N days (0 = keep forever)
+		BackupDir          string `yaml:"backup_dir"`          // where /api/admin/backup writes online backups
 	} `yaml:"database"`
 
 	Notifications struct {
 		WebhookURL    string   `yaml:"webhook_url"`
 		Events        []string `yaml:"events"`
 		WebhookSecret string   `yaml:"webhook_secret"` // HMAC-signs deliveries (or DARKSTREAM_WEBHOOK_SECRET)
-	} `yaml:"notifications"`
-
-	Database struct {
-		Path               string `yaml:"path"`
-		MaxOpenConnections int    `yaml:"max_open_connections"` // Maximum number of open connections to the database
-		MaxIdleConnections int    `yaml:"max_idle_connections"` // Maximum number of idle connections in the pool
-		ConnMaxLifetime    int    `yaml:"conn_max_lifetime"`    // Maximum lifetime of a connection in seconds (0 = unlimited)
-		ConnMaxIdleTime    int    `yaml:"conn_max_idle_time"`   // Maximum idle time of a connection in seconds (0 = unlimited)
-	} `yaml:"database"`
-
-	Notifications struct {
-		WebhookURL string   `yaml:"webhook_url"`
-		Events     []string `yaml:"events"`
 	} `yaml:"notifications"`
 
 	Conversion ConversionSettings `yaml:"conversion"`

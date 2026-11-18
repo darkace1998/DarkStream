@@ -520,14 +520,13 @@ func (s *Server) HandleJobLog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	limitBody(w, r) // 1 MiB cap; the tail itself is capped at 64 KiB when stored
+	limitBody(w, r) // 1 MiB cap; the stored tail is capped at 64 KiB
 
 	var req struct {
 		JobID    string `json:"job_id"`
 		WorkerID string `json:"worker_id"`
 		LogTail  string `json:"log_tail"`
 	}
-	limitBody(w, r) // 1 MiB cap; the stored tail is capped at 64 KiB
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return

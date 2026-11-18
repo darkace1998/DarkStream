@@ -67,8 +67,6 @@ func New(dbPath string) (*Tracker, error) {
 // NewWithConfig creates a new database tracker instance with custom connection pool configuration
 func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, error) {
 	// WAL + busy_timeout let the parallel scan engines, watchers and HTTP
-	// handlers write concurrently without SQLITE_BUSY failures.
-	// WAL + busy_timeout let the parallel scan engines, watchers and HTTP
 	// handlers share one database. synchronous=NORMAL skips the per-commit
 	// fsync in WAL mode (still crash-safe for application crashes; only a
 	// power loss can lose the last commits), which matters a lot when the DB
@@ -219,8 +217,10 @@ func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
 	// Run all deletes in one transaction on a single connection: a crash
 	// mid-prune must not leave a half-pruned state, and one commit is cheaper
 	// than three. Auxiliary tables (job_progress orphans, webhook deliveries,
-	// audit log, known outputs) age out with the same window so they cannot
-	// grow unbounded.
+	// audit log) age out with the same window so they cannot grow unbounded.
+	// known_outputs is deliberately kept forever: it is what lets the
+	// scanner recognise outputs it already produced instead of re-queuing
+	// them (issue #142).
 	conn, err := t.db.Conn(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("failed to get db connection for prune: %w", err)
@@ -258,9 +258,6 @@ func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
 	}
 	if _, err := tx.Exec(`DELETE FROM audit_log WHERE ts < ?`, cutoff); err != nil {
 		slog.Warn("Failed to prune audit log", "error", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM known_outputs WHERE created_at < ?`, cutoff); err != nil {
-		slog.Warn("Failed to prune known outputs", "error", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit prune transaction: %w", err)
