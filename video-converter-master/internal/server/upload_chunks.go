@@ -16,12 +16,14 @@ import (
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
-
-	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // maxChunkBodySize caps a single chunk upload body (256 MiB).
 const maxChunkBodySize = 256 << 20
+
+// maxChunkTotalSize caps the declared total_size of a chunked upload so a
+// worker cannot make the master preallocate a huge sparse .part file.
+const maxChunkTotalSize = 1 << 40 // 1 TiB
 
 // chunkUploadIdleTTL is how long an untouched in-progress chunked upload is
 // kept before the janitor removes its state and .part file.
@@ -139,7 +141,6 @@ func (s *Server) UploadChunk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Job state changed while uploading", http.StatusConflict)
 		return
 	}
-	s.db.SetJobLogTail(job.ID, r.Header.Get(constants.HeaderLogTail))
 
 	s.finalizeUploadedJob(job, validatedPath, outputChecksum, nil)
 	s.recordJobCompletion(job)
@@ -362,7 +363,7 @@ func parseChunkParams(w http.ResponseWriter, r *http.Request) (jobID string, off
 		return "", 0, 0, false
 	}
 	totalSize, err = strconv.ParseInt(r.URL.Query().Get("total_size"), 10, 64)
-	if err != nil || totalSize <= 0 {
+	if err != nil || totalSize <= 0 || totalSize > maxChunkTotalSize {
 		http.Error(w, "Invalid total_size parameter", http.StatusBadRequest)
 		return "", 0, 0, false
 	}

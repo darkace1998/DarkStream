@@ -833,18 +833,38 @@
                     tbody.innerHTML = '';
                     const entries = data.entries || [];
                     if (entries.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4">No audit entries yet.</td></tr>';
+                        const tr = document.createElement('tr');
+                        const td = document.createElement('td');
+                        td.colSpan = 4;
+                        td.textContent = 'No audit entries yet.';
+                        tr.appendChild(td);
+                        tbody.appendChild(tr);
                         return;
                     }
                     entries.forEach(function(e) {
                         const tr = document.createElement('tr');
                         const ts = e.ts ? new Date(e.ts).toISOString().replace('T', ' ').slice(0, 19) : '';
-                        tr.innerHTML = '<td>' + escapeHtml(ts) + '</td><td>' + escapeHtml(e.actor) + '</td><td><code>' + escapeHtml(e.action) + '</code></td><td><code>' + escapeHtml(e.detail || '') + '</code></td>';
+                        [ts, e.actor, e.action, e.detail || ''].forEach(function(val, i) {
+                            const td = document.createElement('td');
+                            if (i >= 2) {
+                                const code = document.createElement('code');
+                                code.textContent = val;
+                                td.appendChild(code);
+                            } else {
+                                td.textContent = val;
+                            }
+                            tr.appendChild(td);
+                        });
                         tbody.appendChild(tr);
                     });
                 } catch (err) {
                     console.error('Failed to load audit log:', err);
-                    tbody.innerHTML = '<tr><td colspan="4">Failed to load audit log.</td></tr>';
+                    const tr = document.createElement('tr');
+                    const td = document.createElement('td');
+                    td.colSpan = 4;
+                    td.textContent = 'Failed to load audit log.';
+                    tr.appendChild(td);
+                    tbody.appendChild(tr);
                 }
             }
         };

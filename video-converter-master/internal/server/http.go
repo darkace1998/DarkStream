@@ -56,6 +56,7 @@ const (
 	fieldTimestamp = "timestamp"
 	fieldMessage   = "message"
 	fieldErrors    = "errors"
+	fieldError     = "error"
 )
 
 // isTerminalJobStatus reports whether a job in this status will not change
@@ -231,6 +232,7 @@ func (s *Server) Start() (err error) {
 	mux.HandleFunc("/api/worker/download-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.DownloadVideo))))
 	mux.HandleFunc("/api/worker/upload-video", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.UploadVideo))))
 	mux.HandleFunc("/api/worker/job-progress", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.JobProgress))))
+	mux.HandleFunc("/api/worker/job-log", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.HandleJobLog))))
 	mux.HandleFunc("/api/worker/config", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.GetWorkerConfig))))
 	mux.HandleFunc("/api/worker/settings", s.correlationMiddleware(s.rateLimitMiddleware(s.HandleWorkerSettings))) // Per-worker settings management
 	mux.HandleFunc("/api/worker/pause", s.correlationMiddleware(s.rateLimitMiddleware(s.authMiddleware(s.PauseWorker))))

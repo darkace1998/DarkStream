@@ -63,9 +63,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Master**: long scans log progress every 30s (`Scan in progress` with
   processed/hashed/skipped_unchanged counts) in addition to the `Scan started` /
   `Scan complete` lines.
+- **Master**: SQLite DSN now sets `_busy_timeout=15000` and `_foreign_keys=on`;
+  new indexes `idx_jobs_pending_queue(status, priority DESC, created_at ASC)` and
+  `idx_jobs_status_created(status, created_at DESC)` speed up queue polling and
+  history queries; obsolete indexes are dropped on open.
+- **Master**: `PruneJobsOlderThan` runs in a single transaction on a single
+  connection (was one transaction per table across pool connections, which could
+  deadlock under WAL) and now also prunes orphaned `job_progress` rows,
+  `webhook_deliveries`, `audit_log`, and `known_outputs` entries whose job/output
+  no longer exists.
+- **Master**: 429 rate-limit responses are now JSON (`{error, retry_after}`) with a
+  `Retry-After: 60` header, instead of a bare text body.
+- **Master/Worker**: worker job logs are uploaded via the new
+  `POST /api/worker/job-log` JSON endpoint instead of the `X-Darkstream-Log-Tail`
+  HTTP header — Go's `net/http` rejects header values containing newlines, which made
+  every upload with a non-empty log tail fail.
+- **Worker**: `conversion.hw_accel` from the master's active config is now mapped
+  onto the worker config (it was silently dropped when fetched dynamically).
 
 ### Fixed
 - **Master**: webhook delivery ID used a `%d` verb for a string job ID (go vet).
+- **Security (Master)**: `GET /api/worker/config` no longer returns the master API key
+  to any authenticated caller — only the master key holder receives it; worker tokens
+  get the config without secrets.
+- **Security (Master)**: `checkWorkerBinding` is now enforced unconditionally on
+  job-complete, job-failed, job-progress, and heartbeat — previously a request that
+  claimed an empty `worker_id` skipped the check, letting any valid worker token act
+  as any other worker.
+- **Security (Master)**: `?api_key=` query-string credentials are now honored only on
+  SSE stream endpoints; all other endpoints require the `Authorization: Bearer`
+  header, so keys cannot leak into access logs, proxies, or browser history.
+- **Security (Master)**: when `server.worker_tokens` is configured but no master
+  `api_key` is set, `/api/worker/*` routes accept only worker tokens (previously any
+  request passed when `api_key` was empty).
+- **Security (Master)**: every JSON-decoding handler now caps request bodies at 1 MiB
+  (`http.MaxBytesReader`) before decoding; oversized bodies get a `413`.
+- **Security (Master)**: chunked-upload `total_size` is capped at 1 TiB and
+  `ValidatePathWithinBase` now resolves symlinks (base and target) before the
+  prefix check, so a symlink inside an allowed directory cannot point outside it.
+- **Master**: chunked uploads now record the actually-used hardware accel
+  (`FFmpegConverter.ResolveHWAccel`) in the job's `hw_used` field instead of always
+  reporting the configured value.
+- **Web UI**: the audit-log tab renders via `createElement`/`textContent` instead of
+  `innerHTML`, so actor names or details containing HTML cannot inject markup.
+- **Common**: `BuildURL` redacts credentials in URLs earlier, so `user:pass@` no
+  longer survives into logged or error output.
 
 
 ## [0.7.0] - 2026-11-17

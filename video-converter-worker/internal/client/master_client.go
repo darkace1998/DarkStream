@@ -19,8 +19,6 @@ import (
 
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-common/utils"
-
-	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // sleepWithContext waits for d to elapse or ctx to be cancelled, whichever comes
@@ -125,6 +123,46 @@ func (mc *MasterClient) SetAPIKey(apiKey string) {
 // server.worker_tokens map). It takes precedence over the API key.
 func (mc *MasterClient) SetToken(token string) {
 	mc.token = token
+}
+
+// ReportJobLog sends the worker-side log tail for a job to the master
+// (POST /api/worker/job-log). The tail goes in the JSON body because log output
+// contains newlines, which are illegal in HTTP header values.
+func (mc *MasterClient) ReportJobLog(jobID, logTail string) error {
+	if logTail == "" {
+		return nil
+	}
+	payload := map[string]string{
+		"job_id":    jobID,
+		"worker_id": mc.workerID,
+		"log_tail":  logTail,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job log payload: %w", err)
+	}
+	requestURL, err := utils.BuildURL(mc.baseURL, "/api/worker/job-log", nil)
+	if err != nil {
+		return fmt.Errorf("failed to build job log URL: %w", err)
+	}
+	req, err := http.NewRequestWithContext(mc.reqContext(), http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create job log request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	mc.addAuthHeader(req)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send job log: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("job log rejected with status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // credential returns the bearer credential to present: the per-worker token
@@ -1049,9 +1087,6 @@ func (mc *MasterClient) uploadConvertedVideoAttempt(jobID, filePath string, prog
 	}
 
 	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
-	if metadata != nil && metadata.LogTail != "" {
-		req.Header.Set(constants.HeaderLogTail, metadata.LogTail)
-	}
 
 	// Add authentication header
 	mc.addAuthHeader(req)

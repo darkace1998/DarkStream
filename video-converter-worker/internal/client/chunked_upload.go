@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/darkace1998/video-converter-common/utils"
-
-	"github.com/darkace1998/video-converter-common/constants"
 )
 
 // ErrChunkedUploadUnsupported is returned when the master does not implement
@@ -38,7 +36,7 @@ const chunkUploadParallelism = 4
 // UploadConvertedVideoChunked uploads a converted video in parallel chunks via
 // POST /api/worker/upload-chunk. It falls back to ErrChunkedUploadUnsupported
 // when the master is older and lacks the endpoint.
-func (mc *MasterClient) UploadConvertedVideoChunked(jobID, filePath, logTail string, progressCallback ProgressCallback) error {
+func (mc *MasterClient) UploadConvertedVideoChunked(jobID, filePath string, progressCallback ProgressCallback) error {
 	if err := utils.ValidateSecureTransport(mc.baseURL, mc.apiKey != ""); err != nil {
 		return err
 	}
@@ -88,7 +86,7 @@ func (mc *MasterClient) UploadConvertedVideoChunked(jobID, filePath, logTail str
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := mc.uploadChunkWithRetry(jobID, file, off, end, totalSize, logTail, reportProgress); err != nil {
+			if err := mc.uploadChunkWithRetry(jobID, file, off, end, totalSize, reportProgress); err != nil {
 				errCh <- err
 			}
 		}(offset, end)
@@ -108,7 +106,7 @@ func (mc *MasterClient) UploadConvertedVideoChunked(jobID, filePath, logTail str
 }
 
 // uploadChunkWithRetry uploads one [off,end) range with retries.
-func (mc *MasterClient) uploadChunkWithRetry(jobID string, file *os.File, off, end, totalSize int64, logTail string, reportProgress func(int64)) error {
+func (mc *MasterClient) uploadChunkWithRetry(jobID string, file *os.File, off, end, totalSize int64, reportProgress func(int64)) error {
 	const maxRetries = 3
 	baseDelay := 2 * time.Second
 
@@ -121,7 +119,7 @@ func (mc *MasterClient) uploadChunkWithRetry(jobID string, file *os.File, off, e
 			}
 		}
 
-		complete, err := mc.uploadChunk(jobID, file, off, end, totalSize, logTail, reportProgress)
+		complete, err := mc.uploadChunk(jobID, file, off, end, totalSize, reportProgress)
 		if err == nil {
 			_ = complete
 			return nil
@@ -137,7 +135,7 @@ func (mc *MasterClient) uploadChunkWithRetry(jobID string, file *os.File, off, e
 
 // uploadChunk sends one chunk as a raw body. Returns complete=true when the
 // master reports the whole upload finished.
-func (mc *MasterClient) uploadChunk(jobID string, file *os.File, off, end, totalSize int64, logTail string, reportProgress func(int64)) (bool, error) {
+func (mc *MasterClient) uploadChunk(jobID string, file *os.File, off, end, totalSize int64, reportProgress func(int64)) (bool, error) {
 	length := end - off
 	buf := make([]byte, length)
 	if _, err := file.ReadAt(buf, off); err != nil && !errors.Is(err, io.EOF) {
@@ -165,9 +163,6 @@ func (mc *MasterClient) uploadChunk(jobID string, file *os.File, off, end, total
 		return false, err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	if logTail != "" {
-		req.Header.Set(constants.HeaderLogTail, logTail)
-	}
 	mc.addAuthHeader(req)
 
 	client := &http.Client{Timeout: mc.uploadTimeout}

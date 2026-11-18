@@ -105,9 +105,13 @@ func TestUploadConvertedVideoChunkedAssemblesFile(t *testing.T) {
 	mc := New(srv.URL, "worker-1", false)
 	mc.SetChunkSize(64_000) // 4 chunks: 64k, 64k, 64k, 58k
 
+	// The callback fires from parallel chunk-upload goroutines.
+	var mu sync.Mutex
 	var progressCalls int
 	var lastTransferred, lastTotal int64
-	err := mc.UploadConvertedVideoChunked("job-1", path, "", func(transferred, total int64) {
+	err := mc.UploadConvertedVideoChunked("job-1", path, func(transferred, total int64) {
+		mu.Lock()
+		defer mu.Unlock()
 		progressCalls++
 		lastTransferred, lastTotal = transferred, total
 	})
@@ -143,7 +147,7 @@ func TestUploadConvertedVideoChunkedUnsupportedFallsBack(t *testing.T) {
 	mc := New(srv.URL, "worker-1", false)
 	mc.SetChunkSize(4)
 
-	err := mc.UploadConvertedVideoChunked("job-2", path, "", nil)
+	err := mc.UploadConvertedVideoChunked("job-2", path, nil)
 	if !errors.Is(err, ErrChunkedUploadUnsupported) {
 		t.Fatalf("expected ErrChunkedUploadUnsupported, got %v", err)
 	}
@@ -159,7 +163,7 @@ func TestUploadConvertedVideoChunkedEmptyFileRefused(t *testing.T) {
 	defer srv.Close()
 
 	mc := New(srv.URL, "worker-1", false)
-	err := mc.UploadConvertedVideoChunked("job-3", path, "", nil)
+	err := mc.UploadConvertedVideoChunked("job-3", path, nil)
 	if err == nil || errors.Is(err, ErrChunkedUploadUnsupported) {
 		t.Fatalf("expected a refusal error for empty file, got %v", err)
 	}
@@ -193,7 +197,7 @@ func TestUploadConvertedVideoChunkedRetriesTransientError(t *testing.T) {
 	mc := New(srv.URL, "worker-1", false)
 	mc.SetChunkSize(int64(len(content))) // single chunk
 
-	err := mc.UploadConvertedVideoChunked("job-4", path, "", nil)
+	err := mc.UploadConvertedVideoChunked("job-4", path, nil)
 	if err != nil {
 		t.Fatalf("expected retry to succeed, got %v", err)
 	}

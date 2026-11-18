@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"os"
 )
 
 const (
@@ -249,5 +251,33 @@ func TestValidatePathWithinBase_EdgeCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidatePathWithinBaseRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidatePathWithinBase(base, link); err == nil {
+		t.Error("symlink inside base pointing outside must be rejected")
+	}
+	// A real file inside base still passes.
+	realFile := filepath.Join(base, "real.txt")
+	if err := os.WriteFile(realFile, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidatePathWithinBase(base, realFile); err != nil {
+		t.Errorf("regular in-base file rejected: %v", err)
+	}
+	// A not-yet-existing target inside base passes (parent resolved).
+	if _, err := ValidatePathWithinBase(base, filepath.Join(base, "newfile.txt")); err != nil {
+		t.Errorf("non-existent in-base target rejected: %v", err)
 	}
 }

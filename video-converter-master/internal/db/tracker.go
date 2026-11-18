@@ -73,7 +73,7 @@ func NewWithConfig(dbPath string, poolConfig ConnectionPoolConfig) (*Tracker, er
 	// fsync in WAL mode (still crash-safe for application crashes; only a
 	// power loss can lose the last commits), which matters a lot when the DB
 	// lives on slow/network storage and scans upsert per-file state.
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL&_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -216,12 +216,29 @@ func (t *Tracker) SetJobLogTail(jobID, tail string) {
 // touched. Orphaned job_progress rows are removed as well. Returns the number
 // of deleted jobs.
 func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
-	// Webhook deliveries are high-volume routine traffic; age them out with
-	// the same retention window so the table cannot grow unbounded.
-	if _, err := t.db.Exec(`DELETE FROM webhook_deliveries WHERE ts < ?`, cutoff); err != nil {
-		slog.Warn("Failed to prune webhook deliveries", "error", err)
+	// Run all deletes in one transaction on a single connection: a crash
+	// mid-prune must not leave a half-pruned state, and one commit is cheaper
+	// than three. Auxiliary tables (job_progress orphans, webhook deliveries,
+	// audit log, known outputs) age out with the same window so they cannot
+	// grow unbounded.
+	conn, err := t.db.Conn(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("failed to get db connection for prune: %w", err)
 	}
-	result, err := t.db.Exec(`
+	defer func() { _ = conn.Close() }()
+
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin prune transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.Exec(`
 		DELETE FROM jobs
 		WHERE status IN ('completed', 'failed', 'cancelled')
 		  AND COALESCE(completed_at, created_at) < ?
@@ -233,9 +250,22 @@ func (t *Tracker) PruneJobsOlderThan(cutoff time.Time) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deleted row count: %w", err)
 	}
-	if _, err := t.db.Exec(`DELETE FROM job_progress WHERE job_id NOT IN (SELECT id FROM jobs)`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM job_progress WHERE job_id NOT IN (SELECT id FROM jobs)`); err != nil {
 		slog.Warn("Failed to remove orphaned job progress rows", "error", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM webhook_deliveries WHERE ts < ?`, cutoff); err != nil {
+		slog.Warn("Failed to prune webhook deliveries", "error", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM audit_log WHERE ts < ?`, cutoff); err != nil {
+		slog.Warn("Failed to prune audit log", "error", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM known_outputs WHERE created_at < ?`, cutoff); err != nil {
+		slog.Warn("Failed to prune known outputs", "error", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit prune transaction: %w", err)
+	}
+	committed = true
 	return int(rowsAffected), nil
 }
 
@@ -846,7 +876,7 @@ func (t *Tracker) GetJobHistory(startTime, endTime string, limit int) ([]*models
 			COALESCE(source_duration, 0), COALESCE(output_size, 0),
 			COALESCE(source_checksum, ''), COALESCE(output_checksum, '')
 		FROM jobs
-		WHERE created_at BETWEEN ? AND ?
+		WHERE julianday(created_at) BETWEEN julianday(?) AND julianday(?)
 		ORDER BY created_at DESC
 	`
 
@@ -1720,19 +1750,27 @@ func (t *Tracker) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-	CREATE INDEX IF NOT EXISTS idx_jobs_source_path ON jobs(source_path);
 	CREATE INDEX IF NOT EXISTS idx_jobs_source_checksum ON jobs(source_checksum);
-	CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
 	CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
 	CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts ON webhook_deliveries(ts);
 	CREATE INDEX IF NOT EXISTS idx_jobs_worker_id ON jobs(worker_id);
-	CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_job_progress_worker ON job_progress(worker_id);
+	-- Composite covering the worker claim hot path (WHERE status='pending'
+	-- ORDER BY priority DESC, created_at ASC) so polls don't sort all pending rows.
+	CREATE INDEX IF NOT EXISTS idx_jobs_pending_queue ON jobs(status, priority DESC, created_at ASC);
+	-- Covers "WHERE status=? ORDER BY created_at DESC" list queries.
+	CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at DESC);
 	`
 
 	_, err := t.db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
+	}
+
+	// Drop indexes no query uses anymore (they only tax write throughput).
+	for _, idx := range []string{"idx_jobs_source_path", "idx_files_hash", "idx_job_progress_worker"} {
+		if _, err := t.db.Exec("DROP INDEX IF EXISTS " + idx); err != nil {
+			slog.Warn("Failed to drop unused index", "index", idx, "error", err)
+		}
 	}
 
 	// Add checksum columns if they don't exist (migration)

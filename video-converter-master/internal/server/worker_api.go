@@ -259,6 +259,7 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		LogTail    string `json:"log_tail"`
 	}
 
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -270,11 +271,10 @@ func (s *Server) JobComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
 		return
 	}
+	if !s.checkWorkerBinding(w, r, req.WorkerID) {
+		return
+	}
 	if req.WorkerID == "" {
-		if !s.checkWorkerBinding(w, r, req.WorkerID) {
-			return
-		}
-
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -320,6 +320,7 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		LogTail      string `json:"log_tail"`
 	}
 
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -331,11 +332,10 @@ func (s *Server) JobFailed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing or empty job_id", http.StatusBadRequest)
 		return
 	}
+	if !s.checkWorkerBinding(w, r, req.WorkerID) {
+		return
+	}
 	if req.WorkerID == "" {
-		if !s.checkWorkerBinding(w, r, req.WorkerID) {
-			return
-		}
-
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -399,17 +399,17 @@ func (s *Server) WorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hb models.WorkerHeartbeat
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&hb)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
+	if !s.checkWorkerBinding(w, r, hb.WorkerID) {
+		return
+	}
 	if hb.WorkerID == "" {
-		if !s.checkWorkerBinding(w, r, hb.WorkerID) {
-			return
-		}
-
 		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
 		return
 	}
@@ -512,6 +512,54 @@ func (s *Server) ListWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HandleJobLog stores the worker-side log tail for a job. The tail travels in
+// the JSON body (not a header) because log output contains newlines, which are
+// illegal in HTTP header values and would make Go reject the whole request.
+func (s *Server) HandleJobLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limitBody(w, r) // 1 MiB cap; the tail itself is capped at 64 KiB when stored
+
+	var req struct {
+		JobID    string `json:"job_id"`
+		WorkerID string `json:"worker_id"`
+		LogTail  string `json:"log_tail"`
+	}
+	limitBody(w, r) // 1 MiB cap; the stored tail is capped at 64 KiB
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if !validateJobID(req.JobID) {
+		http.Error(w, "Invalid job_id parameter", http.StatusBadRequest)
+		return
+	}
+	if !s.checkWorkerBinding(w, r, req.WorkerID) {
+		return
+	}
+	if req.WorkerID == "" {
+		http.Error(w, "Missing or empty worker_id", http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.db.GetJobByID(req.JobID)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	// The log tail must belong to the job's assigned worker.
+	if job.WorkerID != "" && job.WorkerID != req.WorkerID {
+		http.Error(w, "Forbidden: job belongs to a different worker", http.StatusForbidden)
+		return
+	}
+
+	s.db.SetJobLogTail(job.ID, req.LogTail)
+	s.auditRequest(r, "worker.job-log")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // GetWorkerConfig returns the worker configuration from the master.
 // When the server API key is configured, this endpoint only serves authenticated
 // bootstrap requests and includes the API key in the response for authorized workers.
@@ -539,8 +587,10 @@ func (s *Server) GetWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("Global worker configuration requested")
 	}
 
-	// Only include the API key for authenticated bootstrap requests
-	if s.apiKey != "" && s.authenticatedRequest(r) {
+	// Only include the master API key when the caller authenticated with the
+	// master key itself; a per-worker token must never receive it (otherwise
+	// worker tokens provide no isolation at all).
+	if s.apiKey != "" && actorFromContext(r.Context()) == actorMasterKey {
 		response.APIKey = s.apiKey
 	}
 
@@ -739,6 +789,7 @@ func (s *Server) getWorkerSettings(w http.ResponseWriter, workerID string) {
 // saveWorkerSettings saves settings for a specific worker
 func (s *Server) saveWorkerSettings(w http.ResponseWriter, r *http.Request, workerID string) {
 	var settings models.WorkerSettings
+	limitBody(w, r)
 	err := json.NewDecoder(r.Body).Decode(&settings)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)

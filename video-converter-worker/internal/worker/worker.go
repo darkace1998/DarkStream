@@ -19,8 +19,6 @@ import (
 	"github.com/darkace1998/video-converter-common/models"
 	"github.com/darkace1998/video-converter-worker/internal/client"
 	"github.com/darkace1998/video-converter-worker/internal/converter"
-
-	"strings"
 )
 
 // progressReportInterval is the minimum time between conversion progress
@@ -517,7 +515,7 @@ func (w *Worker) uploadOutput(job *models.Job, outputLocalPath string) error {
 	chunkSize := int64(w.config.Storage.ChunkSize)
 	if chunkSize > 0 {
 		if info, err := os.Stat(outputLocalPath); err == nil && info.Size() > chunkSize {
-			err := w.masterClient.UploadConvertedVideoChunked(job.ID, outputLocalPath, job.LogTail, nil)
+			err := w.masterClient.UploadConvertedVideoChunked(job.ID, outputLocalPath, nil)
 			switch {
 			case err == nil:
 				return nil
@@ -739,7 +737,12 @@ func (w *Worker) convertWithFallback(
 	}
 
 	err := w.ffmpegConverter.ConvertVideoContext(jobCtx, job, cfg, progressCallback, log)
-	hwUsed := cfg.UseVulkan || (cfg.HWAccel != "" && !strings.EqualFold(cfg.HWAccel, constants.HWAccelNone))
+	// Decide from the hwaccel that was ACTUALLY used, not the configured
+	// string: with hw_accel=auto on a GPU-less machine detection yields ""
+	// and the first attempt was already software — retrying it identically
+	// would just run the whole conversion twice.
+	resolved := w.ffmpegConverter.ResolveHWAccel(cfg)
+	hwUsed := resolved != "" || cfg.UseVulkan
 	if err == nil || !hwUsed || jobCtx.Err() != nil || errors.Is(err, converter.ErrConversionTimeout) {
 		return err
 	}

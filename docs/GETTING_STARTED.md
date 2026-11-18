@@ -6,7 +6,7 @@ This guide will walk you through setting up a basic DarkStream distributed video
 
 Before you begin, ensure you have the following installed on your system:
 
-- **Go 1.24+**: Required to compile the project.
+- **Go 1.26+**: Required to compile the project (see `go.work`).
 - **FFmpeg**: Required on worker nodes for video conversion (with Vulkan support if using GPU acceleration).
 - **Vulkan Tools (Optional but Recommended)**: Required on worker nodes for hardware acceleration detection.
 
@@ -15,8 +15,8 @@ Before you begin, ensure you have the following installed on your system:
 Clone the repository and enter the directory:
 
 ```bash
-git clone https://github.com/darkace1998/video-converter-ecosystem.git
-cd video-converter-ecosystem
+git clone https://github.com/darkace1998/DarkStream.git
+cd DarkStream
 ```
 
 ## 2. Build the Binaries
@@ -89,7 +89,7 @@ Worker nodes connect to the Master coordinator to fetch and process jobs. Thanks
    ```
    *(Replace `localhost` with the Master's IP address if running on a different machine.)*
 
-   *Tip: The worker automatically starts a local diagnostics server (e.g., at `127.0.0.1:45321`). Check the worker startup logs for the exact URL to view its health and metrics.*
+   *Tip: The worker automatically starts a local diagnostics server on an **ephemeral port** (e.g., `127.0.0.1:45321`). Check the worker startup logs for the exact URL to view its health and metrics.*
 
 The worker will automatically detect its hardware capabilities (e.g., Vulkan GPUs), register with the Master, fetch the conversion configuration, and start pulling jobs if any source videos were found by the Master.
 

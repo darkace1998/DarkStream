@@ -103,7 +103,11 @@ GET  /api/audit-log?limit=N   # recent audit entries, newest first
 
 The Web UI's SSE streams (`/api/stats/stream`, `/api/job/progress/stream`) accept
 `?token=<stream-token>` instead of `?api_key=...`, so the long-lived master key
-never appears in URLs, browser history, or access logs. State-changing API calls
+never appears in URLs, browser history, or access logs. As a legacy fallback,
+a `?api_key=...` query parameter is still honored **only on SSE endpoints**
+(`.../stream`); all other endpoints require the `Authorization: Bearer` header —
+query-string credentials are rejected there so they cannot leak into logs or
+proxies. State-changing API calls
 (config updates, queue pause/resume, job cancel/retry/requeue/priority, worker
 admin, chunked uploads) are recorded in the `audit_log` table with the
 authenticated actor and are queryable via `/api/audit-log`.
@@ -199,11 +203,6 @@ exported as `darkstream_scanner_scan_duration_seconds` and
     attempt's outcome is recorded in the `webhook_deliveries` table, queryable via
     `GET /api/webhook-deliveries?limit=N`. Prefer `DARKSTREAM_WEBHOOK_SECRET` over
     putting the secret in the file.
-
-### `monitoring`
-*   `job_timeout`: Maximum time a job can be in processing state (default: `2h`).
-*   `worker_health_interval`: How often to check worker health (default: `30s`).
-*   `failed_job_retry_interval`: How often to check for failed jobs to retry (default: `1m`).
 
 ### `conversion` (Maps to `MasterConfig.Conversion`)
 *Default conversion parameters applied to jobs.*

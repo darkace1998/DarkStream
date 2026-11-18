@@ -94,14 +94,17 @@ func TestSetJobLogTailCapsAtMax(t *testing.T) {
 
 // --- retention pruning ---
 
-func TestPruneJobsOlderThan(t *testing.T) {
+// setupPruneTracker builds a tracker pre-populated with old (48h) and recent
+// terminal jobs, aged/recent webhook deliveries, and aged/recent audit rows,
+// for retention-pruning tests.
+func setupPruneTracker(t *testing.T, old time.Time) *Tracker {
+	t.Helper()
 	tracker, err := New(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Failed to create tracker: %v", err)
 	}
-	defer func() { _ = tracker.Close() }()
+	t.Cleanup(func() { _ = tracker.Close() })
 
-	old := time.Now().Add(-48 * time.Hour)
 	newJob := func(id string) {
 		t.Helper()
 		if err := tracker.CreateJob(&models.Job{
@@ -130,10 +133,23 @@ func TestPruneJobsOlderThan(t *testing.T) {
 
 	// An old and a recent webhook delivery: only the old one may be pruned.
 	tracker.RecordWebhookDelivery("completed", "prune-completed-old", "http://hook.local", 1, http.StatusOK, nil)
-	if _, err := tracker.db.Exec(`UPDATE webhook_deliveries SET ts = ? WHERE job_id = 'prune-completed-old'`, old); err != nil {
-		t.Fatalf("age delivery: %v", err)
-	}
+	mustExec(`UPDATE webhook_deliveries SET ts = ? WHERE job_id = 'prune-completed-old'`, old)
 	tracker.RecordWebhookDelivery("failed", "prune-completed-new", "http://hook.local", 1, http.StatusInternalServerError, nil)
+
+	// Audit rows age out with the same retention window.
+	if err := tracker.RecordAudit("master-key", "test.old", "old"); err != nil {
+		t.Fatalf("RecordAudit: %v", err)
+	}
+	mustExec(`UPDATE audit_log SET ts = ?`, old)
+	if err := tracker.RecordAudit("master-key", "test.new", "new"); err != nil {
+		t.Fatalf("RecordAudit: %v", err)
+	}
+	return tracker
+}
+
+func TestPruneJobsOlderThan(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	tracker := setupPruneTracker(t, old)
 
 	cutoff := time.Now().Add(-24 * time.Hour)
 	deleted, err := tracker.PruneJobsOlderThan(cutoff)
@@ -151,17 +167,36 @@ func TestPruneJobsOlderThan(t *testing.T) {
 		t.Errorf("Expected only the recent webhook delivery to survive pruning, got %+v", remaining)
 	}
 
-	if _, err := tracker.GetJobByID("prune-completed-old"); err == nil {
-		t.Error("old completed job should be gone")
+	// A second prune (no-op for jobs) also ages out the old audit row.
+	if _, err := tracker.PruneJobsOlderThan(cutoff); err != nil {
+		t.Fatalf("second prune: %v", err)
 	}
-	if _, err := tracker.GetJobByID("prune-failed-old"); err == nil {
-		t.Error("old failed job should be gone")
+	entries, err := tracker.GetAuditLog(10)
+	if err != nil {
+		t.Fatalf("GetAuditLog: %v", err)
 	}
-	if _, err := tracker.GetJobByID("prune-pending-old"); err != nil {
-		t.Error("old pending job must be kept")
+	for _, e := range entries {
+		if e.Action == "test.old" {
+			t.Error("old audit entry should have been pruned")
+		}
 	}
-	if _, err := tracker.GetJobByID("prune-completed-new"); err != nil {
-		t.Error("recent completed job must be kept")
+
+	for _, tc := range []struct {
+		id      string
+		wantErr bool
+	}{
+		{"prune-completed-old", true},  // old completed job is gone
+		{"prune-failed-old", true},     // old failed job is gone
+		{"prune-pending-old", false},   // old pending job must be kept
+		{"prune-completed-new", false}, // recent completed job must be kept
+	} {
+		_, err := tracker.GetJobByID(tc.id)
+		if tc.wantErr && err == nil {
+			t.Errorf("%s should have been pruned", tc.id)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("%s must be kept: %v", tc.id, err)
+		}
 	}
 }
 
@@ -254,5 +289,53 @@ func TestBackupDatabaseProducesOpenableCopy(t *testing.T) {
 	}
 	if job.LogTail != "tail-content" {
 		t.Errorf("Backup must include log_tail, got %q", job.LogTail)
+	}
+}
+
+func TestWorkerConfigCRUD(t *testing.T) {
+	tracker, err := New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Failed to create tracker: %v", err)
+	}
+	defer func() { _ = tracker.Close() }()
+
+	// Missing worker: error / Has=false.
+	if _, err := tracker.GetWorkerConfig("w1"); err == nil {
+		t.Error("GetWorkerConfig for unknown worker should error")
+	}
+	if has, err := tracker.HasWorkerConfig("w1"); err != nil || has {
+		t.Errorf("HasWorkerConfig before save = %v, %v; want false, nil", has, err)
+	}
+
+	cfg := &models.WorkerSettings{WorkerID: "w1", Concurrency: 7, LogLevel: "debug"}
+	if err := tracker.SaveWorkerConfig(cfg); err != nil {
+		t.Fatalf("SaveWorkerConfig: %v", err)
+	}
+	if has, err := tracker.HasWorkerConfig("w1"); err != nil || !has {
+		t.Errorf("HasWorkerConfig after save = %v, %v; want true, nil", has, err)
+	}
+	got, err := tracker.GetWorkerConfig("w1")
+	if err != nil {
+		t.Fatalf("GetWorkerConfig: %v", err)
+	}
+	if got.Concurrency != 7 || got.LogLevel != "debug" {
+		t.Errorf("round-trip mismatch: %+v", got)
+	}
+
+	// Upsert overwrites.
+	cfg.Concurrency = 2
+	if err := tracker.SaveWorkerConfig(cfg); err != nil {
+		t.Fatalf("SaveWorkerConfig upsert: %v", err)
+	}
+	got, _ = tracker.GetWorkerConfig("w1")
+	if got.Concurrency != 2 {
+		t.Errorf("upsert did not overwrite: %+v", got)
+	}
+
+	if err := tracker.DeleteWorkerConfig("w1"); err != nil {
+		t.Fatalf("DeleteWorkerConfig: %v", err)
+	}
+	if has, err := tracker.HasWorkerConfig("w1"); err != nil || has {
+		t.Errorf("HasWorkerConfig after delete = %v, %v; want false, nil", has, err)
 	}
 }
