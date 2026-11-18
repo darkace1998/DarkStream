@@ -138,7 +138,11 @@ COPY --from=builder /build/bin/video-converter-cli .
 
 ENTRYPOINT ["./video-converter-cli"]
 
-# Stage 5: All-in-one development image (optional)
+# Stage 5: All-in-one image (optional) — master + worker in one container.
+# With no arguments the entrypoint starts the master, waits for /healthz, then
+# starts a worker that points at the in-container master and registers itself
+# via heartbeat. With arguments it execs them directly, e.g.
+#   docker run <image> ./video-converter-cli --help
 FROM ubuntu:24.04 AS all-in-one
 
 # Install all dependencies for both master and worker
@@ -153,15 +157,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy all binaries
+# Copy all binaries, example configs and the all-in-one entrypoint
 COPY --from=builder /build/bin/* .
 COPY --from=builder /build/video-converter-master/config.yaml.example ./config-master.yaml
 COPY --from=builder /build/video-converter-worker/config.yaml.example ./config-worker.yaml
+COPY docker/entrypoint-all-in-one.sh ./entrypoint-all-in-one.sh
 
-# Create necessary directories
-RUN mkdir -p /mnt/storage/videos /tmp/worker /app/db
+# Create necessary directories; keep the job database on the /app/db volume
+RUN mkdir -p /mnt/storage/videos /mnt/storage/converted /tmp/worker /app/db \
+    && chmod +x entrypoint-all-in-one.sh \
+    && sed -i 's#^  path: ./jobs.db#  path: /app/db/jobs.db#' config-master.yaml \
+    && grep -q 'path: /app/db/jobs.db' config-master.yaml
 
 EXPOSE 8080 8081
 
-# Default to showing help
-CMD ["./video-converter-cli"]
+ENV LOG_LEVEL=info
+ENV LOG_FORMAT=json
+
+ENTRYPOINT ["./entrypoint-all-in-one.sh"]
+CMD []

@@ -234,7 +234,7 @@ func validateHashSettings(loc *models.ScanLocation, add func(field, msg string))
 	switch loc.HashAlgo {
 	case "", utils.HashAlgoSHA256, utils.HashAlgoSHA1:
 		if loc.HashAlgo == "" {
-			loc.HashAlgo = utils.HashAlgoSHA256
+			loc.HashAlgo = utils.HashAlgoSHA1
 		}
 	default:
 		add("hash_algo", "must be sha256 or sha1")
