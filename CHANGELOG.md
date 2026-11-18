@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Master Web UI**: scan-location form now has a "Replace source file after conversion"
   toggle (the API field `replace_source` was previously unreachable from the UI), and the
   locations table shows a Replace column.
-
+- **Common**: `TestNewHashSHA256MatchesStdlib` proves the accelerated SHA-256 produces
+  byte-identical digests to `crypto/sha256`, plus a throughput benchmark.
 
 ### Changed
 - **Master**: `hash_algo` now defaults to `sha1` for new scan locations — SHA-1 has no
@@ -28,8 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boxes. Choose `sha256` explicitly on SHA-NI/AVX CPUs, where the SIMD-accelerated
   SHA-256 is fastest. Existing configs keep their configured algorithm; workers infer
   it from the checksum length, so mixed algorithms work end-to-end.
-
-### Changed
 - **Common**: SHA-256 checksums now use `minio/sha256-simd`, which dispatches at runtime
   to SHA-NI / AVX-512 / AVX2 assembly (identical digests to standard SHA-256). Scanning
   large libraries no longer pegs the CPU on machines where Go's pure-Go SHA-256 fallback
@@ -41,10 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Master**: long scans log progress every 30s (`Scan in progress` with
   processed/hashed/skipped_unchanged counts) in addition to the `Scan started` /
   `Scan complete` lines.
-
-### Added
-- **Common**: `TestNewHashSHA256MatchesStdlib` proves the accelerated SHA-256 produces
-  byte-identical digests to `crypto/sha256`, plus a throughput benchmark.
 
 ## [0.7.0] - 2026-11-17
 

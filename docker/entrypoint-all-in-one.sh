@@ -26,6 +26,15 @@ MASTER_URL="${DARKSTREAM_MASTER_URL:-http://localhost:$PORT}"
 # worker can authenticate. (The master refuses an api_key over plain HTTP
 # unless TLS cert/key are also set.)
 if [ -n "${DARKSTREAM_API_KEY:-}" ]; then
+    # The key is injected into the worker config via sed below; reject
+    # characters that would corrupt the generated YAML or the sed
+    # expression, instead of failing auth later with no clue why.
+    case "$DARKSTREAM_API_KEY" in
+        *[!A-Za-z0-9._-]*)
+            echo "DARKSTREAM_API_KEY contains characters outside [A-Za-z0-9._-]; refusing to inject it into the worker config" >&2
+            exit 1
+            ;;
+    esac
     sed -i "s|^  api_key: .*|  api_key: \"$DARKSTREAM_API_KEY\"|" "$WORKER_CONFIG"
 fi
 sed -i "s|^  master_url: .*|  master_url: \"$MASTER_URL\"|" "$WORKER_CONFIG"
@@ -59,7 +68,12 @@ WORKER_PID=$!
 
 trap 'kill "$WORKER_PID" "$MASTER_PID" 2>/dev/null || true' TERM INT
 
-# If the master exits, take the worker down with it; otherwise keep running.
-wait "$MASTER_PID"
-kill "$WORKER_PID" 2>/dev/null || true
-wait "$WORKER_PID" 2>/dev/null || true
+# If either the master or the worker exits, bring the container down so the
+# restart policy starts a clean one: a lone master serves /healthz but never
+# converts anything, and a lone worker cannot reach its master. (sleep runs in
+# the background so a trapped TERM/INT interrupts the wait immediately.)
+while kill -0 "$MASTER_PID" 2>/dev/null && kill -0 "$WORKER_PID" 2>/dev/null; do
+    sleep 5 & wait $! || true
+done
+kill "$WORKER_PID" "$MASTER_PID" 2>/dev/null || true
+wait 2>/dev/null || true
